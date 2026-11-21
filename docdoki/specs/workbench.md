@@ -25,7 +25,6 @@ covers:
   - src/controllers/preference-controller.ts
   - src/controllers/runtime-event-controller.ts
   - src/controllers/session-management-controller.ts
-  - src/controllers/transcript-data-controller.ts
   - src/git-presentation.ts
   - src/controllers/git-controller.ts
   - src/controllers/workspace-controller.ts
@@ -103,7 +102,7 @@ covers:
   - tests/web/nav-render.test.tsx
   - tests/web/workspace-controller.test.ts
   - tests/web/pane-resize.test.tsx
-  - tests/web/branch-tree.test.tsx
+area: "Workbench & Layout"
 ---
 
 # Workbench shell
@@ -186,8 +185,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   containing the visible session carries the active highlight on its header, and active search
   results stay visible regardless of saved collapse state.
 
-  Hidden remembers its disclosure state on this browser. Search in All expands Hidden to
-  show matching sessions after ordinary results. Needs you searches within its own view.
+  Hidden uses a leading chevron that points right when collapsed and down when expanded.
+  Clear Hidden shares the trailing axis and target size of the navigation collapse or close button.
+  Hidden folder and session Delete actions share that axis when the list fits without a scrollbar.
+  It remembers its disclosure state on this browser. Search in All expands Hidden to show
+  matching sessions after ordinary results. Needs you searches within its own view.
 
   Pin and Hide immediately update the catalog from the local choice. A failed write returns
   the presentation to the confirmed preferences. Delete and Clear Hidden use the confirmed
@@ -207,9 +209,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   count and full path and clears only that complete hidden folder.
 
   Clear Hidden has its own accessible name and click target beside the Hidden heading. Clear confirms
-  the complete Hidden section with one count-bearing dialog. Search, incomplete catalog data, a target
-  opening, or another deletion block admission. The folder action applies these checks to its own
-  targets. [[session-deletion]] defines target validation, Pi instance shutdown and file removal.
+  the complete Hidden section with one count-bearing dialog. Search, pending list reads, a target
+  opening or another deletion block the action. The Host checks the complete target set before
+  deleting. Folder Delete follows the same rules for its own targets. See [[session-deletion]].
 
 ### Search and pagination
 
@@ -274,10 +276,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   remain authoritative and immediately replace stale cache state. [[design-system]] owns PWA
   metadata: active Window Controls Overlay follows the workspace frame, ordinary tabs and
   standalone fallback use neutral hints, and installed icons keep their fixed neutral identity. The
-  production origin is installable as a standalone PWA. Its service worker caches only the
-  versioned application shell and same-origin static assets, never API, event, attachment or
-  resource responses. The cached shell can present the host-aware states above but cannot start a
-  local process; Pi/session capability still requires the loopback host and its authenticated API.
+  production origin is installable as a standalone PWA. Its service worker caches the root shell,
+  theme bootstrap and application assets. Browser networking handles metadata, API and resource
+  requests. Pi and session operations require the authenticated loopback Host.
 
 - The welcome page host-deselects any visible session before presenting the
   first-message/project-directory composer. The prior session then no longer owns topbar status,

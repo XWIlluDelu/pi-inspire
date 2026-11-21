@@ -13,161 +13,82 @@ covers:
   - tests/server/configuration-file.test.ts
   - tests/web/configuration-document.test.tsx
   - tests/browser/*mcp*.ts
+area: "Input & Models"
 ---
 
 # MCP management
 
-## Goal
-
-Settings provides compact MCP configuration. Pi owns connections, credentials, tool policy and
-execution. Configuration files are editable now; the complete current-worker management panel
-remains decided but deferred until public runtime interfaces can support it.
-
-- Add starts with name, target and HTTP URL or stdio program/arguments. Edit shows the fixed
-  identity/scope/transport as text rather than disabled controls and leads with the editable URL or
-  program. Environment, headers, timeout, exposure and OAuth client settings are advanced controls.
-- Preserve unedited fields. List snapshots omit saved connection values and authentication secrets.
-  An explicit editor action can reveal the saved URL or argument list, which may itself contain
-  secrets. Never execute value-resolution hooks to display configuration.
-- Distinguish file source and precedence from the addressed worker's loaded state. Extension
-  registrations retain their native source and mutation semantics.
-- Saving and applying are distinct. Offer existing explicit Reload when needed, without permanent
-  extra status on each row or silent worker replacement.
-- No tool-execution console, MCP Apps renderer or generic compatibility framework is included.
-  Replacement MCP implementations require explicit adaptation, not assumed native controls.
-
 ## File configuration
 
-### Editing and inheritance
+Settings → MCP edits native Pi files on the connected Host. Pi owns trust, credentials,
+connections, tool exposure and execution. Replacement MCP implementations need their own
+adaptation. Tool execution and MCP Apps rendering are outside this panel's scope.
 
-Settings → MCP shows **User** and **Project** source paths and file errors. Choose a server from the
-scope-labelled selector to see its name, transport, file-disabled state, any same-name project
-override and its edit actions. Add sits beside the section title. Advanced fields use the shared
-disclosure. The model/MCP form
-keeps Save/Cancel reachable while the body scrolls and reveals the focused field's label. New-server
-forms focus Server name. Ordinary edits focus URL or Program. Policy edits focus Tool exposure
-with its menu closed. The project editor explains trust.
-
-A user server with no same-name project entry offers **Customize for this project** when the selected
-project file is editable. This opens the existing policy form with a fixed name/project target and
-inherited defaults, not a copied server definition. Save becomes available after choosing a policy
-override; only explicitly overridden `enabled`, `exposure` and `toolExposure` fields are stored.
-Undoing draft tool-rule changes restores the original policy instead of storing an empty map; an
-explicit edit that clears existing rules still stores an empty map under Pi's replacement
-semantics. The Host validates a new policy entry against the same-name user configuration, just as for edits,
-without copying its URL, program, environment or credentials. Existing project entries keep their
-ordinary Edit/Remove actions. Removing a policy override restores user inheritance. Saving or
-removing affects files only, with the existing new-session/explicit Reload boundary.
-
-### File scope and trust
-
-The Host derives the user file from public `getAgentDir()/mcp.json`. The project file is
-`<cwd>/.pi/mcp.json`. An addressed session must exist, and its Host-resolved directory wins over a
-supplied directory, never falling back to a client-supplied one. The start surface uses its
-selected directory. Clients cannot supply arbitrary configuration paths. Project writes require an
-existing verified project directory and never create a missing project.
-
-User-file reads and edits require neither a session nor an available project directory. With no
-project selected, Settings shows only user configuration and a short project-selection hint. An
-unavailable project reports its own file error without blocking the user file.
-
-Full project definitions replace same-name user definitions. Policy-only project entries
-inherit the user connection and override `enabled`, `exposure`, and `toolExposure`; their editor
-preserves that shape. Absent enabled/exposure fields display **Inherit from user**, and choosing it
-removes the corresponding project field. Pi applies project configuration only when the project is
-trusted. Reading or saving a project file grants no trust and loads no project code.
-
-### Native fields and protected values
-
-The form supports stdio command, argument rows, working directory and environment; streamable HTTP
-URL, headers and OAuth client fields; description, request timeout in seconds, file-enabled state,
-server exposure and ordered exact/pattern tool exposure. OAuth discovery remains Pi's default.
-The OAuth editor displays the saved registration method: Automatic (Pi default), explicit
-client ID/dynamic registration, or Pi's client metadata document (CIMD). An absent method means Auto;
-unrelated edits preserve that absence. Auto delegates registration selection to Pi and allows supplied
-client IDs, names and custom callbacks. CIMD disallows `clientId` and `clientName`; switching methods
-never silently removes those fields. The form detects conflicting stored-field presence and edited
-values; the Host validates the complete merged OAuth object under Pi's current rules and rejects
-an invalid one before publication. Custom CIMD callbacks use HTTP on `localhost` or `127.0.0.1`
-with `/callback`; port consistency and the native metadata-URL rules also apply.
-
-Unknown fields, top-level settings, other entries and unedited nested values remain intact.
-Transport and identity of an existing entry stay fixed; remove/add replaces them deliberately.
-While adding a server, switching transport keeps its visible header/environment draft; submission
-uses the selected transport's displayed edits, never an invisible discarded value.
-
-List snapshots expose presence/keys/counts instead of stored URLs, argument contents,
-environment/header values or OAuth values other than the registration method. In an existing
-editor, **Show saved URL** or **Show saved arguments** explicitly reads only that entry's literal
-connection values at the displayed file revision. The authenticated response is non-cacheable,
-does not resolve hooks and includes no unrelated credentials. Changed files require Refresh before
-revealing values; late reads cannot populate a different Settings owner or revision. Refreshing
-replaces a previous reveal with the new file revision and keeps values explicitly edited in the
-draft.
-The supported field definitions supply the patch schemas and form controls. Public fields use a
-safe projection, and the same descriptors distinguish the explicitly revealable connection fields
-from write-only secrets. Keep, replace and remove have separate edit intents.
-
-Revealing values alone does not make a write. The user can edit the loaded URL or individual
-arguments without re-entering the remaining list. Hidden URL and credential inputs keep stored
-values when blank; removal is explicit. Argument edits replace that list while preserving other
-fields. Exposure rule editing replaces its ordered map in displayed order, including
-removed/re-added patterns; other edits leave it untouched. Configuration removal does not delete
-Pi's separate OAuth credential store.
-
-### Saving and applying
-
-Writes validate the edited native fields through the same document transaction as model settings.
-The revision binds the resolved target and exact source text. Publication uses native-compatible
-locks and atomic restrictive-mode replacement. Final symlinks retain both lexical and target
-authorities; publishing rechecks the target and revision. Project symlinks stay within their project.
-Added names are checked across user/project files for Pi's hyphen/underscore namespace collisions;
-exact same-name overrides remain legal. Concurrent user/project additions cannot both publish
-conflicting names. Invalid files and conflicting edits are reported, not overwritten. A conflict
-keeps the form draft; Refresh reads the new revision without clearing edits, and another explicit
-Save merges only the edited subset. Drafts survive category changes but are withdrawn on
-session/directory/Host ownership changes; stale asynchronous results cannot populate the new owner.
-
-A successful write reports saved-to-file, not applied. For an Inspire-owned session, the optional,
-confirmed **Reload selected session** uses the existing idle-worker Reload path. Busy, unready or
-read-only targets are unavailable with an explanation; a declined dispatch is not reported as sent.
-For a taken-over terminal Pi, the panel directs the user to run `/reload` in its terminal.
-New workers read the saved configuration.
-Save failure keeps the draft. A successful save followed by a read failure still reports the
-successful commit and asks for Refresh.
-
-User guide: [MCP configuration](../../docs/mcp.md).
-
-## Current-worker interface boundary
-
-Pi 1.3 public registration APIs describe declarations, not a complete loaded-runtime inventory.
-`getMcpServers` omits the full file-server connection/tool state. Taking over
-`mcp_servers_change` would implement connections rather than observe them.
-
-| Decided GUI capability | Available interface and precise remaining block |
+| Source | Authority and precedence |
 | --- | --- |
-| Loaded server/status rows, source details and attributable errors | RPC `/mcp` emits native status text. No complete structured current-worker inventory exposes loaded file and extension entries, source, auth state and errors together. Do not parse presentation text into invented state. |
-| Searchable, bounded tool inventory for a server | Public generic tool information is not the complete server inventory, including disabled, disconnected and overridden entries. A native attributable inventory is still required. |
-| Login/logout/reconnect on the owning connection | Public `/mcp login <server>`, `logout` and `reconnect` commands remain usable through the session's existing command surface and native UI notifications. Dedicated row actions still need the loaded owning entry and attributable outcome; a generic handled-command receipt is not success. No independent CLI login is labeled current-worker management. |
-| Immediate enable/exposure controls | Native TUI offers these actions; documented RPC subcommands do not. File-enabled/exposure editing is implemented as saved policy only, with explicit Reload. A supported loaded-policy setter/result remains missing. |
-| Connection-error navigation | Requires an attributable server/owner error; navigation must not imply repair. |
-| Extension-registered servers | Native declarations retain source and in-memory mutation ownership. They are not projected as editable disk entries. |
+| User | `getAgentDir()/mcp.json`. Remains editable without a project, including when the project file is unavailable or invalid. |
+| Project | `<cwd>/.pi/mcp.json`. An addressed session supplies its Host-resolved cwd, otherwise New supplies the selected directory. A closed session is rejected. Project writes require an existing directory and contain symlink targets within it. |
+| Full project entry | Replaces the same-name user definition. Pi loads it according to project trust. Reading and editing run no project code and grant no trust. |
+| Project policy | Inherits the same-name user server. Only `enabled`, `exposure` and `toolExposure` can change. The Host validates the merged definition without copying credentials into the project. |
 
-Changing a file to disable a server leaves its existing RPC connection loaded; native reconnect
-still targets that entry. A separate `pi mcp list --json` reads the changed file instead.
-The unsupported `/mcp disable <server>` can return a handled receipt with usage guidance.
-Current-worker controls therefore need attributable runtime state and action results.
+Show the path, errors and rows for each available file. Rows identify the server, transport,
+file-disabled state and same-name override. With no project, show user configuration and a
+project-selection hint. Offer **Customize for this project** on user rows when the project file is
+editable and has no same-name entry. Its form starts with inherited defaults and enables Save
+after a policy edit. **Inherit from user** removes the field. Removing the override restores
+inheritance.
 
-Configured MCP tools and Codemode composition continue through Pi.
+### Editing and protected values
 
-## Checks
+Add sits beside the section title and starts with name, target and transport. Edit fixes the
+identity, target and transport. New focuses Server name, existing definitions focus URL or
+Program, and policy overrides focus Tool exposure with its menu closed. Save, Cancel and the
+focused field's label remain visible as the form scrolls. Project forms explain trust.
 
-File tests cover native parsing, scoped policy and protected values. The shared configuration-file
-suite covers revision authority and publication. Browser tests cover draft ownership, Reload
-admission, responsive stored-value editing, and saving and removing project definitions and overrides.
+- Stdio accepts one executable and argument rows. Streamable HTTP accepts a URL. Advanced controls
+  cover environment or headers, working directory, OAuth, description, timeout in seconds, enabled
+  state and ordered exposure rules. Switching transport while adding retains each draft and submits
+  only the selected fields.
+- Shared field descriptors define patches, controls and safe public values. Lists expose connection
+  presence, key names and counts. **Show saved URL** or **Show saved arguments** reads only the
+  active transport's field for the reviewed entry. This authenticated, non-cacheable read leaves
+  hooks unevaluated. An owner or revision change retires the reveal. Refresh retains explicit edits.
+- Blank protected fields keep their stored values. Replacement and removal are explicit. Edits to
+  revealed arguments replace the array. Editing exposure rules replaces their map in displayed
+  order, including removed and re-added patterns. Reverting a draft preserves the original field.
+  Other entries, unknown fields and unedited nested values survive publication.
+- OAuth defaults to Auto. An untouched registration field retains its absence. Display Auto, DCR
+  and CIMD and allow Pi's native client ID, name, metadata URL and callback fields. The form uses
+  the presence of stored identity fields to flag CIMD conflicts and requires explicit removal.
+  The Host validates the complete merged OAuth object, including port consistency and CIMD's
+  loopback HTTP `/callback` restriction.
 
-## Related interfaces
+### Publication and application
 
-Remaining requirements: [[pi-capability-gaps]]. Native references: installed Pi `docs/mcp.md`,
-`docs/cli.md`, `docs/rpc.md`, `docs/extensions.md` and public SDK declarations.
-Related contracts: [[pi-integration]], [[interface-preferences]], [[tool-presentations]].
+Use the native-file transaction and draft ownership defined in [[model-settings]]. Cross-file
+additions serialize the check for Pi's hyphen/underscore name collisions. Exact same-name project
+overrides remain legal. A conflict keeps the draft open. Refresh reviews the new revision and an
+explicit Save merges the edited fields. Removing a server leaves Pi's separate OAuth store intact.
+
+New workers read saved configuration. For an Inspire-owned idle worker, **Reload selected
+session…** requires confirmation and reports the result here. A taken-over terminal Pi uses
+`/reload` in its original terminal. See the [user guide](../../docs/mcp.md).
+
+## Current-worker management
+
+The following controls remain decided and await a supported public interface. Pi's
+`getMcpServers` reports registrations and `mcp_servers_change` delegates connections to its
+handler. Neither observes the complete state of the owning worker.
+
+| Capability | Required evidence |
+| --- | --- |
+| Status, source and error navigation | Structured, attributable file and extension server state, including auth and connection errors. |
+| Searchable, bounded tool inventory | Tools for the addressed server, including disabled, disconnected and overridden entries. |
+| Login, logout and reconnect | Loaded server identity and attributable outcome. The native `/mcp` commands remain available. |
+| Immediate enable and exposure controls | A supported setter and result on the loaded worker. File policy applies on a fresh load. |
+| Extension entries | Their native source and in-memory mutation owner. Disk edits apply to file entries. |
+
+A running RPC connection can stay loaded after its file entry is disabled. Shell `pi mcp list`
+starts independent connections, and a handled RPC command can return usage guidance. These
+responses cannot establish a row's runtime state. See [[pi-capability-gaps]], [[pi-integration]],
+[[interface-preferences]] and [[tool-presentations]].

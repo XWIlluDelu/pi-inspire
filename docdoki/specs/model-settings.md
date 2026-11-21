@@ -10,18 +10,16 @@ covers:
   - src/styles/model-settings.css
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-file.test.ts
-  - tests/integration/model-cycle-native.test.ts
+  - tests/integration/{model-cycle-native,model-thinking.integration}.test.ts
   - tests/web/{configuration-document,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition}.test.ts*
   - tests/browser/{model-selection,model-settings*,model-workflow,provider-authentication}.spec.ts
 progress: in-progress
+area: "Input & Models"
 ---
 
 # Model settings and authentication
 
 ## Goal
-
-Manage Pi's model configuration and authentication without replacing native storage, trust or current
-session selection. Preserve selected routing identity separately from physical response identity.
 
 Settings manages Pi's startup defaults, common-model scope, `models.json` declarations and saved
 credentials. The session picker changes the current selection. Both use Pi's available models;
@@ -39,18 +37,11 @@ confirmation.
 
 ## Interface
 
-Models settings separates three tasks:
-
 | Section | Controls |
 | --- | --- |
-| Models | Searchable model rows with inline Common, Default and declaration actions; saved-default Clear; default thinking; ordered common rules |
-| Login & API keys | Saved credential status and Manage; Connect provider; provider → method → login navigation |
-| Custom providers | Collapsed declaration selector with counts; Add provider and selected declaration actions |
-
-Select a model to inspect its identity and actions below the list. Common uses a checkbox for
-direct membership and a rule action for pattern-based membership. Set as default saves one model,
-and Clear removes that saved value. “Model default” clears explicit default thinking. Controls,
-disclosures and focus styling follow [[design-system]].
+| Models | Searchable rows with Common, Default and declaration actions. Clear removes the saved default. “Model default” clears explicit thinking. |
+| Login & API keys | Saved credentials and Connect provider, followed by method selection and login. |
+| Custom providers | Collapsed declarations with counts, Add provider and actions on the selected declaration. |
 
 The picker and Settings share one virtualized list. Search, Up/Down and Home/End reach the full
 filtered results. In Settings, Enter or a click selects a model for inspection, and the detail
@@ -100,8 +91,9 @@ Router in the existing model list. A physical response does not replace the sele
 Live selection comes from the owning Pi, including after branch navigation. A taken-over Pi
 supplies its own available catalog and selection through attach-control. Model and
 thinking setters return actual state, including native adjustment and extension changes, without a
-second setter overriding that decision or changing saved defaults. Native model cycling stays in the
-original terminal; explicit selection and supported thinking-cycle gestures use the GUI controls.
+second setter overriding that decision or changing saved defaults. The picker uses Pi's model
+metadata. Owned workers perform the thinking cycle through Pi RPC. An attached Pi uses its public
+thinking setter for the GUI cycle. Model cycling for attached Pi stays in the original terminal.
 Controls require advertised support, not merely an external owner or idle status. Unsupported controls
 cannot disable the separate configuration/credential surfaces. For inactive sessions,
 selection follows the viewed branch and Pi's recovery rules with current registration metadata.
@@ -181,7 +173,8 @@ scrolls. [[design-system]] defines scrolling in short windows. Errors stay in th
 
 Select a custom provider or model by identity to see its declaration actions. Models and MCP
 share the editor's document, selection, draft and async ownership rules. Switching categories
-retains drafts, search and loaded data. Hidden forms wait to take focus or scroll. Back and Cancel
+retains drafts, search and loaded data. Changing the session, prospective directory or Host
+connection retires file drafts and their pending responses. Hidden forms wait to take focus or scroll. Back and Cancel
 discard the draft and restore the browsing context and originating control. Creating a provider
 focuses Add model. Creating or renaming an available model selects the saved identity for
 inspection. Common and Default writes leave focus under the user's control.
@@ -195,26 +188,24 @@ model turn or persistent session and keeps factory errors and credentials out of
 only after revision and atomic-publication checks.
 
 Model and MCP editors use the same native-file transaction and revision of the resolved target and
-exact source text. Writes detect conflicting external edits, accept native file syntax and follow
-existing configuration symlinks under the same lock authority as native edits. Regular files take
-one native target lock; final symlinks keep lexical and target authorities. Publication rechecks the
-target and revision. After publication, a readback failure produces a warning and a recovery action
-without changing the save result. Reload the files before the next edit.
+exact source text. Writes accept native syntax and use native-compatible locks and atomic
+restrictive-mode replacement. Regular files lock their target. Final symlinks lock the lexical
+path and target. Publication rechecks both the target and the reviewed revision. After publication, the editor retries a failed readback before reporting that
+the save succeeded and the settings could not be refreshed.
 
 A configuration save invalidates cached workspace metadata. For an addressed session, it refreshes
 that worker only; other workspaces rediscover on demand. Without a session, it refreshes the edited
 workspace catalog. Refresh preserves ongoing work and the current selection. The explicit Refresh
 control rereads external changes while Settings remains open. Earlier catalog/settings reads cannot
 replace a newer published write snapshot in the picker or Common scope, including its error state.
-Settings opens and refreshes through a single read that requests both the native catalog and file
-configuration. A discovery failure preserves the last picker choices and reports the problem while
-keeping file edits available.
+Opening Models and its Refresh action each request the native catalog and file configuration in
+one read. A discovery failure keeps the last picker and Common choices, reports the problem, and
+keeps file edits available. A committed save retires older reads even if its readback fails.
 
 ## Authentication
 
-Connected and available providers use the same list rows with one selected provider detail. The
-available list filters by provider name and ID. Authentication methods and credential removal stay
-in that detail, and each method can show its own remote login instructions.
+Connected and available providers share rows. The selected provider shows authentication methods,
+credential removal and method-specific remote login instructions.
 
 Provider methods come from the installed Pi, including native and extension API-key/OAuth flows.
 `/login` opens provider selection and may reveal an unambiguous provider's methods; authorization
@@ -241,25 +232,6 @@ keeps settled outcomes so clients can recover a lost final response.
 
 Stored or resolved keys/tokens are omitted from ordinary model/status payloads and logs. Logout removes
 Pi's saved credential; environment and `models.json` credentials are managed separately.
-
-## Configuration checks
-
-- `tests/server/model-metadata.integration.test.ts` exercises native global/trusted-project provider
-  composition, inherited model declarations, unrelated-provider edits, an explicit agent-directory
-  authority, and validation without a turn or persistent session.
-- `tests/server/model-settings.test.ts` covers native file syntax, preserved unedited declarations
-  and protected credentials.
-- `tests/server/configuration-file.test.ts` covers shared publication, concurrent edits, changed
-  targets, invalid documents, committed saves with failed readback and lock release after cleanup
-  failure. MCP uses the same transaction.
-- `tests/browser/model-settings.spec.ts` uses native declarations to prove provider setup, rejected
-  candidates, global default saves and direct and wildcard Common edits from New's prospective
-  project. It also checks unavailable preferences, catalog failures and the identity of typed
-  declarations. A later Settings visit uses the selected saved session's owner.
-- `tests/browser/model-workflow.spec.ts` covers trusted extension defaults, native explicit and
-  inherited startup choices, and confirmed project controls before first input.
-- `tests/web/welcome-model-transition.test.tsx` covers blocked or failed inheritance, stale
-  directory discovery and unavailable models.
 
 ## Related contracts
 

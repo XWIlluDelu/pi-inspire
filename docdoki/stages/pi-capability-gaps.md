@@ -6,6 +6,7 @@ scope:
   - server/**
   - shared/**
   - tests/**
+specs: [composer, mcp, model-settings, pi-integration]
 ---
 
 # Pi capability gaps
@@ -16,8 +17,8 @@ Implemented behavior belongs to [[pi-integration]], [[model-settings]], [[mcp]] 
 
 ## Blocked requirements
 
-The gaps below remain in Pi 1.5.0, checked against its public RPC command types and handlers,
-extension contexts, and SDK declarations for session mutation, settings and resource loading.
+This inventory is validated against Pi **1.6.0** and tracks GUI requirements blocked by missing
+owning-worker interfaces in Pi's public RPC / Extension APIs.
 
 | Requirement | Missing interface |
 | --- | --- |

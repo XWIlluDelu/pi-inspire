@@ -4,8 +4,9 @@ scope:
   - src/components/{ContextPane,FilesPane,ChangesPane,WorkspaceBrowser,FilePreview}.tsx
   - src/controllers/{workspace,resource,git}-controller.ts
   - src/styles/*.css
-  - tests/web/resources-pane.test.tsx
+  - tests/web/workspace-controller.test.ts
   - tests/browser/filesystem-files.spec.ts
+specs: [resource-preview, workspace-layout]
 ---
 
 # File browsing experience

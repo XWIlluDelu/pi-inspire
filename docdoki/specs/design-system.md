@@ -27,9 +27,10 @@ covers:
   - shared/contracts.ts
   - src/**/*.tsx
   - tests/web/theme-init.test.ts
-  - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,responsive-inputs}.spec.ts
+  - tests/browser/{shell-layout,settings-layout,palette-preferences}.spec.ts
   - tests/browser/support/colors.ts
   - tests/browser/loading-states.spec.ts
+area: "Visual & Preferences"
 ---
 
 # Design system
@@ -250,9 +251,11 @@ enabled state; disabled styling takes precedence over local action styles.
 | Flux Mono SC | Code, paths, identifiers, timestamps, shortcuts and machine data. |
 | Bundled KaTeX faces | Mathematical glyphs. |
 
-Latin core faces load with the shell. The complete checksum-pinned CJK registry loads after
-authoritative bootstrap so it does not compete with first render, and fetches only used Unicode
-subsets. Structural labels (`--font-label`: resource tabs, Settings section headings and command-palette
+Latin core faces load with the shell. The checksum-pinned CJK registry (IBM Plex Sans SC full
+GB2312 Regular plus high-frequency 3-weight shards, and Flux Mono SC high-frequency CJK Regular
+shards) loads after authoritative bootstrap so it does not compete with first render, fetching
+only used Unicode subsets and falling back cleanly to system CJK faces for rare glyphs. Structural
+labels (`--font-label`: resource tabs, Settings section headings and command-palette
 group headings) share IBM Plex Sans SC in authored sentence case without tracking, using 500 (600
 for Settings sections, selected resource tabs and palette groups). Activity headings use Flux Mono
 SC at 11.5px and 400, uppercase
@@ -311,9 +314,11 @@ pressed states. Settings, pickers, History, Files/Changes, document previews and
 scrolling inherit this treatment. Chromium/WebKit use an 8px track with a 6px visible thumb and no
 arrow buttons; Firefox uses its native thin geometry. High-contrast mode retains system colors.
 
-Terminal's own slider uses the same color roles and visible thickness while retaining its drag
-target and scroll handling. Navigation, conversation and editor activity docks use native scroll
-areas. Tab strips hide their scrollbars. Embedded documents retain their own styles.
+Navigation and editor activity docks scroll natively. The session list and Hidden use the full
+width when they fit. With a fine pointer, the conversation's draggable scrollbar floats in the
+reading column's right margin. Touch scrolls natively.
+Terminal's slider keeps its own drag target and scroll handling with the same thumb colors and
+visible thickness. Tab strips hide their scrollbars. Embedded documents retain their own styles.
 
 ## Pane and navigation presentation
 
@@ -348,11 +353,11 @@ precede folders and keep the shared text axis. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
 
-The contextual header uses the compact pane toolbar with an adjacent row of Files, Changes,
-New terminal, Refresh and drawer Close actions. File and terminal tabs share a scrollable strip
-with a searchable Open tabs list. A compact pane gives the strip its own row when tabs are present.
-Selected tabs and tool modes use the same accent tint and keep inset keyboard focus. The Changes
-tab shows up to `99+` next to its icon and gives the exact total in its title.
+The contextual header puts Files, Changes and History beside New terminal, Refresh and drawer
+Close. The phone drawer labels its modes with text. Changes shows up to `99+` beside its icon
+or label and gives the exact total in its title. File and terminal tabs share a scrollable strip
+with searchable Open tabs and get their own row in a compact pane. Selected tabs and modes
+share an accent tint and inset keyboard focus.
 
 Session, conversation and workspace search use muted icons/placeholders and ink-colored input,
 stronger hover icons and accent focus borders. Session search rests on an inset control surface with
@@ -366,7 +371,8 @@ navigation buttons stay anchored as the query changes. The field can yield trail
 compact numeric count with a full accessible announcement. Navigation buttons keep at least 24px
 targets, with 36px targets for touch and phone layouts, clear of the count.
 Workspace and History search share a 34px field, 13px search icon, 12px inner inset and
-8px icon/text gap, starting 4px below the contextual tool header.
+8px icon/text gap, starting 8px below the contextual tool header. Both fields are 40px high
+in the drawer and on coarse-pointer layouts.
 
 Selected session rows and collapsed folders containing the selection use a quiet accent tint. The
 row retains its selection fill when its select button is disabled. Folder rows and headings share a
@@ -435,11 +441,9 @@ optional Stop and rightmost Send. Context usage uses a ring and a stable-width p
 hover/focus tooltip for token counts. It fits the same row as Send and preserves the empty
 composer's height. Send is icon-only. Stop has a square glyph and filled error-color treatment,
 including compaction and shell cancellation. DOM and tab order follow visual order.
-At viewport widths up to 460px, Model and Thinking share the first row, with file tools, context
-and Send/Stop below. Selectors in the compact arrangement stay adjacent with an 8px
-gap. Thinking keeps its full width and Model shrinks without filling spare space. Long model labels
-truncate inside their trigger. Steer/Queue split their row equally. Constrained desktop panes also use the
-compact arrangement under [[workspace-layout]]. Completion titles wrap without displacing
+Model and Thinking stay together, with file and delivery actions wrapping as a group when the
+toolbar has insufficient width. Thinking keeps its label, and long model names truncate inside
+their trigger. Steer/Queue split their row equally. Completion titles wrap without displacing
 adjacent path hints. Model badges and selected rows keep AA contrast.
 
 Running, Retry and Compaction use static semantic halos. Conflict recovery keeps its warning
@@ -480,12 +484,10 @@ remain distinct attributed forms with directly selectable options.
   to their content within the stack's width; diagnostics wrap without losing Copy/dismiss. Those
   actions keep 24px mouse or 32px touch targets, aligned with the message's first line. Embedded
   resource errors and richer update cards keep their contextual presentation.
-- Placement: Welcome and conversation views share one floating feedback owner and presentation; a
-  page transition does not move notices into page flow or widen them to the start composer's width.
-  Notices anchor at the top-right at every width, below the header, current banners and any
-  overlapping transcript search or mobile tool row, and the stack stays above the bottom safe inset.
-  Editor height does not move this anchor; the editor's top edge only limits the scrollable stack
-  when their horizontal ranges overlap. Placement follows toolbar, editor, banner and pane resizing.
+- Welcome and conversation share one floating notice stack, anchored to the page's top-right edge
+  inside the safe area and below any native window title bar. Notices can cover the workspace header,
+  transcript controls and content. The stack reserves no space in the layout. Its bottom edge clears
+  the safe area and the editor when their horizontal ranges overlap.
   Empty space beside content-sized cards does not intercept input. Non-modal notices sit below
   active modal dialogs instead of covering their content or controls. On narrow layouts, navigation
   and resource drawers also own modal interaction: notices sit below the drawers and any scrim, keep
@@ -761,7 +763,7 @@ layout space. Presentation follows the action's role:
 | Subordinate exit/navigation | Quiet: form/pre-execution Cancel, Palette Back and Dismiss after login. Compact links and icon-close actions keep their unframed form. |
 | Content/read recovery | Quiet, including Host status recheck. A retry that executes a restart keeps execution styling. |
 | Secondary history/navigation | Quiet: History pagination/Fork/Clone, earlier-branch Clone and directory-root shortcuts; root shortcuts keep compact mono text. |
-| Primary/preferred execution or navigation | Emphasize Save/Submit, Add/Reset and branch continuation. Response choices, active Cancel login and dangerous execution keep ordinary/primary/danger variants. Restore saved position uses a quiet action in the continuation notice. |
+| Primary/preferred execution or navigation | Emphasize Save/Submit, Add/Reset and branch continuation. Response choices, active Cancel login and dangerous execution keep ordinary/primary/danger variants. Continue from latest saved point uses a quiet action in the continuation notice. |
 
 The directory picker's editable path shares Welcome's canvas fill, line border, small radius and
 inset focus mark, with mono text, soft wrapping and content-sized height above the bordered directory
@@ -783,8 +785,7 @@ follows [Content copying](#content-copying), independently of presentation type.
 - Motion explains a transient surface, disclosure, or live work. Shared durations are 90ms micro,
   150ms standard, and 180ms panel. Short card/palette entrance and disclosure transforms are
   permitted. [Composer presentation](#composer-presentation) defines its state halo. Reduced motion
-  removes nonessential animation and collapses transitions to a negligible duration; each live-state
-  surface keeps a static indication.
+  disables animations and transitions. Each live-state surface keeps a static indication.
   - Indeterminate work uses one seven-point Π, with a staggered pulse in the square icon
     slot. Reduced motion keeps the same glyph static.
   - Sidebar working states use Π; unread completion/failure use matching linked-dot check/cross.

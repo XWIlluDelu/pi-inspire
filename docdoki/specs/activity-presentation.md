@@ -1,5 +1,5 @@
 ---
-purpose: Thinking and tool activity keep stable disclosure identity, bounded lazy bodies, independent density preferences, and Pi-owned lifecycle states.
+purpose: Thinking and tool activity keep stable disclosure identity, bounded lazy bodies, adaptive disclosure, and Pi-owned lifecycle states.
 covers:
   - src/components/transcript-{activity-visibility,fold,row-projection,rows,cards}.ts*
   - src/ansi.ts
@@ -14,6 +14,7 @@ covers:
   - tests/web/activity-visibility.test.tsx
   - tests/web/events.test.ts
   - tests/server/runtime-transcript.test.ts
+area: "Conversation & Content"
 ---
 
 # Activity disclosure
@@ -30,25 +31,24 @@ Every maximal run of visible non-response activity forms one group, including ru
 assistant-message boundaries. Thinking, tool and generic content keep their identities inside it.
 Displayed custom messages break the group and remain independently readable.
 
-| Density | Presentation |
-| --- | --- |
-| Expanded | All activity in source order. |
-| Compact | Latest 24 items. Earlier activity reveals the omitted prefix in the same group. |
-| Collapsed | Shows the Activity disclosure and matrix. Opening reveals Compact. |
-| Adaptive (`dynamic`) | Starts Compact while running and closes when settled unless the reader has opened or is inspecting it. |
+Activity groups always use adaptive disclosure: they open to the latest 24 steps while running
+(with an inline `Show N earlier steps` row when longer) and fold to the Activity disclosure and
+matrix once settled, unless the reader has opened or is inspecting them. Opening a settled group
+reveals the latest 24 vertical rows.
 
-The header and footer can collapse an open group. Earlier activity expands the omitted prefix
-in place. The group stays open during inspection and no page controls interrupt reading.
+The header collapses an open group. A multi-item group taller than the usable transcript shows a
+second collapse control below the vertical guide, using the header's typography and chevron axis.
+The earlier steps expand in place from a plain disclosure row aligned with the nested activity arrows.
+The group stays open during inspection and no page controls interrupt reading.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
 expanded details keep their internal spacing. On fine-pointer desktops, activity headers are at
 least 28px high and adjacent Activity groups and context checkpoints are 8px apart.
 
 A single neutral vertical guide connects the open group's activity. Assistant-turn attribution rows
-and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 13px,
-secondary ink. Individual identities use the smaller compact size and medium weight. Labels retain intrinsic
-layout width; positive 8px gaps separate label and summary without horizontal scaling or
-label-length-specific negative margins.
+and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 11.5px,
+in secondary ink. Individual identities use 12.5px and medium weight. Labels retain
+their intrinsic width. The matrix sits beside the Activity label, with a wider gap before the summary.
 
 The group header includes a one-line summary in the label's mono face at metadata size (`11.5px`) on the label baseline with quieter ink, separated
 by `" · "` like peer tool metadata and built from the same bounded telemetry: the step count, up to
@@ -70,10 +70,11 @@ without an inert arrow.
 
 Thinking and tool details open as indented reading content with no outer frame, tint, or shadow.
 Expanded text aligns with its header title. Code, Diff and output keep their local reading surfaces;
-a nested tool list has its own shallow guide. Summaries are prose and metadata is subdued. A summary is
-separated from its identity/status group more clearly than an adjacent expanded-state Copy is;
-tightening Copy spacing must not crowd the summary. Completion/failure marks
-keep their semantic green/red in parent tools and nested calls; live work keeps its running cue.
+a nested tool list has its own shallow guide. Thinking summaries use the same subdued typography
+as CodeMode duration and call counts. A summary is separated from its identity/status group more
+clearly than an adjacent expanded-state Copy is. Tightening Copy spacing must not crowd the summary.
+Completion/failure marks keep their semantic green/red in parent tools and nested calls.
+Live work keeps its running cue.
 
 
 Open activity bodies share one outer rhythm; no trailing card margin is added to the fold gap.
@@ -91,20 +92,16 @@ while adopting native entry IDs for its rows. A matching Pi tool-call ID keeps d
 card and reader choices across pages and checkpoints. Other row-local choices can reset
 when the owning native row changes. Older activity loads in the conversation scrollport.
 
-## Independent card preferences
+## Individual activity cards
 
-Thinking supports Adaptive, Expanded, Collapsed, and Hidden. Tool activity additionally supports
-Compact. These preferences are independent of the surrounding band's density.
+Thinking and tool calls always render as vertical single-line disclosure rows when closed and open
+adaptively while active, with per-card click overrides.
 
 Thinking remains separate from answer text. Terminal control formatting is removed for display;
-Pi history is unchanged. Tool Compact keeps each card header visible with its body closed.
-Tool Compact uses individual tool disclosure rows. Collapsed presents consecutive settled calls
-as a strip of tool icons. Choosing an icon opens its card below the strip.
-
-Empty native Thinking bodies, including whitespace-only and display-stripped terminal formatting,
-stay closed under Expanded or Adaptive preferences. Their headers remain available, and a manual
-open or close still overrides the default as content arrives. Configured Thinking presentations can supply their own content and
-keep normal disclosure behavior.
+Pi history is unchanged. Empty native Thinking bodies, including whitespace-only and
+display-stripped terminal formatting, stay closed while running; their headers remain available,
+and a manual open or close still overrides the default as content arrives. Configured Thinking
+presentations can supply their own content and keep normal disclosure behavior.
 
 One native disclosure owns the complete header hit area, including plain summary text and remaining
 space. Copy and file-reference controls are separate siblings above that hit area and act

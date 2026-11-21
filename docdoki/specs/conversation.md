@@ -16,13 +16,12 @@ covers:
   - src/components/RichText*.tsx
   - src/rich-text-*.ts
   - src/remark-math-boundaries.ts
-  - tests/web/rich-text*.{ts,tsx}
+  - tests/web/rich-text*.test.tsx
   - tests/browser/rich-text-delimiters.spec.ts
   - src/components/Transcript.tsx
   - src/components/TranscriptUtilities.tsx
-  - tests/browser/reading-navigation.spec.ts
   - tests/server/native-turn-history.test.ts
-  - src/components/transcript-activity.ts
+  - src/components/transcript-activity-visibility.tsx
   - src/components/transcript-cards.tsx
   - src/components/transcript-fold.tsx
   - src/components/transcript-rows.tsx
@@ -54,10 +53,11 @@ covers:
   - tests/browser/custom-message.spec.ts
   - tests/browser/assistant-error.spec.ts
   - tests/web/transcript-fold.test.tsx
-  - tests/web/prompt-map.test.tsx
-  - tests/web/transcript-virtual-search.test.tsx
+  - tests/browser/history.spec.ts
+  - tests/web/live-transcript-search.test.tsx
   - tests/web/transcript-viewport.test.tsx
   - tests/server/runtime-transcript.test.ts
+area: "Conversation & Content"
 ---
 
 # Conversation experience
@@ -145,22 +145,26 @@ boundaries in this contract.
   output and context summaries use the same display normalization for search and rendering, so
   terminal control sequences and removed summary prefixes add no invisible matches.
 
-  Desktop search remains visible as a compact single-row input at the top-right of the reading
-  measure. Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text without
+  Desktop search floats as a compact single-row input at the top-right of the reading measure. A
+  top inset clears the first row and positions revealed matches below the search control.
+  Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text without
   an extra launcher. Escape blurs the desktop input while preserving its query, highlights and
   selected match; clearing the input releases match ownership. IME composition, modal and contextual
   surfaces keep their keyboard ownership. Local-tool placement follows [[design-system]]: the
   launcher and working surface form one interaction rather than disconnected destinations.
 
-  [[design-system]] owns the row's surface and states. Search and narrow navigation surfaces reserve
-  no layout height; opening them preserves the
-  scrollport and reading position. Session/view changes retire search state. Width changes keep an
-  active query visible in the corresponding desktop or narrow tool; neither layout keeps an
-  invisible active search.
+  [[design-system]] owns the search surface and states. Search and narrow navigation surfaces
+  reserve no layout height. Session/view changes retire search state. Width changes keep an active
+  query visible in the corresponding desktop or narrow tool.
 
-  On a narrow workbench, adjacent Search and Prompt Map launchers live in the conversation
-  tool row. Search replaces that row in place with an input across the reading width, focusing
-  and selecting its text. Close or Escape clears the query and match ownership, closes the row,
+  On narrow screens, equal-sized Search and Prompt Map buttons float at the transcript's top-right.
+  The Prompt Map icon echoes the navigation bar's vertical ticks. The transparent toolbar takes
+  no layout height. A top inset keeps the first row's actions below the buttons.
+  Opening a tool preserves the scrollport and reading position. Prompt Map has a Close button in
+  both the compact navigation bar and the expanded prompt list. It dismisses the whole tool and
+  returns focus to its launcher.
+  Search replaces the launchers with a floating input across the reading width, focusing
+  and selecting its text. Close or Escape clears the query and match ownership, closes the input,
   and restores focus to its local launcher. An outside press dismisses narrow Search. The scope
   choice stays inside the shared search field.
 
@@ -338,12 +342,10 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   gestures are idempotent; [[pi-integration]] owns Host request/worker validation, deadlines,
   reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
-- Pending sits at the end of Transcript; the composer-adjacent activity surface provides a compact
-  count and Jump to Pending action. That surface keeps the Composer's full measure and left alignment
-  for Pending, retry and compaction states, including in short windows. Retry/compaction feedback
-  belongs to the activity surface; running and failed tools stay in their chronological cards.
-  [[composer]] owns navigation, previews, copying, recovery and discard; [[design-system]] owns
-  visual emphasis. Pending is a projection of Pi/Host-owned input, not a browser-owned queue.
+- Pending sits at the end of Transcript, with a compact jump button near the Composer.
+  The activity surface above the Composer owns retry and compaction feedback. Running and failed
+  tools stay in their chronological cards. [[composer]] owns Pending presentation and actions.
+  Pending is a projection of Pi/Host-owned input, not a browser-owned queue.
 
 - Running, retrying, compacting, queued, user-stopped, failed, and settled states remain
   distinguishable; a user-initiated abort is presented as `Stopped`, not as a failed run.
@@ -354,8 +356,8 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   prompt jump supersedes an in-flight page request. A failed read keeps the confirmed rows and
   retries the requested location. Jump to latest reconnects the viewport to live output.
 - Live uses the bounded tail and native checkpoint updates. Manual scrolling or inspecting
-  content pauses follow. If a checkpoint cannot confirm a live row, keep the output visible
-  with an unconfirmed indication.
+  content pauses follow. Keep live output visible while matching it to native history in the
+  background. A missed match adds no transcript row or warning and does not break an activity group.
 
 ## Non-goals
 

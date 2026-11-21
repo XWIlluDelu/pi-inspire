@@ -9,35 +9,10 @@ Inspire ships native cards for `read`, `write`, `edit`, `bash`, `powershell`, `g
 also loads an internal GUI bridge (branch navigation, model-catalog refresh, retry settings and
 authentication) that adds no model tools.
 
-| I want to… | Use | Changes Inspire source? |
-| --- | --- | --- |
-| Ask the user a question or a permission | `ctx.ui.select` / `confirm` / `input` / `editor` ([recipes](#permission-and-question-recipes)) | No |
-| Show a short live fact (usage, mode) | `ctx.ui.setStatus` ([usage footer](#usage-footer)) | No |
-| Show a live list near the Composer | `ctx.ui.setWidget` ([Todo widget](#todo-widget)) | No |
-| Offer an occasional action | `registerCommand` (palette and `/` completion) | No |
-| Give a custom tool a readable card | [Tool-presentation rule](tool-presentations.md#example) | No (JSON) |
-| Add a Fast/Standard-style toggle | [Status control](tool-presentations.md#extension-adapters) | No (JSON) |
-| Add a dedicated panel or control | [Source DIY](#custom-cards-and-source-changes), e.g. the [task board](examples/task-board/README.md) | Yes |
-
-Start with the [native UI example](#try-the-native-ui-example). To share sessions with terminal
-Pi, install [attach-control](#share-sessions-with-terminal-pi). [Reload and verify](#reload-and-verify)
-explains how to apply each kind of change.
-
-## Choose the smallest integration
-
-There are three levels:
-
-1. **Native RPC, no frontend changes:** commands, standard dialogs, notices, status and text widgets.
-2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks, or
-   bind a discrete choice to an extension command and structured RPC status. See the
-   [status-control contract](tool-presentations.md#extension-adapters). Use this before adding
-   source-owned buttons; the extension retains state, persistence, and capability decisions.
-3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
-   still own state and behavior; Inspire does not supply a scheduler or permission policy.
-
-The [task-board example](examples/task-board/README.md) is a complete source integration: the Pi
-extension, shared data and actions, a props-only list/detail UI, the adapter, styles, mounting and
-reload steps, and cleanup checks. It runs demonstration timers instead of launching agents.
+For an end-to-end example, run the [native UI extension](#try-the-native-ui-example).
+For custom tool cards and status controls, see [tool presentations](tool-presentations.md).
+The [task-board example](https://github.com/XWIlluDelu/pi-inspire/tree/main/docs/examples/task-board)
+shows how to add a React view in a source checkout.
 
 ## What works through RPC
 
@@ -45,10 +20,10 @@ reload steps, and cleanup checks. It runs demonstration timers instead of launch
 | --- | --- | --- |
 | `registerCommand()` | Command palette and Composer `/` completion. | Use for occasional actions. Native command names take precedence; namespaced commands avoid collisions. |
 | `registerTool()` | Runs in Pi and receives a native, configured, or generic card. | Add a presentation rule for a useful stable data shape. |
-| `select`, `confirm`, `input`, `editor` | Shared keyboard, pointer, and touch dialogs after worker startup. | Move interactive setup into a command; see [startup](#startup) and the [runnable example](#try-the-native-ui-example). |
+| `select`, `confirm`, `input`, `editor` | Shared keyboard, pointer, and touch dialogs after worker startup. | Move interactive setup into a command. See [startup](#startup) and the [permission example](#permission-prompt). |
 | `notify` | Transient notice. | Use for completion, warning, or failure. |
 | `setStatus` | Compact top-bar status at every screen width; click, tap or use the keyboard to read full status text. Retained up to 1,024 characters, restored on reconnect, cleared with the worker. | Keep the main fact short; full retained text remains readable on demand. |
-| `setWidget(key, string[], options)` | Supplied text and Copy above or below Composer, without a key-derived heading. Reusing a key replaces it; `undefined` clears it. | Use for Todo lists, quotas, or next-prompt context. |
+| `setWidget(key, string[], options)` | Supplied text and Copy above or below Composer, without a key-derived heading. Reusing a key replaces it; `undefined` clears it. | See the [Todo widget](#todo-widget) and [usage footer](#usage-footer). |
 | `setWidget(key, componentFactory)` | Ignored by Pi in RPC mode. | Supply a string-array branch for RPC. |
 | `setTitle` | Browser document title. | Treat it as transient session presentation. |
 | `setEditorText`, `pasteToEditor` | Replace the Composer draft; RPC paste does not insert into existing text. | Use for a complete replacement, not an append. |
@@ -113,57 +88,37 @@ Keep state scoped to its Pi session and reconstruct it from persisted entries du
 
 ## Share sessions with terminal Pi
 
-[attach-control](../extensions/attach-control.ts) is a generic Pi extension that lets a local
-client attach to a live Pi and control it. Inspire uses it to show terminal Pi sessions and their
-activity, and to continue them. It is a single file that ships with Inspire:
+Install [attach-control](../extensions/attach-control.ts) to share a terminal Pi with Inspire:
 
 ```sh
 pi install /absolute/path/to/inspire/extensions/attach-control.ts
 ```
 
-New Pi processes load it. Run `/reload` in an idle terminal Pi to activate it there. Use
-`extensions/attach-control.ts` as the configured extension path.
+New Pi processes load it automatically. Run `/reload` in an existing idle terminal Pi.
+Inspire attaches automatically when one idle, controllable Pi is continuing the viewed branch.
+If that Pi is busy, **Take over** connects the browser to the running task. Both interfaces can
+send input, stop the task, rename the session or change its model and thinking level. If several
+processes match the viewed branch, leave the session in the others before taking over.
 
-With attach-control installed:
+**Input during a run.** Start `inspire pi` in the project directory to use Steer and Follow up
+from the browser. To resume a session, use `inspire pi --session <session.jsonl>`. Relative
+paths start in the calling directory. From another project with a source installation, invoke
+`node /path/to/inspire/inspire.mjs pi` there. This terminal uses Pi's native UI, saved trust,
+model scope and built-in MCP. Pi confirms each queued or handled input. With a regular `pi`
+process, send browser input while idle and queue busy input from the terminal. Both keep
+terminal queues outside Inspire's Pending.
 
-- A terminal Pi and Inspire can use the same session at the same time. There is no release or
-  handoff step. Search for **Copy resume command** in the command palette to get the terminal
-  command for the selected session.
-- Opening a session automatically attaches to a sole controllable Pi on the viewed branch if
-  it is idle. A busy Pi leaves the view read-only with progress and **Take over**. If the branch
-  is free, Inspire continues it with its own Pi.
-- **Take over** attaches to that Pi. The terminal keeps working, and both interfaces operate the
-  same context and work: input, Stop, rename, model and thinking go to it. A Pi
-  still at an older shared position does not block attaching to the one continuing the branch
-  you see. If several Pi processes match that view, leave the session in the other processes
-  before taking over.
-- If the attached Pi exits, moves to another session or branch, or stops answering for longer than a
-  reload takes, Inspire says which of these happened. It continues the same view with its own Pi
-  once the branch is available.
-  It does not claim a task failed: a Pi that moved or stopped answering may still be working, and
-  a task interrupted by an exit is reported as ended with an unknown outcome.
-- A read-only view follows the branch it opened on, even when another branch becomes the default.
-  **Switch branch…** in the title menu opens History to choose another branch. Appends from other Pi processes are ordinary session use. A session you
-  are working on in Inspire keeps its branch.
+Run shell and slash commands and answer native dialogs in the terminal. Browser Stop requests
+agent interruption. When Pi cannot confirm admission or a reply is lost, Inspire keeps the
+draft and checks the original receipt on retry. An input still in Pi's hooks can leave Stop
+unconfirmed.
 
-Limits of attaching to another Pi:
-
-- To send Steer or Follow up from the browser, start the terminal session with
-  `inspire pi` or `inspire pi --session <session.jsonl>` (from a source checkout:
-  `npm run inspire -- pi --session <session.jsonl>`). This opens Pi's native terminal UI using
-  its SDK, existing model scope, built-in MCP support and saved project trust. It confirms each input when Pi
-  queues or handles it. Native terminal queues remain outside Inspire's Pending.
-- A regular `pi` process running the extension can accept browser input when idle. While it
-  works, queue input in its terminal. The extension API cannot return a per-input queue
-  receipt, so Inspire refuses remote queue operations before sending them.
-- Stop interrupts agent work. Run Pi slash commands and start or stop terminal shell commands
-  from the attached Pi's own interface.
-- Answer a terminal Pi's native dialogs in its terminal.
-- A prompt receipt requires evidence of native admission. If an idle input is handled without
-  an observable result, or if the receipt is lost, Inspire retains the draft and checks the
-  original receipt on retry. Stop requests agent interruption and reports an
-  uncertain outcome while earlier input may still be in Pi's input hooks.
-- A Pi without attach-control is invisible to Inspire; both can still append to the same session.
+A read-only view stays on its branch. Use **Switch branch…** in the title menu to choose another,
+or **Copy resume command** in the palette to open the session in a terminal. If the attached Pi
+exits, switches sessions or branches, or stops answering beyond the reload window, Inspire reports
+what it observed. The Host continues the same view with its own Pi when that branch is free.
+An interrupted task with no confirmed outcome is shown as unknown. A terminal Pi without
+attach-control can still append to the session independently.
 
 **Protocol.** Each live session context writes a record (session ID and file, current branch
 leaf, activity, model, process identity, endpoint and token) to `pi-attach-control` under
@@ -194,11 +149,8 @@ normal extension configuration and reloading an idle session:
 - `/ui-demo timeout` — try a ten-second input request.
 - `/ui-demo clear` — remove the demo status and widgets. The recorded custom message stays in history.
 
-The example makes no model request and requires no credentials. It also serves as the isolated native
-integration fixture. Status and widget keys are update identities, not user-facing titles. Clear them
-with `undefined`; use supplied text to communicate what matters. No terminal component factory is
-needed here. For richer TUI components, retain a terminal branch and publish supported text/dialog
-primitives for RPC rather than trying to serialize terminal rendering into the browser.
+The demo requires no model credentials. Use stable keys to replace or clear status and widgets;
+the browser displays the supplied text.
 
 ## Text-widget recipes
 
@@ -302,20 +254,9 @@ export default function (pi: ExtensionAPI) {
 A timeout or dismissal returns `undefined`, which this example treats as Deny. Stop sends
 `cancelled` to pending dialogs, so the same branch handles it.
 
-### Several questions
-
-Pi's RPC dialogs ask one question at a time. Chain them, stop on the first `undefined`, and show
-the collected answers in a widget so the user can see what was chosen:
-
-```ts
-const scope = await ctx.ui.select("Scope", ["Current file", "Whole project"]);
-if (scope === undefined) return;
-const depth = await ctx.ui.select("Depth", ["Quick", "Thorough"]);
-if (depth === undefined) return;
-ctx.ui.setWidget("example.review-plan", [`Scope: ${scope}`, `Depth: ${depth}`], {
-  placement: "aboveEditor",
-});
-```
+For a sequence of questions, the [native UI example](examples/native-ui.ts) collects a choice,
+confirmation, name and notes. It stops when the user cancels and publishes the completed review
+in text widgets.
 
 ## Custom cards and source changes
 
@@ -337,16 +278,62 @@ For interactions that need a dedicated control, modify the relevant source owner
 
 A pinned command button should use `store.sendPreparedCommand("/goal")`, which dispatches independently of the Composer's draft, attachments, and project-file references. Disable the button when the command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
 
-`src/components/ExtensionDialogContent.tsx` exports the existing standard dialog body without a
-store or transport dependency. It accepts `request`, controlled `value`, `pending`, `error`,
-`onValueChange`, `onRespond` and `onCancel`. `ExtensionUiDialog.tsx` keeps session/request ownership,
-form state, communication, deadlines and modal focus. A source-owned dialog can reuse the body and
-its normal styles; supply its own outer dialog/focus owner. Permission prompts should normally use
-Pi's native `ctx.ui.confirm`, without introducing a persistent permission-list panel.
+### Reusable components in a source checkout
 
-Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Files and Changes. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
+Use these components with Inspire's styles or bring your own view. Keep extension state and
+permission decisions in Pi. An adapter checks the current session, view, and command inventory
+before dispatching an action. Pass the result and callbacks into the view.
 
-Inspire has no runtime React plugin API. Source customization needs a checkout and a rebuilt frontend; the npm package contains the built application.
+| Component | Interaction and props |
+| --- | --- |
+| [Modal, DialogHeader, ConfirmationDialog](../src/components/Modal.tsx) | Name the modal with `aria-label` or `aria-labelledby`. `Modal` manages initial focus, Tab and focus restoration. Pass `onDismiss` for Escape and backdrop dismissal, or `onEscape` for Escape alone. Use `ConfirmationDialog` for a browser-side confirmation with a description, action and busy/error state. |
+| [ExtensionDialogContent](../src/components/ExtensionDialogContent.tsx) | Pass a `question` with a title and a `method` of `select`, `confirm`, `input` or `editor`. `onAnswer` receives a string from selection/text or a boolean from confirmation. `onCancel` is a separate action. `pending` disables responses and `error` displays a failed response. Provide a new React key for a new question. |
+| [PromptInput, PromptChoices](../src/components/PromptFields.tsx) | Use one field or choice list inline or in a modal. `PromptInput` accepts `initialValue` for its own draft, or `value` and `onValueChange` for a controlled draft. `PromptChoices` accepts labelled options and reports the selected value through `onChoose`. |
+| [Dropdown](../src/components/Dropdown.tsx) | Pass an accessible label, current value, labelled options, and an `onChange` callback. Options can include descriptions. |
+| [ToggleSwitch](../src/components/ToggleSwitch.tsx) | Pass the controlled `checked` value and `onChange` callback. Use `busy` while submitting to keep focus on the switch and prevent a second activation. |
+| [EmptyState](../src/components/EmptyState.tsx) | Give the state a short `title`, an optional `hint` and an action as a child when available. Use `role="status"` for changing state or `role="alert"` for an error that needs attention. |
+| [DetailSummary](../src/components/DetailSummary.tsx), [CodeView](../src/components/CodeView.tsx) | Use `DetailSummary` as the first child of a native `<details>`. `CodeView` displays text and accepts an optional syntax language. |
+
+For a local choice, compose the question body with the modal. Mount this component when a
+question opens. The parent handles the answer and closes the dialog.
+
+```tsx
+import { ExtensionDialogContent } from "./src/components/ExtensionDialogContent";
+import { Modal } from "./src/components/Modal";
+
+function ReviewFormat({
+  onChoose,
+  onClose,
+}: {
+  onChoose: (value: string) => void;
+  onClose: () => void;
+}) {
+  const title = "Choose a review format";
+  return (
+    <Modal aria-label={title} onDismiss={onClose}>
+      <div className="dialog">
+        <ExtensionDialogContent
+          question={{ method: "select", title, options: ["Summary", "Full report"] }}
+          pending={false}
+          onAnswer={(answer) => {
+            if (typeof answer === "string") onChoose(answer);
+          }}
+          onCancel={onClose}
+        />
+      </div>
+    </Modal>
+  );
+}
+```
+
+For an extension permission prompt, ask with Pi's native `ctx.ui.confirm`. Inspire's
+`ExtensionUiDialog` connects native questions to this presentation and owns the request identity,
+transport and deadline. The [task-board example](examples/task-board/README.md) shows the full
+extension, adapter and view, including how to reuse `EmptyState` in a custom panel.
+
+Keep runtime widgets near Composer, tool results in their cards, and project details in Files and
+Changes. Use Settings for persisted preferences. Follow neighboring controls' accessible labels,
+keyboard behavior and pointer/touch target sizes.
 
 ## Reload and verify
 

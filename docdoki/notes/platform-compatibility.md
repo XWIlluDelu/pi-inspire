@@ -11,9 +11,8 @@ PowerShell helpers qualify their built-in modules so they work in a cold shell e
 
 On iPhone, focusing small-font inputs can zoom the viewport independently of window width.
 The sidebar has a local editing exception. Composer retains all saved content-size choices.
-`tests/browser/responsive-inputs.spec.ts` exercises path, search and picker controls in
-Chromium and Firefox. Synthetic composition checks exercise the shared IME guards; hardware
-keyboard and OS input-method behavior require device checks.
+Synthetic composition tests exercise the shared IME guards. Hardware keyboards and OS input
+methods require device checks.
 
 ## Verified native baseline
 
@@ -31,35 +30,19 @@ and simulated Win32 contracts provide separate evidence.
 
 ## CI verification scope
 
-[CI](../../.github/workflows/ci.yml) runs all unit and integration tests on Ubuntu. Pull
-requests and main pushes run Chromium and Firefox on Ubuntu and a focused Chromium set on
-macOS and Windows. macOS and Windows keep the native checks and skip browser component and
-platform-independent shared suites. Main pushes also verify the installed package on all three
-operating systems. The Linux size report uses the manifest of the package already being verified.
-Formatting remains available through `npm run format:check`. Pushes to `auto-dev` use manual dispatch.
+[CI](../../.github/workflows/ci.yml) runs lint, type checking, build, unit, integration and launcher
+tests on Ubuntu. Chromium exercises pairing, drafts and delivery, branch history, file previews,
+and project terminals. Pull requests, pushes to main and manual runs share this check.
 
-| Dispatch scope | Checks |
-| --- | --- |
-| `checks` (default) | Ubuntu `npm run check`. |
-| `windows-core`, `macos-core` | Build, portable, Node and native integration, native Trash/recovery and launcher on the named OS. |
-| `windows`, `macos` | Named OS core and targeted Chromium. |
-| `safari` | The cross-browser suite in native macOS WebKit. |
-| `release` | Same checks as a main push, including all three installed-package checks. |
-| `full` | Release checks with the complete Chromium suite on macOS and Windows. |
+Pushes to main also verify the installed package. Use `npm run release:verify` to check a native
+installation on macOS or Windows. Individual browser flows remain runnable through Playwright.
 
-```sh
-gh workflow run ci.yml --ref auto-dev -f scope=windows-core
-```
+Block Service Workers where interception must reach a test route. Keep real PTY, upload, download
+and clipboard checks on their native transports. Browser projects that start Pi live under the
+fixture home, which is reset before the next test Host starts.
 
-Dispatch on `auto-dev` and PR runs supersede older runs within the same workflow, ref and scope.
-Main and other refs keep each run.
-
-Opt portable browser flows into all engines with `@cross-browser`. Mark OS-sensitive UI cases
-with `@platform-ui` for targeted native Chromium runs. Block Service Workers where interception
-must reach a test route. Keep real PTY, upload, download and clipboard checks on their native
-transports. Clipboard observers record only successful browser writes. Use Tab for focus-visible
-geometry and wait for lifecycle signals or explicit actions instead of request ordinals or polling
-deadlines.
+Vitest projects use private runtime directories. On Linux, only the Herdr scope tests link
+the user's systemd manager socket, so they can exercise cgroup cleanup with an isolated Pi registry.
 
 ## Git and native file representation
 
@@ -162,6 +145,7 @@ Page restart needs tests against the direct launcher as well as systemd. For sou
 Node's `--import tsx` loader keeps the tracked IPC child itself the Host. An extra wrapper can
 hide that ownership. Native source checks preserve an independent terminal across restart, and
 installed-package checks exercise page restart with an idle Pi worker and real daemon I/O.
+The global Pi shutdown checks used disposable processes and injected systemd controls.
 [[host-lifecycle#Explicit restart controls]] defines the scopes. Pairing guidance offers installed
 and source commands because the browser's OS does not identify the Host's OS.
 
@@ -207,8 +191,9 @@ after every source and conversion validates. Pending includes omitted rows in it
 reads full content first if an unavailable deferred upload makes that total unknown. Explicit
 background-write permission allows reverse multi-image history writes. A newer clipboard action retires
 pending reads globally; unmount/session/view/transport retirement retains its own cancellation.
-`tests/browser/clipboard-gesture.spec.ts` exercises real text/PNG writes, delayed last-response Copy,
-and retirement in Chromium, Firefox and WebKit.
+The current clipboard gesture browser test exercises saved text and PNG writes. The clipboard
+transport unit tests cover retirement by another control. Earlier acceptance included Chromium,
+Firefox and WebKit.
 
 Quoted Windows PATH entries can contain spaces and semicolons. Environment-name lookup stays
 case-insensitive after copying `process.env` into a normal object; Pi discovery and terminal profiles

@@ -7,7 +7,6 @@ covers:
   - server/pi-session-activity.ts
   - server/attach-control.ts
   - extensions/attach-control.ts
-  - extensions/inspire-session-bridge.ts
   - tests/server/attach-control*.test.ts
   - tests/web/session-activity.test.tsx
   - shared/assistant-stream.ts
@@ -19,7 +18,6 @@ covers:
   - server/session-search-query.ts
   - server/session-search-worker.ts
   - server/session-jsonl.ts
-  - server/session-preview.ts
   - server/session-projection.ts
   - server/session-delete.ts
   - server/model-catalog.ts
@@ -42,7 +40,6 @@ covers:
   - src/controllers/session-selection-controller.ts
   - src/controllers/session-management-controller.ts
   - src/controllers/runtime-event-controller.ts
-  - src/controllers/transcript-data-controller.ts
   - src/components/EarlierBranchBanner.tsx
   - src/styles.css
   - src/styles/*.css
@@ -68,7 +65,7 @@ covers:
   - tests/server/project-discovery.integration.test.ts
   - tests/server/runtime-{selection,worker-pool,worker-lifecycle}.test.ts
   - tests/server/runtime-branching.test.ts
-  - tests/server/runtime-{materialization,persistence-ownership,startup-attestation}.test.ts
+  - tests/server/runtime-{materialization,startup-attestation}.test.ts
   - tests/server/pi-rpc.test.ts
   - tests/browser/session-navigation.spec.ts
   - tests/server/session-projection.test.ts
@@ -80,6 +77,7 @@ covers:
   - tests/web/connection-controller.test.ts
   - tests/web/events.test.ts
   - tests/browser/model-workflow.spec.ts
+area: "Sessions"
 ---
 
 # Session continuity
@@ -161,15 +159,14 @@ Results keep chronological catalog order, authoritative totals and explicit pagi
 not a filter over loaded browser rows. Reuse the last successful query across pages while its
 catalog generation and admitted source records remain unchanged; failed or partial scans do not
 become reusable results. A match with a contiguous literal or regex hit in message text carries
-`matchSnippet`: about 120 characters of Markdown-stripped text starting roughly one word before the
-hit. Fuzzy-only and title/ID/cwd matches carry none, and browsing pages never do. The excerpt is
+`matchSnippet`, up to 120 characters of Markdown-stripped text plus truncation marks. Fuzzy-only
+and title/ID/cwd matches carry none, and browsing pages never do. The excerpt is
 cached with the reusable query result. [[workbench]] owns labels, emphasis and search interaction.
 
 Read one session's complete admitted JSONL prefix at a time, without a whole-catalog conversation
 cache. Same-inode appends may continue beyond that prefix. Equal-size observations require an
 unchanged stat version. Truncation, replaced/rebound paths and changed header identity exclude the
-source and report it unavailable; never substitute cached or replacement content. Other admitted
-sources still contribute results, whose totals cover only successfully searched sources.
+source from the results. Totals cover the sources successfully searched.
 
 Run synchronous parsing/fuzzy/regex work in an isolated cancellable worker using Inspire's matcher,
 without private Pi dependencies. Cancellation retires obsolete workers; the 30-second deadline
@@ -177,13 +174,9 @@ allows an expensive query to be retried with a simpler expression.
 
 ### Unavailable and ambiguous sources
 
-Isolate directory and file failures. Publish healthy sources and keep last complete summaries for
-known rows under unavailable sources; a present malformed session may likewise keep its summary for
-inspection. Missing roots remain distinct from unreadable roots.
-
-Pages carry bounded `issues`: the first 20 unavailable paths and explanations. An expandable source
-notice and refresh action accompany available history. Incomplete-page counts are not complete
-catalog counts; successful refresh clears the notice.
+Pi session files begin with a session header. A newly discovered JSONL file beginning with
+another record is outside the catalog. An unreadable source or a damaged session makes the scan
+incomplete. Keep the last verified summary of a known session and continue listing healthy sources.
 
 Ordinary open and individual delete revalidate the addressed path, identity and header. Unknown ids
 in an incomplete catalog are not confirmed absent. Hidden clearing requires a fresh complete scan
@@ -200,16 +193,16 @@ Keep chronological base pages separate from hydration. Advance pagination only b
 Query changes and explicit refresh replace the generation and abort its pending HTTP observation
 and content search. Generation checks also reject late replies from transports that ignore abort.
 
-Curation changes reclassify known rows synchronously. Hydrate only newly off-page session ids and
-exact cwds, deduplicating and splitting their unions within route bounds. Preserve chronology and
-confirmed rows without global loading or manual hydration controls. Authentication loss follows the
-shared transport boundary; other partial failures keep the confirmed base/curated union and retry in
-the background with bounded backoff. A selected/live id can precede its catalog row: a successful
-lookup that has not found it yet is a materialization delay, not a failure.
+Curation changes reclassify known rows synchronously and request newly curated off-page IDs and
+exact cwds. A catalog refresh also rechecks existing pins and folders for renames and moves.
+Batch both lookups within route bounds. Keep confirmed rows in order while updates run in the
+background without global loading or manual controls. Authentication loss follows the shared
+transport boundary. Retry other transient failures with bounded backoff. A selected/live ID
+can be known before its catalog row is available.
 
-Standalone selected/live lookup retries only that generation's id hydration and merges the result
-without changing the base extent. A new query, list refresh or lost owner interest retires its
-recovery. Foreground initial, search and older-page failures keep local retry controls.
+An absent selected/live session shares one retry budget across events within its generation.
+Its lookup preserves the base extent. A new query, list refresh or lost owner interest retires
+the lookup. Foreground initial, search and older-page failures keep local retry controls.
 
 Settlement hints atomically refetch the consumed extent in bounded sequential pages under one
 generation, even beyond one server page. Background retries keep that extent instead of collapsing

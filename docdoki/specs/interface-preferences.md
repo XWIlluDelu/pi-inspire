@@ -10,6 +10,7 @@ covers:
   - tests/server/{preferences,update-checker,update-coordinator}.test.ts
   - tests/web/{preferences,session-actions,settings-navigation,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
   - tests/browser/{settings-layout,loading-states}.spec.ts
+area: "Visual & Preferences"
 ---
 
 # Interface preferences and task alerts
@@ -22,7 +23,7 @@ Keep persistent preferences easy to find and save each change without overwritin
 ## Settings organization
 
 Settings opens from the topbar as a modal, leaving session navigation in place. Display,
-Conversation, Behavior, Models, MCP, Adapters and System are separate category views; only the
+Behavior, Models, MCP, Adapters and System are separate category views; only the
 selected category is visible, focusable and exposed to assistive technology. Category navigation starts its content at the top;
 scrolling within a category does not change the selection. Drafts, model browsing state and pending
 login attempts remain intact across category switches. Keyboard focus reveals the whole category
@@ -38,8 +39,7 @@ palette uses named swatch tiles with a visible selected state.
 | Category | Controls |
 | --- | --- |
 | Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls, not combined under a location-based heading. |
-| Conversation | One field group: activity visibility (`Reasoning detail`, `Tool activity`, `Activity groups`), then `Send key`. |
-| Behavior | App behavior (`On launch`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
+| Behavior | App behavior (`On launch`, `Send key`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). Thinking, tool activity, and activity groups always use adaptive disclosure without global mode dropdowns. |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
 | Adapters | Unified enablement of externally configured GUI adapters under [[tool-presentations]]; not Pi extension execution management. |
@@ -53,9 +53,8 @@ acknowledgment is never labelled Saved.
 
 System lists Pi, Extensions and Inspire in that order. Pi's Docs and Changelog links share its label
 row; update commands reuse the file/path click-to-copy presentation without a persistent copy icon.
-`Herdr enhancement` shares the Host/restart card with the actions that apply it under
-[[herdr-enhancement]]. Both restart actions use equal-height danger controls, with descriptions that
-state whether project terminals keep running or close. Footer utilities present INSΠRE version,
+`Herdr enhancement` shares the Host/restart card with the Restart action that applies it under
+[[herdr-enhancement]]. Footer utilities present INSΠRE version,
 optional install action, and Reset preferences on a single line.
 
 Category names and self-explanatory choices need no introductory text; descriptions explain scope or
@@ -174,25 +173,8 @@ a fresh resource scan and package update results cannot establish current-worker
   without replacing known results. A new request or observed Host check clears that request error;
   transport replacement retires the old request and its recovery. HTTP failure or disconnection does
   not mark a running Host check finished.
-- Observations and the exact-set 24-hour snooze belong to the Host deployment. Bootstrap and events
-  reconcile local and forwarded views; dismissal anywhere hides the notice everywhere. Host restart
-  preserves the remaining interval, and a changed version or extension set bypasses the snooze.
-  Rendering a notice does not consume it.
-
-## Independent activity density
-
-Activity groups, tools, and reasoning have independent saved defaults and per-card overrides.
-All default to **Adaptive**, stored as `dynamic`; existing stored identifiers keep their meaning.
-Selectors put Adaptive first, followed by fixed modes from most to least detail:
-
-| Control | Fixed modes |
-| --- | --- |
-| Activity groups | Expanded, Compact, Collapsed |
-| Tools | Expanded, Compact, Collapsed, Hidden |
-| Reasoning | Expanded, Collapsed, Hidden |
-
-Option help summarizes the loading and display behavior defined in [[activity-presentation]].
-A per-card override leaves its saved default unchanged.
+- Dismissal hides the exact update set immediately for 24 hours while the Host records it across
+  browsers and restarts. A changed update set bypasses the snooze.
 
 ## Task alerts
 

@@ -8,7 +8,7 @@ covers:
   - scripts/vite-dev-launch.ts
   - vite.config.ts
   - tests/server/dev-launcher.integration.test.ts
-  - server/{app,index,pi-rpc,pi-installation,preferences,access-token,terminal-daemon-launcher}.ts
+  - server/{app,index,pi-rpc,pi-installation,preferences,access-token}.ts
   - server/{herdr-worker-entry,attach-control,runtime-extension-ui}.ts
   - tests/server/attach-control.integration.test.ts
   - server/user-environment.{mjs,d.mts}
@@ -23,8 +23,7 @@ covers:
   - server/{host-restart,host-restart-backend,host-restart-preparation,restart-preflight}.ts
   - server/restart-submission.mjs
   - server/launcher-restart.{mjs,d.mts}
-  - server/pi-processes.{mjs,d.mts}
-  - tests/server/global-pi-restart.test.ts
+  - tests/server/host-restart-backend.test.ts
   - shared/host-restart.ts
   - src/controllers/host-restart-controller.ts
   - src/components/HostRestartSettings.tsx
@@ -42,12 +41,10 @@ covers:
   - tests/fixtures/host-control-faults.mjs
   - server/*diagnostic*.ts
   - server/host-restart*.ts
-  - server/pi-worker-keeper.mjs
-  - tests/server/pi-worker-keeper.test.ts
   - tests/launcher.test.ts
-  - tests/server/terminal-daemon-launcher.test.ts
   - tests/portable/**
-  - tests/server/{app,access-token,pi-installation,pi-rpc,current-web-build}.test.ts
+  - tests/server/{app,app-auth,pi-installation,pi-rpc,current-web-build}.test.ts
+area: "Pi & Hosting"
 ---
 
 # Host lifecycle, pairing, and distribution
@@ -121,6 +118,9 @@ capture mechanism and service handoff.
 
 - Browser pairing registers a non-extractable P-256 ECDSA key, persisted in the browser origin's
   IndexedDB with a public HMAC-SHA256 Host certificate binding the public key and canonical origin.
+  Session-only pairing keeps its key in page memory. Signing out of a saved pairing deletes the
+  stored key before returning to the Pair form. A storage failure leaves the session open and
+  prompts the user to retry.
   The Pair form proves the Host master token once. Local startup/reopen/status links instead
   contain a one-use, 30-second origin-bound bootstrap fragment, minted in-process or obtained
   through an authenticated local-control action. The reusable token never appears in the printed
@@ -162,8 +162,8 @@ capture mechanism and service handoff.
 
 - Pending challenges, bootstrap transfers, socket tickets and download tickets each have a 1,024-entry process-local
   bound. Expired entries are pruned before admission; capacity fails closed without replacing live
-  entries. Restart retires these one-use grants. Pairing requires WebCrypto and origin IndexedDB;
-  unsupported or blocked storage produces useful Pair feedback, never a weaker fallback.
+  entries. Restart retires these one-use grants. Pairing requires WebCrypto. Remembering a pairing
+  also requires origin IndexedDB.
 
 - Without explicit `INSPIRE_TOKEN`, generated tokens contain 64 cryptographic random bytes
   (86 base64url characters), in a current-user-private `0700` directory and `0600` plain-text
@@ -320,38 +320,24 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
 ## Explicit restart controls
 
 The page uses a lifecycle receipt tied to the original Host and operation ID. A submitted
-restart stays pending until the browser observes a different Host identity. A rejection or
-unconfirmed submission keeps its domain phase and does not trigger a new restart automatically.
+or unconfirmed restart continues to be observed until the browser sees a different Host identity.
+While the outcome is unconfirmed, the page directs the user to check the launcher or service.
+A new restart is available after the Host has rejected the previous request or been replaced.
 
 ### Scope and preparation
 
 - `inspire restart` prepares dependencies/client build and imports the next runtime and external
-  Pi SDK before stopping the Host. Preparation failure leaves it running. Ordinary restart ends
-  Inspire-owned Pi workers and keeps the independent terminal daemon.
-- `inspire restart --terminals` requires this installation\'s verified Linux systemd Host and terminal
-  units. It restarts both in one transaction, with Host ordered after terminal readiness, ending
-  project terminals in the installed unit. An independent daemon retained from a direct launch
-  keeps its own lifecycle under [[terminal]]. Run terminal-closing commands from an external OS
-  terminal. Unsupported or foreign services are refused before stopping anything, connection
+  Pi SDK before stopping the Host. Preparation failure leaves it running. Restart ends
+  Inspire-owned Pi workers and in-process project terminals. Run restart commands from an external
+  OS terminal. Unsupported or foreign services are refused before stopping anything, connection
   services remain outside the scope, and a failed service restart cannot fall back to a local Host.
-- **Restart all** and `inspire restart --all` additionally close current-user Pi processes regardless
-  of their owner. Include Herdr Pi only when the running Host has enhancement enabled; otherwise
-  preserve them. Read the effective mode, not the saved next-start preference. The Herdr server
-  itself stays running. The CLI stops the managed Host/terminals before process cleanup and starts
-  them only after cleanup succeeds. If no Host is running, Herdr Pi are excluded.
-  The CLI reads the static effective mode through signed local control, without sending a reusable
-  bearer or probing Herdr. Reject Pi-descended CLI callers before preparation: terminating their
-  parent Pi could kill the restart coordinator before it starts Inspire again.
-- **Restart** and **Restart all** live in Settings → System → Host, with concise confirmation
-  for each scope. Restart supports launcher-owned native Windows, macOS, and Linux instances,
-  including custom loopback addresses, ports, and state paths. Installed Linux services retain their
-  exact running systemd invocation as authority. A raw Host entrypoint without either owner cannot
-  restart itself.
-  Full restart remains restricted to the installed Linux services and names the terminal-process
-  impact. Ordinary and full availability are exposed and enforced separately; unsupported scope is
-  refused before preparation or work interruption. Restart stays out of the command palette and
-  always-visible controls. Pairing and local-offline recovery guidance must work for both installed
-  packages and source checkouts without assuming a POSIX-only wrapper.
+- **Restart** lives in Settings → System → Host with a concise confirmation dialog. It supports
+  launcher-owned native Windows, macOS, and Linux instances, including custom loopback addresses,
+  ports, and state paths. Installed Linux services retain their exact running systemd invocation
+  as authority. A raw Host entrypoint without either owner cannot restart itself. Restart stays
+  out of the command palette and always-visible controls. Pairing and local-offline recovery
+  guidance must work for both installed packages and source checkouts without assuming a POSIX-only
+  wrapper.
 - Direct page restart uses the existing launcher's private child IPC, not a browser-supplied command,
   PID, or detached replacement launcher. Keep the original launcher and instance lock across
   replacement, reuse its environment and instance configuration, and do not reopen the browser.
@@ -376,23 +362,13 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
   Inspire-owned and taken-over Pi work in that scope without a second confirmation. It bypasses
   workload checks while keeping preparation, service ownership, lease exclusivity and final commit.
   Automatic maintenance keeps its update and idle checks and restarts only the Host service.
-- **Restart** replaces Inspire-owned Pi workers. Attached Pi processes keep running with their
-  loaded settings. Pi exposes reload through its own `/reload` command. An ordinary restart counts
-  busy taken-over Pi as active work and reads it directly before submission. Unavailable observation
-  blocks restart. **Stop work and restart** explicitly interrupts its attached branch; if Stop
-  cannot be confirmed, report the affected sessions and offer **Restart anyway** without another Stop.
-- **Restart all** confirms Pi termination before submission and requires `interruptWork: true`.
-  Acquire and commit the same restart admission lease, then terminate the selected Pi processes
-  before issuing the service restart. It does not depend on attached-Pi Stop acknowledgement.
-  The `all-pi` API scope is available when the installed services and Pi process control are ready.
-- Linux process cleanup snapshots exact `pi` and `pi-rpc` titles owned by the current OS user.
-  Herdr pane/socket environment markers identify Herdr Pi. Revalidate birth ticks, ownership,
-  title and inclusion before each signal; send SIGTERM, wait up to five seconds, then SIGKILL
-  surviving identities and verify exit. Never signal shells, Herdr, the Host, or a reused PID.
-  Fresh final discovery must confirm that no included Pi remains. Discovery, signalling or exit
-  verification failures prevent restart and report the failure, including partial shutdown.
-- CLI restart verifies the running Host with signed readiness. A managed shutdown waits for
-  actual process exit and a signed cleanup result before starting a replacement.
+- **Restart** replaces Inspire-owned Pi workers and project terminals. Attached external Pi
+  processes keep running with their loaded settings (use `/reload` in Pi to reload resources).
+  Restart counts busy taken-over Pi as active work and reads it directly before submission.
+  Unavailable observation blocks restart. **Stop work and restart** explicitly interrupts its
+  attached branch; if Stop cannot be confirmed, report the affected sessions and offer
+  **Restart anyway** without another Stop.
+- CLI restart verifies the running Host with signed readiness.
 
 ### Submission and recovery
 
@@ -402,19 +378,13 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
   non-issuance releases admission; uncertain submission retains the drain and reports recovery
   required. A lost launcher acceptance cannot trigger shutdown from a late reply or turn a later
   normal exit into a restart.
-- The browser persists identity in tab-session storage before POST; invalid or unavailable storage
-  blocks dispatch, not read-only Host observation. Recheck retries local recovery and clears the
-  browser's blocked state once storage recovers. Retrying an unconfirmed request keeps its identity.
-  A new Host identity or a matching rejected operation automatically retires browser tracking;
-  uncertain requests keep their identity. Only malformed saved data offers **Reset restart
-  recovery…**, beside its error and with confirmation; normal pending/recovery controls and
-  unavailable storage (which retries) offer no local-record cleanup. Reset discards only browser
-  tracking, neither sending nor cancelling a restart; the Host's pending operation still fences new
-  admission. Failed local cleanup preserves the record and reports a storage problem, not an
-  unknown restart. A rejected receipt is labelled **last attempt**, because it is historical rather
+- The browser persists its request before POST and observes it in the background. If the same
+  Host has no active restart, it can retry once with the original identity and grants. A deliberate
+  retry uses that same identity. A replacement Host or matching rejection retires the record.
+  Malformed tracking is cleared automatically. Unavailable storage blocks dispatch.
+  A rejected receipt is labelled **last attempt**, because it is historical rather
   than a current busy check. A new submission replaces the old result with preparation immediately.
-  A POST receipt establishes the operation before polling catches up. The status row reserves room
-  for ordinary progress and refusal so these transitions keep their layout.
+  A POST receipt establishes the operation before polling catches up.
 - The CLI checks readiness after restart; the browser reports reconnection to a new Host.
 
 ## Atomic browser-build publication
@@ -424,23 +394,22 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
   leaves that stamp stale so the next launch rebuilds. A current stamp avoids rebuilding at startup.
   The npm distribution omits the stamp and uses its packaged build.
 
-- Source builds stage Vite output behind one installation lock and publish assets before
-  switching the index. A current manifest identifies the browser build and the assets it can
-  serve. After publication, old files are removed when possible and are excluded even if still
-  present on disk. Current JavaScript and CSS retain immutable validators, ranges and negotiated
-  Brotli/gzip variants. A missing asset returns `404` without falling through to the shell.
-- Paired browser requests and socket admission use the current build identity. The development
-  browser and Host share their development identity. A stale browser is told to reload, stops
-  reconnecting, and keeps its open draft for copying or manual reload. Native sessions and
-  notification storage are independent of shell publication.
+- Source builds stage Vite output behind one installation lock and publish the asset manifest
+  before switching the index. The two previous asset generations remain available to open tabs
+  for deferred imports. Release packages contain the current assets. JavaScript and CSS retain
+  immutable validators, ranges and negotiated Brotli/gzip variants. A missing asset returns
+  `404` without falling through to the shell.
+- Publishing browser assets leaves existing sessions, terminals and their connections active.
+  The next page load uses the new index. Browser API and socket admission use their normal
+  authentication and request contracts independently of static assets.
 
 ## Diagnostics
 
 - Projection and RPC diagnostics are durable enough to explain an ownership rejection after the
   fact. A private rotated JSONL log correlates host id, slot incarnation, session/worker/PID, RPC
   id/type/timing, projection revision/fingerprint/identity/bytes, persistence expectation
-  transitions, ownership-decision reason, and an opaque incident id shown in conflict UI. Logging is
-  metadata-only: prompts, message text, tool results, extension payloads, credentials, tokens,
+  transitions, ownership-decision reason, and an opaque incident ID linking conflict and recovery
+  records. Diagnostics omit prompts, message text, tool results, extension payloads, credentials, tokens,
   absolute working directories, and raw child stderr are excluded. POSIX directories/files are
   `0700`/`0600`; Windows uses the current user-profile ACL boundary. A configured path is accepted
   only inside an existing private current-user directory.

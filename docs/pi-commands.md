@@ -1,297 +1,182 @@
 # Pi commands in Inspire
 
-For initial setup, follow [Your first session](../README.md#your-first-session). This guide covers
-the controls available once you are using the workbench. An **Inspire-owned session** runs in a Pi
-worker started by the Host. A **connected native Pi** keeps running in its original terminal;
-some actions below therefore direct you back there. Project terminal tabs are separate shells.
+Open the command palette with the header button or Ctrl/⌘+K. Start typing to search actions,
+sessions and Pi commands. Type `/` in the Composer for command completion. Pi built-ins reserve
+their names ahead of extensions, templates and skills. An unknown command is reported in the
+workbench. For setup, see [Your first session](../README.md#your-first-session).
 
-Use the Composer's `/` completion or the command palette (header button or Ctrl/⌘+K). Both list
-Pi's extension, prompt and skill commands alongside browser versions of Pi's built-ins. The palette
-opens with common actions and recent sessions; searching reaches everything, including
-terminal-only commands. Aliases such as `/settings`, `/new`, `/resume`, `/tree` and `/hotkeys` open
-the same graphical destinations.
+The palette opens a preparation field for extensions, templates and skills. Review or edit the
+arguments, then choose **Run** for an extension or **Send** for a prompt. While Pi works, prompts
+offer **Steer Pi** and **Queue prompt**. Extension commands run immediately. Escape returns to
+palette search. Palette actions preserve your draft and staged files. Remove attachments and
+project-file chips before submitting a typed native command.
 
-Selecting an extension command, template or skill opens a short preparation step where you review
-its arguments and choose **Run command** or **Send prepared prompt**; your draft and attachments are
-not touched. Extension handlers run immediately, even while Pi is busy; templates and skills follow
-the **Steer / Queue** choice during active work. Escape returns to palette search, then closes it.
-**Find a session** (like `/resume`) searches the full Host catalog, not just the palette's recent
-list.
-
-| Commands | Browser behavior |
+| Command | Action |
 | --- | --- |
-| `/model [provider/model]`, `/thinking [level]` | Open the picker, or set an exact model/level. |
-| `/settings`, `/changelog` | Open settings or the installed Pi version's release notes. |
-| `/scoped-models` | Open Settings → Models at the ordered common scope. |
-| `/login [provider]`, `/logout [provider]` | Open native provider login or saved Host credential controls. |
-| `/new`, `/resume` | Open the new-session surface or focus full catalog search in session navigation. |
-| `/tree`, `/fork` | Open conversation History and its continuation/copy actions. |
-| `/clone` | Open an independent copy of the current recorded conversation path, with an empty draft and no model turn. |
-| `/name [name]` | Show or set the session name. |
-| `/copy` | Copy the complete last settled assistant response. |
-| `/compact [instructions]` | Compact an Inspire-owned session through Pi; for a connected native Pi, offer its terminal and command. |
-| `/export [path.html\|path.jsonl]` | Export native HTML by default, or the current branch as native-compatible JSONL when the path ends in `.jsonl`. |
-| `/reload` | Restart the selected idle Inspire-owned worker; for an existing native Pi, offer its terminal and the `/reload` command. |
-| `/session`, `/hotkeys`, `/quit` | Show session information, browser shortcuts, or guidance for leaving the client. |
-| `/share`, `/trust`, `/import`, `/bug` | Offer a copyable command and terminal guidance. |
+| `/model [provider/model]`, `/thinking [level]` | Open the picker or apply a specific choice. Completion offers available models and supported levels. |
+| `/settings`, `/scoped-models` | Open Settings or the common model scope. |
+| `/login [provider]`, `/logout [provider]` | Open Host provider login or saved credential controls. |
+| `/new`, `/resume` | Open New session or focus search across the full Host session catalog. |
+| `/tree`, `/fork`, `/clone` | Open History, show how to fork from a user message, or clone the current branch. |
+| `/name [name]`, `/copy` | Show or change the session name, or copy the complete last settled assistant response. |
+| `/compact [instructions]`, `/reload` | Compact the selected idle Inspire-owned session or restart its worker to load resources. A connected terminal Pi handles these in its own terminal. |
+| `/export [path]` | Export native HTML, or current-branch JSONL for a path ending in `.jsonl`. Quote paths containing spaces. |
+| `/session`, `/hotkeys`, `/changelog` | Show usage, workbench shortcuts or the release notes shipped with the installed Pi version. |
+| `/quit` | Show how to leave the client. Closing the browser tab leaves Host sessions running. |
+| `/share`, `/trust`, `/import`, `/bug` | Show the command to copy and run in Pi's terminal. |
 
-As in Pi's terminal client, native commands win over an extension, prompt or skill with the same
-name, so namespace extension commands. Typed native commands reject staged attachments and
-project-file references, and palette actions never use them. Unknown slash commands are reported
-instead of being sent to the model.
+Arrow keys select a completion. Enter, Tab or a pointer inserts it without submitting. Free-text
+commands such as `/name` and `/export` show usage hints. Pi's public inventory supplies command
+names and descriptions. Extension-specific argument completion requires support from Pi.
 
-## New projects
+## New projects and prompt files
 
-Enter the project directory and your first message on **New session**. If the directory does not
-exist, **Create folder and start** creates it, including missing parent folders, then starts the
-session with your message and selected model/thinking choices. Typing a path or browsing does not
-create folders. If model defaults cannot be previewed before creation, Pi resolves them in the new
-directory. A startup failure can leave the created folder in place; untransferred input remains
-available to retry.
+Choose the Host project directory on **New session**. **Create folder and start** creates a missing
+directory and its parents when you submit. Pi resolves unpreviewed model defaults in the new
+directory. If startup fails, the created folder can remain and untransferred input stays editable.
+
+Use an `@` completion to insert a path in the sentence, including repeated references. Paths with
+spaces are quoted. New session inserts absolute paths so changing the directory preserves the
+selected reference. **Add project files** adds removable chips. Uploaded files with confirmed or
+uncertain delivery survive Host restarts and session deletion. See [uploaded-file cleanup](host.md#uploaded-file-retention-and-cleanup).
 
 ## History and independent copies
 
-**History** in the contextual pane shows a compact outline led by your inputs. Expand replies and
-activity when needed; **Other routes** appears at conversation branch points. Search reaches earlier
-and alternate history, including complete retained text. Opening a point previews it in the same pane
-without changing the current conversation or your draft; **Back to history** restores your search and
-position. **Current conversation** returns to the active conversation's outline, not a context change.
+**History** shows your inputs, replies and activity. **Other routes** appears at branch points.
+Search includes earlier and alternate history. Open a point to preview it, then **Back to history**
+to restore the search and position. **Switch branch…** in the title menu opens the same outline.
 
-- **Continue / Edit in this session** deliberately changes where Pi continues. Select **Carry branch
-  summary** to include a summary of the conversation being left, with optional instructions.
-  Inspire honors Pi's skip-summary-prompt setting. A draft-replacement confirmation appears only when
-  an edit would replace an existing message draft. Text or attachments added while a summary is
-  pending stay in your draft.
-- **Fork into new session** copies the conversation before the selected input and prepares its text
-  and saved images as an editable draft in the new session.
-- **Clone into new session** copies through the selected response or other point and opens an empty
-  draft. **Clone current branch** in the title's action menu, `/clone`, and the palette share this action.
+- **Continue / Edit in this session** changes the continuation point. **Carry branch summary**
+  includes a summary with optional instructions. A confirmation protects an existing draft when an
+  edit would replace it. Pi's skip-summary-prompt setting also applies here. Input added while a
+  summary is pending stays in the draft. **Restore saved position** in the notice or palette
+  returns to the latest saved point.
+- **Fork into new session** copies up to the selected user input and restores that input's text
+  and saved images for editing. **Clone into new session** includes its selected endpoint and opens
+  an empty draft. The title menu and palette can also clone the current branch.
+- **Fork into another folder…** is available when the original project folder is unavailable.
+  Choose an existing directory to copy the whole saved session tree and open it with an empty draft.
 
-When new messages will continue from earlier history, **Restore saved position** returns to the latest
-saved point. Closing the notice leaves the continuation in place. You can still restore it from the
-command palette.
-
-Click the session title for Rename, Copy session ID, Clone, Switch branch and Export.
-**Switch branch…** opens History, where you can view and choose branches. Continuing in the same
-session requires an idle session with no pending input or dialogs. Fork and Clone can copy recorded
-history while the source runs, leaving its task, Pending input and draft intact.
+Continuing requires an idle session with no pending input or dialogs. Fork and Clone can copy
+recorded history while the source continues running. For extension lifecycle differences, see
+[Session lifecycle](extensions.md#session-lifecycle).
 
 ## Models and thinking
 
-Opening the model picker shows cached choices immediately, then refreshes available models in the
-background without restarting Pi or interrupting its task and extension dialogs. Refresh keeps your
-current model and thinking level. If discovery fails, the picker keeps cached choices and reports
-that locally; `/reload` is not needed just to refresh model catalogs.
+The picker displays cached choices while refreshing the current worker's catalog. A failed refresh
+keeps cached choices available. Selecting a model follows Pi's effort defaults unless you chose a
+level explicitly. For example, an explicit `xhigh` becomes `high` on a model that supports through
+`high`. New sessions inherit visible model and effort choices or preview Pi's workspace defaults.
+A virtual **Router** stays selected when a physical model answers. If a router disappears,
+reopened sessions use Pi's physical-response recovery.
 
-A terminal Pi you have taken over uses its own catalog and public model/thinking functions through
-[attach-control](extensions.md#share-sessions-with-terminal-pi). The returned selection, including extension changes and supported
-effort adjustment, is authoritative. Busy state does not itself remove these capabilities. Native
-model cycling remains a terminal operation; use the model picker for explicit selection in Inspire.
-Settings for model files, defaults and credentials remain independent of live-control support.
-
-New sessions inherit the visible model and effort when available; otherwise Inspire reads Pi's
-startup defaults for the chosen workspace. Switching models follows Pi's per-model and global
-thinking defaults until you choose an effort yourself. After that, a model switch preserves your
-choice up to the new model's supported level. For example, `xhigh` becomes `high` on a model that
-supports through `high`. These choices apply to the new session.
-
-Virtual models are marked **Router**. The picker and New inheritance retain your selected router
-when a physical model answers. If a router is no longer registered, reopened sessions follow Pi's
-physical-response recovery. Prospective-workspace discovery includes global and already-trusted
-project extensions; untrusted project resources are skipped with a warning. New trust decisions
-remain part of Pi startup.
+New-session discovery includes global and already-trusted project extensions. Pi handles new
+trust decisions at startup. A connected terminal Pi supplies its own model catalog and effective
+selection. Model cycling stays in its terminal. See [Share sessions with terminal Pi](extensions.md#share-sessions-with-terminal-pi).
 
 ## Model settings and login
 
-**Manage models** in the picker opens Settings → Models. Save Pi's startup model and thinking defaults
-there, separately from current-session choices. Project settings and per-model thinking preferences
-retain native precedence. Saving a default does not switch an open session. **Not set** indicates no
-specified startup model; **Clear** removes an existing default. **Model default** removes the saved
-global thinking preference and leaves resolution to Pi. The footer's Reset preferences resets
-Inspire's interface settings, not Pi model configuration or credentials.
+**Manage models** opens Settings → Models. Save or clear Pi's startup model and thinking defaults
+there. Project settings and per-model thinking preferences retain their native precedence.
+**Model default** removes the global effort preference. Common models use Pi's ordered
+`enabledModels` patterns and optional thinking suffixes. The picker lists matches first and
+keeps the rest searchable. Changing defaults leaves the open session's selection intact.
 
-Common models use Pi's `enabledModels` patterns and optional thinking suffixes. Add, remove and
-reorder those entries in Settings; the picker shows their resolved choices first while keeping other
-models searchable. With no common configuration there is no extra group or empty prompt.
-**Next model**, **Previous model**, and **Cycle thinking level** are searchable palette actions.
-Their shortcuts are `Ctrl+⌘+M/P/R` on macOS and `Alt+Shift+M/P/R` elsewhere, respectively.
-Next model uses the Inspire-owned worker's native cycle order and effort defaults; Pi's public RPC
-does not currently support Previous model, so that action reports the limitation without changing
-selection. Connected native Pi keeps both model-cycle actions in its original terminal. Explicit
-model selection and supported thinking controls remain available in the picker.
+**Next model**, **Previous model** and **Cycle thinking level** appear in palette search and
+`/hotkeys`. Their shortcuts are Ctrl+⌘+M/P/R on macOS and Alt+Shift+M/P/R elsewhere.
+Next model uses the owned worker's cycle order and effort defaults. Pi RPC currently lacks previous
+model cycling. For owned workers, Pi also performs the thinking cycle. An attached Pi uses the
+thinking setter for the same gesture. Cycle shortcuts work
+from a message draft and respect open completions, dialogs, other editors and composition input.
 
-Cycling does not wait for catalog discovery. Shortcuts work from a message draft; open
-completions/menus, other editors, modals and IME retain shortcut ownership. Character-producing
-Option/AltGraph input is preserved. `/hotkeys` lists the current platform's bindings.
+Provider and model forms edit Pi's `models.json`, follow existing symlinks and preserve fields
+outside the form. Invalid files and concurrent edits are reported before saving. Removing a
+declaration leaves built-in models and credentials intact. A save refreshes availability. If the
+refresh fails, the saved change remains on disk.
 
-Provider/model declaration controls edit Pi's native `models.json`, not an Inspire catalog. Common
-fields are graphical; unedited metadata, headers, costs, compatibility overrides and other advanced
-fields remain intact. Existing config symlinks are followed. Invalid files and external-change
-conflicts are reported rather than overwritten. Removing a declaration neither removes a built-in
-model nor logs out. Provider/model edits open a focused view with Save/Cancel always reachable;
-Back or Cancel restores the list's search, position and focus. Configuration saves refresh availability
-without replacing the active worker; a refresh warning does not mean that a committed file save failed.
-
-Login saves credentials in Pi on the **connected Host**. **Connect provider** opens provider search;
-**Manage** on a saved provider reveals its methods and credential removal. Choose a method, then
-follow its link, code, selection or input in this browser. Only established
-cross-device methods show **Remote login** and a circled-question explanation, available by keyboard
-or tap. Other methods remain available without that label. Completion is reported only after Pi
-accepts the result; existing keys and tokens are not displayed. **Remove saved credential** removes
-Host storage only: it does not revoke provider-side access or remove environment/model-file sources.
-Configuration remains usable independently of login availability.
+**Connect provider** opens provider search. Choose a method and follow its link, code or prompt.
+**Remote login** identifies established cross-device methods. **Manage** on a saved provider
+offers available methods and credential removal. Login is confirmed by Pi on the connected Host.
+Removing a credential there leaves provider-side grants and environment or model-file keys intact.
 
 ## Runtime behavior settings
 
-Settings → Behavior applies Pi delivery, automatic-compaction and retry changes to the selected
-Inspire-owned worker and requests a global settings save, subject to project overrides; other running
-workers keep their own loaded values. The scope note beside these controls distinguishes the applied
-value from a confirmed settings-file save. Pi currently does not provide that save result to Inspire.
-An invalid-settings startup warning identifies the file to repair before Reload. These controls are
-separate from Inspire's interface preferences.
+**Tool Loadout…** in the session title menu or palette reads the running Inspire Pi worker's
+tool inventory and changes its active selection. Exposure and extension hooks can affect which
+tools are discoverable or sent to the provider. Refresh to read changes made by extensions.
+
+Settings → Behavior applies delivery, automatic compaction and retry to the selected Inspire-owned
+worker and asks Pi to save global settings. Project overrides still apply. Other workers retain
+their loaded values. Pi confirms the runtime change but does not report completion of the settings
+file write. Repair a reported invalid settings file before Reload.
 
 ## Direct shell input
 
-In an Inspire-owned session, send `!command` to run a shell command through Pi and include its result
-in subsequent model context. Use `!!command` to record and display the result without including it in
-model context. Neither form starts a model reply. For example:
+Send `!pwd` to run a shell command through an Inspire-owned Pi and include its result in subsequent
+model context. Use `!!git status --short` to record and display output outside model context. Both
+use Pi's working directory and Bash extension hooks. The shell card streams output, shows exit or
+cancellation status, and offers **View full output** for truncated results. The input and result
+remain in History after reopening. Shell input accepts text only.
 
-```sh
-!pwd
-!!git status --short
-```
-
-The shell card streams output and shows running, exit, cancelled, context, and truncation status.
-Pi supplies the working directory, Bash extension hooks, recorded output, and any full-output path.
-Results and their `!`/`!!` input history remain available after reopening. History shows/searches
-these shell records; **View full output** opens a truncated result's complete saved log. This is not the independent
-project terminal; shell input cannot carry attachments or project-file references.
-
-Commands can run alongside a model task or compaction, with one native shell at a time. Ordinary
-Send remains available while only the shell runs. **Stop** or Escape cancels that shell through Pi,
-without recovering/dequeuing Pending input. When a model task or compaction also runs, it keeps first
-ownership of Stop; use Stop again for a remaining shell. Open dialogs and completion menus retain
-Escape ownership. A blocked extension Bash hook may require retiring only that session's worker;
-an unconfirmed command outcome is reported rather than automatically retried.
-
-For a connected native Pi, run `!`/`!!` in its original terminal. Browser Stop requests agent
-interruption, not shell interruption.
-
-## Files in a prompt
-
-Choose an `@` completion to keep the file path in its sentence position; paths with spaces are quoted.
-Repeated references remain inline. **Add project files** instead creates removable chips. On the
-new-session surface, inline selections use absolute paths so a directory change cannot retarget them.
-
-Delivered or possibly delivered ordinary uploads remain stored across Host restarts and session
-deletion. Reclaim them explicitly using [uploaded-file cleanup](host.md#uploaded-file-retention-and-cleanup).
-Deleting a session removes neither these copies nor original project files. Images remain embedded
-in Pi message data.
+One native shell can run alongside model work or compaction. Send remains available during a
+shell-only run. **Stop** or Escape interrupts model work or compaction first, then a remaining
+shell on the next Stop. A shell-only Stop preserves Pending input. An unresponsive extension
+hook can require retiring the selected worker. Run shell input for a connected native Pi in its
+original terminal. Browser Stop there requests agent interruption.
 
 ## Pending input and stopping
 
-While Pi runs, select **Steer** to redirect its next turn or **Queue** to follow the current task.
-Pending entries appear at the end of the conversation, with previews and Return, Copy and Clear
-actions in the header. Activate their count in the activity bar to jump to and focus Pending without
-moving focus into the editor. **Return all** removes all unconsumed input without stopping Pi:
-Steer texts come first, then Queue texts, separated by blank lines and followed by your current draft. Edit this as one draft; sending uses the currently selected delivery mode.
+During model work, choose **Steer** to redirect the next turn or **Queue** to follow it. Select
+the count above the Composer to focus Pending. **Copy** uses the full text, including any
+truncated previews. **Return all** puts unconsumed Steer inputs, then Queue inputs, before the
+draft. **Clear all** confirms before discarding queued input and leaves the draft and task intact.
 
-**Stopped** describes a natively cancelled run; **Pi error** describes a failed run. A failed Stop
-request does not relabel a failed reply as cancelled. An unconfirmed Stop retains its uncertain
-result rather than claiming cancellation.
-
-When stopping a model task, **Stop** and Escape use the same recovery, so pending work does not restart the task.
-An open modal, completion menu, or context-detail hint keeps first ownership of Escape. Pending's single/all copy actions
-copy complete text, including messages not shown in the bounded preview. **Clear queue** asks for
-confirmation before discarding pending input; it does not stop Pi or change your draft.
-
-Return and Stop also restore original images submitted through Inspire, including images recalled
-from history, as editable attachments beside your latest draft. Images already consumed by Pi do not
-return. Files and project references that had not yet reached Pi return to the same draft. Explicit
-Return focuses the editor unless you have moved to another control or opened a dialog.
-
-Recovery restores your submitted images, not images added or replaced internally by extensions.
-If Inspire cannot establish ownership of pending images, it reports that limitation rather than
-restoring guessed copies. Ordinary text-only recovery is quiet.
-
-## Argument assistance and help
-
-After `/model `, completion offers Pi-provided `provider/model` candidates. After `/thinking `, it offers the active model's supported levels. Arrow keys, Enter, Tab, or a pointer insert the selected argument without submitting. Free-text built-ins such as `/name`, `/compact`, and `/export` show a concise usage hint. Existing inline `@` search remains available where a prompt needs a project path; export destinations are not suggested from existing project files. Inspire does not guess extension arguments because Pi's public command inventory does not expose completion callbacks.
-
-`/hotkeys` opens browser-specific shortcuts, reflecting the current desktop send-key preference, touch-first Return behavior, completion, history, conversation search, and project-terminal modes. `/changelog` reads the matching release notes shipped with the installed Pi package; it does not open Settings or require a network lookup. Documentation links lead to current upstream documentation.
+Stopping model work recovers unconsumed input, including identifiable original images submitted
+through Inspire. Undelivered files and project references also return. Pi-consumed images stay in
+history. If ownership is uncertain, Inspire reports which recovery it could confirm. **Stopped**
+indicates native cancellation and **Pi error** indicates failure. An unconfirmed Stop keeps its
+uncertain status. Open dialogs, completions and context hints handle Escape first.
 
 ## Export
 
-Choose **Export** in the session-title menu, or **Export session** in the command palette. Both open
-the same dialog: select **HTML** for the whole session or **JSONL** for the current branch, then
-**Download**. Export remains available during a run and captures content available at invocation,
-not a future completed answer. JSONL preserves native entries, embedded images and extension
-metadata. Neither format changes the source session.
+Choose **Export** in the title menu or **Export session** in the palette, select **HTML** for the
+whole session or **JSONL** for the current branch, then **Download**. Export during a run captures
+what is available at invocation. JSONL preserves native entries, embedded images and extension
+metadata. Read-only sessions can export saved JSONL even when the project or external owner is
+unavailable. HTML requires an available Inspire-owned worker.
 
-A read-only session offers **JSONL** from saved history without starting Pi, including when its
-project directory or external owner is unavailable. Unsaved native output is not part of that export;
-HTML requires an available Inspire-owned worker.
-
-Typed `/export [path]` remains available separately. It accepts one destination, including quoted
-paths with spaces and `~/` paths; a `.jsonl` suffix selects JSONL, otherwise Pi exports HTML. Its
-completion receipt offers **Download** and **Copy path**. Downloads preserve the generated snapshot,
-even if the output file later changes. Re-export after a Host restart or an expired download link.
+Typed `/export [path]` accepts one destination, including `~/` and quoted paths. Its receipt offers
+**Download** and **Copy path**. The download serves the generated snapshot even if the destination
+file changes. Re-export after a Host restart or an expired download link.
 
 ## Compaction and reload
 
-`/compact` uses the same compaction indicator as automatic compaction. Pi determines its duration;
-the Composer can retain Steer/Queue input meanwhile. Successful Compact and Reload show a brief
-confirmation when their session is selected, rather than retaining a dock receipt. Compact's persisted
-checkpoint remains in the conversation. Cancellation, failure and unknown outcomes retain their
-command result.
+Manual and automatic compaction share an indicator. Pi determines completion and accepts Steer or
+Queue input meanwhile. Stop requests native cancellation and recovers unconsumed Pending input.
+A committed checkpoint survives a racing Stop. Successful Compact and Reload show a short
+confirmation. Cancellation, failure and unknown outcomes retain their command result.
 
-**Stop** or Escape uses Pi's native cancellation and recovers unconsumed Pending input so it does not
-restart the task. Cooperative cancellation keeps the worker and extension state. An unresponsive
-extension hook may require retiring that worker and starting a fresh one on next use. A checkpoint
-already committed before Stop remains completed.
-
-The small context ring shows occupancy, not compaction progress. Hover or focus it to see the model
-and Pi's used tokens/context capacity. Click, tap or activate it with the keyboard to open
-**Session & usage**, also available through `/session` and the command palette. This local query
-preserves your draft and does not call a model. When Pi temporarily reports unknown usage after
-compaction, the ring shows `—` while the hint retains known capacity and explains that the count
-updates after the next reply.
-
-For an idle Inspire-owned session, `/reload` replaces its worker to reload extensions, skills,
-prompts and context files, resetting worker-local extension state. For an attached Pi, run
-`/reload` in its terminal. To apply a Host configuration change, see
-[Host restart scopes](host.md#host-and-terminal-maintenance).
+The context ring shows used tokens and capacity. Activate it or `/session` for **Session & usage**.
+After compaction, `—` means Pi has yet to report updated usage. Reload restarts only the selected
+idle Inspire-owned worker, including its extensions, skills, prompts and context files. To apply
+Host configuration changes, see [Host maintenance](host.md#host-maintenance).
 
 <a id="updates"></a>
 
 ## Update checks
 
-Settings → System checks Inspire, the installed Pi version and global/user extension packages.
-It reports available releases and installation commands; checking does not install them. After installing
-updates, **Check again** refreshes the result without restarting Inspire. If the Host still has an
-older Pi version loaded, the row shows **Restart Host to apply** instead of another update command.
-Extension **No updates** describes installed packages. Reload the session to apply resource
-changes.
+Settings → System checks Inspire, Pi and global/user extension packages. It shows installation
+commands. After installing updates, **Check again** refreshes the result. **Restart Host to apply**
+means the Host still has an older Pi version loaded. Reload the session to apply resource changes.
 
 ## Sessions and terminal use
 
-The History pane handles same-file navigation and independent Fork/Clone copies. Both copy actions
-create a separate session without replacing the source worker; extension authors should check the
-[lifecycle differences](extensions.md#session-lifecycle).
-
-A session can be open in Inspire and in terminal Pi at the same time. Search the command palette
-for **Copy resume command** to copy a command that opens the session in its project folder.
-If the original folder is missing, run the copied command in the new project folder and choose
-**Fork** in Pi 1.5.2 or later.
-When a terminal Pi is running the branch you open, Inspire shows its progress read-only and offers
-**Take over**, which continues that same Pi from the browser while the terminal keeps working (see
-[sharing sessions](extensions.md#share-sessions-with-terminal-pi)). Otherwise Inspire continues the
-session with its own Pi. Project terminal tabs remain separate shells.
-
-Terminal appearance and interaction preferences are saved in this browser for this origin, not in
-Pi settings. On macOS, **Option as Meta** is off by default to preserve native characters and accents;
-turn it on to send Escape-prefixed shell keys instead. **Persist output** and **Retention** belong to
-the connected Host's terminal service and are shared by its browsers. Turning saved output off deletes
-that service's retained output; it does not reset browser preferences.
-
-For extension commands, dialogs, and widgets, see [Extension adaptation](extensions.md).
+Choose **Copy resume command** in the palette and run it in the project folder to open terminal Pi.
+If the folder is missing, choose **Fork into another folder…** in Inspire to copy all saved
+branches to a workspace you select. In terminal Pi 1.5.2 or later, run the resume command in the
+new folder and choose **Fork**. A Pi worker started by Inspire, a connected native Pi and the
+**Terminal** panel have separate lifecycles. The panel runs independent project shells. Terminal appearance is a browser
+preference. **Persist output** and **Retention** belong to the Host's terminal service. Turning
+saved output off removes its retained output. On macOS, enable **Option as Meta** to send
+Escape-prefixed shell keys. Leaving it off preserves characters and accents. For terminal Pi
+attachment, extension commands, dialogs and widgets, see [Extension adaptation](extensions.md).

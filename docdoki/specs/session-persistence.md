@@ -4,7 +4,7 @@ covers:
   - server/runtime*.ts
   - server/external-session.ts
   - server/attach-control.ts
-  - extensions/inspire-session-bridge.ts
+  - server/extensions/inspire-branch-bridge.ts
   - server/pi-rpc.ts
   - server/session-{projection,jsonl,metadata,tree,document-worker,search,search-worker,fork,fork-worker}.ts
   - server/persisted-json.ts
@@ -12,7 +12,8 @@ covers:
   - tests/server/runtime*.test.ts
   - tests/server/session-projection*.test.ts
   - scripts/benchmark-projection-reads.mjs
-  - tests/server/pi-{rpc,compat.integration,startup.integration}.test.ts
+  - tests/server/pi-{rpc,startup.integration}.test.ts
+area: "Sessions"
 ---
 
 # Session persistence and worker ownership
@@ -40,8 +41,9 @@ for history reads or writer admission.
 
 Valid retained history remains readable when its project directory is missing, is not a directory,
 or cannot be resolved. The snapshot reports `readOnlyReason: workspace-unavailable`; neither a Pi
-worker nor project model discovery starts. Worker-backed mutations and independent Fork/Clone reject
-at admission. The history source must still be valid: missing or corrupt JSONL keeps its own error.
+worker nor project model discovery starts. Worker-backed mutations and History Fork/Clone reject
+at admission. **Fork into another folder…** can recover the saved tree as an independent Session in
+a user-selected workspace under [[session-branches]]. All paths require valid retained history.
 
 After publishing a browser's initial or switched session view, start Pi in the background if the
 view is editable and has no attached or managed Pi. Use the same writer admission as prompts and
@@ -126,9 +128,12 @@ retires the old history cursor generation and invalidates composer recall from t
 
 At a sealed boundary, compare ordered occurrences in that native suffix. Saved rows use native
 entry IDs; transient rows keep their own stream identity. Matching the same content twice requires
-two native occurrences. If Pi cannot confirm a finished row, Live retains it as unconfirmed.
-A native Bash result may be deferred beyond the agent boundary and stays independently visible
-until its own result is checkpointed. No complete disk append is used to claim a live event.
+two native occurrences. Keep unmatched output visible without a warning. Retain exact matching
+evidence for the unmatched tail so a later checkpoint can replace it without duplicating rows.
+Expire that evidence when a later occurrence matches or its worker or branch is replaced.
+A native Bash result may be deferred independently of agent messages. Custom messages have no shared
+timestamp and are compared within the current native suffix. Disk appends alone do not claim live
+events.
 
 ### Conflicts and uncertain writes
 
@@ -227,7 +232,8 @@ file-backed images and final Stop/session fences. The browser identifies the bra
 from. A changed branch blocks delivery. Stop and its preliminary Pending recovery share the view
 selected at the click. Input, rename, model and thinking changes stay addressed
 to the attachment present when the request begins.
-An SDK-hosted native terminal (`inspire pi`) confirms Steer and Follow up using Pi's per-input
+`inspire pi` starts in the caller's working directory and resolves relative session paths there.
+This SDK-hosted terminal confirms Steer and Follow up using Pi's per-input
 return value, independently of the next turn. A regular terminal Pi exposes no such result
 through its extension interface; busy remote input is refused before submission and its local
 queue remains under its terminal's control.

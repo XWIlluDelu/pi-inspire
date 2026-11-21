@@ -7,14 +7,14 @@ covers:
   - server/operation-receipts.ts
   - src/controllers/pending-recovery-controller.ts
   - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
-  - server/runtime-worker-pool.ts
   - shared/{contracts,host-endpoints,host-operations,json-endpoints,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
   - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff,operation-observer,receipt-storage}.ts
   - src/controllers/{connection,session-selection,runtime-event,branch,resource,session-catalog}-controller.ts
   - tests/server/{app-events,app-input-operations,runtime-worker-pool}.test.ts
   - tests/integration/session-detail-join.test.ts
-  - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
+  - tests/web/{events,store,store-navigation,store-async-ownership}.test.ts
+area: "Sessions"
 ---
 
 # Session transport and browser ownership
@@ -48,10 +48,10 @@ visible conversation when dependent reads fail.
 
 Foreground and navigation derive run state from one Host status per session. The addressed snapshot
 and live events use the same status contract. Message and lifecycle events still update transient content
-and request presentation. The browser acknowledges the outcome ID it viewed without clearing
-another browser's indication. Bounded Host-owned retry details accompany addressed snapshots and
-live events and retire outside retry phases. A valid `retrying` state remains visible if its detail
-is unavailable.
+and request presentation. The browser remembers viewed outcome IDs across reopening, scoped to
+the Host instance. Other browsers retain their own indications. Bounded Host-owned retry details
+accompany addressed snapshots and live events and retire outside retry phases. A valid `retrying`
+state remains visible if its detail is unavailable.
 
 ## Snapshot synchronization and reconnect
 
@@ -171,34 +171,30 @@ require the original selection/API/transport owner; cancelled late replies or 40
 current view/authentication. Socket loss alone does not supersede a current HTTP selection, but a
 subsequent bootstrap replacement does.
 
-Transport failure cannot establish mutation outcome. Read-only POSTs report read uncertainty.
-Creation has no retained receipt: suppress concurrent creates and require explicit confirmation to
-inspect the list before creating again after an unconfirmed outcome. This guard survives selection
-and transport replacement within the page, but not page reload. Gateway timeouts and lost error
-bodies remain uncertain; pre-dispatch cancellation is known not to have created a session and needs
-no confirmation. Non-JSON error pages keep HTTP status and edge markers for connection feedback.
+An uncertain New request recovers once using the same Host-scoped receipt. Repeating the same
+creation in the tab keeps that identity until a confirmed result or Host replacement. Other
+projects can start independently. Read-only POSTs report read uncertainty, and non-JSON error
+pages retain HTTP status and edge markers.
 
 ## Prompt delivery observations
 
 The Host admits each random prompt operation id once for its process lifetime and checks that
 a retry of uncertain input observes the original receipt without posting again. POST waits up to
 20 seconds before returning a pending receipt. Authenticated GETs observe that receipt. Each browser request has a
-30-second deadline. After a lost HTTP response, up to three consecutive receipt reads recover the
-same operation. A valid pending receipt renews the read budget. Replacing the transport cancels
-the browser observation while execution continues.
+30-second deadline. A lost or malformed response triggers up to three consecutive receipt reads
+for the same operation. A valid pending receipt renews that budget. Replacing the transport retires
+the browser observer while execution continues.
 
 The browser API confirms a result only from a retained receipt with matching Host authority,
 command and operation ID. Transport failures and unavailable or unknown receipts leave delivery
 unconfirmed.
-[[composer]] tracks the operation before dispatch. Retry delivery observes the same id even when
-the draft or delivery selection has changed. Same-version tab reload restores the original
-identity and request fingerprint for receipt observation. Unsupported records can be explicitly
-retired. The stored record contains the proof used for observation and has no replayable input. After a Host
-restart, the old result remains unknown and the user can inspect history before starting new input.
+[[composer]] records the operation identity and fingerprint before dispatch. Reconnect and tab
+reload observe that receipt in the background. When the Host changes, the composer retires old
+receipts and makes input still held by the tab available for editing.
 
 Prompt, terminal and restart tracking share bounded storage reads and writes. Each validates its
-own current records before dispatch. A read failure blocks writes until the original record can be
-checked. Invalid records require explicit retirement. The existing tab records retain their keys
+own current records before dispatch. A storage read failure blocks writes until the records can be
+read. The existing tab records retain their keys
 and formats, and each executor keeps its own identity and receipt semantics.
 
 ## Pending handoff observations
@@ -216,7 +212,7 @@ ordinary staging ownership under [[composer]].
 A matched rejected receipt ends that intent. A retired or missing receipt, plain HTTP 500,
 mismatched proof and transport loss stay uncertain; retrying the same intent only observes.
 
-Prompt, Return and Stop share one Host receipt table with command-specific fingerprints. It retains
+New session, Prompt, Return and Stop share one Host receipt table with command-specific fingerprints. It retains
 at most 2,048 settled results and 32 MiB for 15 minutes. Process-lifetime tombstones prevent
 redispatch or reuse of an ID for another command. The table refuses admission beyond 65,536
 identities. Terminal receipts retain their own daemon admission epoch and expiry policy.
@@ -245,24 +241,27 @@ Append-compatible cursors stay usable across any number of appends. A file repla
 them even when the new file contains identical bytes. Late pages across a branch boundary are
 aborted or discarded.
 
-Pi system prompts/tool-loadout messages stay in Host canonical state, outside browser rows and live
-overlays. Apply this consistently to compaction checkpoints, aggregate agent events, full/incremental
-and reopened/branch views, History search, complete-entry preview and image access. Preserve SDK
-entry identities and chronological compaction summaries; system placeholders produce no empty search
-results. Filtering does not change native or saved entries. Use the ordinary
-structured-key redaction policy without an extra text-redaction rule.
+Pi system prompts and tool-loadout messages stay in Host canonical state. Browser checkpoints,
+transcript and History reads, complete-entry previews and image access omit them while preserving
+native entry identities and chronological compaction summaries. Filtering applies only to the
+browser projection and follows the ordinary structured-key redaction policy.
 
 ## Bounded streaming
 
 ### Ordered batches and recovery
 
-Established sockets receive ordered coalesced assistant deltas. Clients joining behind snapshot
-synchronization receive complete idempotent replacements. Flush same-message Host batches after
-16 ms or before lifecycle/identity boundaries. Browser visual commits adapt from 16 to 50 ms as
+The Host publishes assistant fragments directly. While an addressed snapshot is in flight it
+buffers each fragment separately and replays those after the captured sequence. Established
+sockets receive consecutive same-message deltas in batches, flushed after 16 ms or before a
+lifecycle or identity change. A clipped projection travels as a complete replacement.
+Browser visual commits adapt from 16 to 50 ms as
 text/argument previews grow. Coalesce adjacent updates to one tool while preserving `sourceEventCount`
 and its original revision span, including through render-window batching and the 2,048-source-event
 ceiling. Invalid identity, reconstructed length, serialization or size state requires an
 authoritative snapshot instead of guessing across a gap.
+
+Checkpoints, message and tool events carry displayed content. `agent_settled` carries the outcome.
+The Host keeps Pi's cumulative `turn_end` and `agent_end` messages off the browser stream.
 
 An observed projection or branch change publishes its native rows, branch ownership and
 diagnostics in one stamped detail frame. A rejected replacement recovers through a new addressed
@@ -307,7 +306,7 @@ identity/name publish only the completed call.
 
 ## Checks
 
-- `session-detail-confirmation.test.ts` checks HTTP/WebSocket synchronization through browser
+- `connection-controller.test.ts` checks HTTP/WebSocket synchronization through browser
   routing. `store.test.ts` checks invalid acknowledgements. `app-events.test.ts` checks unchanged,
   changed and foreign authorities. Its stable window over 500,000 characters uses under 2,000
   bytes of synchronization and queued lifecycle frames.

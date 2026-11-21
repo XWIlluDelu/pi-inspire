@@ -1,9 +1,9 @@
 # Custom presentations
 
-Local JSON declarations customize tool cards, Thinking, custom messages and extension controls
-without changing Inspire or the Pi extension. Tool and Thinking rules define a collapsed summary and
-typed body blocks; custom-message declarations pick a title and Markdown body. Inspire keeps
-ownership of layout, disclosure, copy, resource actions and card status.
+A JSON profile defines summaries and body blocks for tool and Thinking cards, titles and Markdown
+bodies for custom messages, and status controls for extensions. Inspire supplies disclosure, copy
+and file actions. Declarations select data and cannot execute code. For commands and widgets, see
+[Extension adaptation](extensions.md).
 
 ## Configuration
 
@@ -14,31 +14,23 @@ ownership of layout, disclosure, copy, resource actions and card status.
 | macOS package   | `~/Library/Application Support/Inspire/tool-presentations.json`           |
 | Windows package | `%APPDATA%\Inspire\tool-presentations.json`                               |
 
-`INSPIRE_TOOL_PRESENTATIONS_PATH=/absolute/path/to/file.json` overrides the default; set it where the
-Host starts, then restart the Host. After editing the file, refresh the browser: each authenticated
-load reads and validates it, and invalid input shows a warning and falls back to the shipped
-presentations.
+To select another file, set `INSPIRE_TOOL_PRESENTATIONS_PATH` in the Host environment and restart
+the Host. A symlink at the default path also works. Refresh the browser after editing. Invalid
+profiles produce a warning and restore the shipped presentations. The authenticated browser
+receives the declarations, so keep credentials out of the profile.
 
-To version a personal profile, keep it in a separate repository and select it with the override or
-a symlink at the default path. Declarations are sent to the browser, so they must not contain
-secrets.
+Every profile requires `version`, `rules`, and `mappings`. The empty profile is
+`{"version":1,"rules":{},"mappings":{}}`.
 
-Every configuration requires `version`, `rules`, and `mappings`. An empty profile uses native presentations and generic extension cards:
-
-```json
-{ "version": 1, "rules": {}, "mappings": {} }
-```
-
-Presentation profiles do not change which Pi extensions run.
-
-For a first rule, save the [example](#example) at the selected path, replace `custom_search` with
-your tool's exact name, and adapt the field selections. Refresh and open a matching call. If the
-card stays generic, check the configuration warning, the mapping name and required fields;
-[rule selection](#rule-selection) explains the fallbacks.
+For editor completion and structure checks, point `"$schema"` at the
+[editor schema](tool-presentations.schema.json). A profile in a source checkout's `.inspire/`
+directory can use `"$schema": "../docs/tool-presentations.schema.json"`. Inspire validates the
+rules when it reads the profile and keeps the schema reference local to the file.
 
 ## Example
 
-This custom search tool returns an unindented file path followed by numbered match/context lines:
+Save this profile and replace `custom_search` with the tool's exact RPC name. Its result contains
+an unindented file path followed by numbered match and context lines.
 
 ```json
 {
@@ -76,13 +68,12 @@ This custom search tool returns an unindented file path followed by numbered mat
 }
 ```
 
-Mapping `grep` instead of `custom_search` replaces the native-name presentation, useful when an extension overrides that tool. The rule uses the query/path in its summary rather than repeating them above the results.
-
 ## Rule selection
 
-For each exact RPC tool name, Inspire chooses the user mapping, otherwise the shipped mapping, otherwise the generic card. If the selected rule is missing, fails, or cannot interpret the data, the card falls directly back to generic rendering; it does not try another semantic rule.
-
-User rule IDs must be namespaced, such as `user.example.search`. Shipped `inspire.*` IDs are reserved. A user mapping may reference a shipped rule without redefining it.
+A user mapping overrides the shipped mapping for the same tool name. Mapping `grep` to
+`user.example.search`, for example, replaces its native presentation. A missing or incompatible
+selected rule uses the generic card. User rule IDs must be namespaced. Mappings can reference
+shipped `inspire.*` rules, whose definitions are reserved.
 
 ## Values and summaries
 
@@ -113,7 +104,7 @@ A missing required value makes the rule incompatible. Set `optional: true` on a 
 | `replacement`                  | Required `label`, `oldText`, and `newText`; optional file `path`.                                                                                                                                                 |
 | `list`                         | Array or newline-delimited `source` rendered as file/directory links; optional `root` supplies their base path. `format: "annotated-lines"` recognizes trailing `  [annotation]` and standalone `[notice]` lines. |
 | `search`                       | `source` with `format: "grouped-lines"`: file headers followed by ` <line>: <match>` or ` <line>- <context>` rows. Standalone bracketed lines are notices.                                                        |
-| `image`                        | Base64 `data`, `mimeType`, and `alt` values; PNG, JPEG, GIF, and WebP are supported.                                                                                                                              |
+| `image`                        | Base64 `data`, `mimeType`, and `alt` values; PNG, JPEG, GIF, WebP, and BMP are supported.                                                                                                                              |
 | `notice`                       | `source`, optional `tone`: `muted`, `warning`, or `error`.                                                                                                                                                        |
 
 `list` and `search` also accept `label`, `emptyValues`, and `emptyText`. Sources and the named value fields use the same literal/selection grammar above. `label` and other declaration options are ordinary JSON values. The full schema is `shared/tool-presentation-config.ts` in a source checkout.
@@ -177,8 +168,6 @@ shows `customType`, `content`, and `details` from the same bounded preview. Copy
 message on demand to include its complete original content and details. Presentation does not change
 Pi's message or model context.
 
-`customMessages` is optional in version-1 profiles.
-
 ## Extension adapters
 
 One selected profile composes independent adapter files:
@@ -194,34 +183,24 @@ One selected profile composes independent adapter files:
 }
 ```
 
-Use **Settings → Adapters** to toggle each module immediately, without rebuilding the web app or
-reloading Pi. Overrides persist in Inspire preferences; module files stay unchanged. These are GUI
-adapters, not Pi extension installers. Disable an adapter to restore native/generic rendering.
+Toggle modules in **Settings → Adapters**. Choices take effect immediately and persist in Inspire
+preferences. Disabling a module removes its declarations.
 
-Adapter files use this same version-1 declaration format but cannot include other adapters.
-Paths resolve relative to the physical profile file, including through a profile symlink. Modules
-compose in profile order: later exact rule IDs, tool mappings, custom-message types, control IDs
-and checkpoint sources replace earlier ones. Hidden status keys combine; the last Thinking
-declaration wins. Disabled files are not read. A broken module warns and leaves other adapters
-active. The combined profile retains the same configuration-size bounds.
+A module uses the same profile format and cannot include other adapters. Paths resolve relative
+to the physical profile file, including through symlinks. Later modules replace matching rule IDs,
+tool names, custom-message types, controls, checkpoints and the Thinking declaration. Hidden status
+keys combine. Disabled files are skipped. An invalid module produces a warning while the other
+modules remain active. Each file and the combined profile have a 256 KiB limit.
 
-In addition to cards, modules may declare:
+Modules can also declare:
 
-- `hiddenStatuses`: exact RPC status keys to omit from the top bar without deleting their state.
-  A control's own `state.key` is hidden automatically while its value parses as that control's
-  state, so list only other keys here.
-- `controls`: status-bound discrete choices shown in the Thinking selector (`slot: "thinking"`). Each declaration has a namespaced
-  `id`, a `label`, an exact slash `command`, a `state` selector (`key`, `value`, optional
-  `supported` and `active` field paths), and two to eight `options`. Each option has a safe command
-  `value`, compact `label`, optional full `title`, `description`, `confirmation`, and
-  `indicator` (`bolt` or `double-bolt`). Controls appear only when the corresponding extension
-  command is available, using the same native-name precedence as command completion.
-  Use Pi's registered invocation name, including collision suffixes such as `/mode:2`.
-  The same choices appear before session creation when the target directory discovers the command.
-  Untouched choices keep Pi defaults; an explicit choice stays local until creation, then the native
-  command must be confirmed before the first input is delivered. Failure preserves that input and its
-  attachments in the new session. Live changes use the same confirmation boundary: Pi status confirms
-  changes; a command receipt does not.
+- `hiddenStatuses` lists exact RPC status keys to omit from the top bar. A control automatically
+  hides its own `state.key` while the value parses.
+- `controls` adds discrete choices to the Thinking selector. Each control has a namespaced `id`,
+  a `label`, `slot: "thinking"`, a registered slash `command` (including collision suffixes such
+  as `/mode:2`), a `state` selector and two to eight `options`. Each option has a command
+  `value` and a compact `label`. Optional fields are `title`, `description`, `confirmation` and
+  `indicator` (`bolt` or `double-bolt`).
 - `checkpoints`: exact compaction `source`, `title`, `tokensLabel` and `tokensDescription`.
   Optional `summaryPrefix` elides a redundant displayed prefix while retaining source Copy.
   `legacySummaryPrefix` matches cached source-less records at a word/colon boundary.
@@ -242,41 +221,23 @@ For example, a generic control declaration is:
 }
 ```
 
-Put it in a module's `controls` array. The extension publishes JSON such as `{"mode":"normal"}`
-under `example-mode`. Inspire sends `/response-mode quick` only after a user selects it.
-These declarations execute no JavaScript and contain no application-source substitutions.
+Put this declaration in `controls`. When the user selects Quick, Inspire sends
+`/response-mode quick`. The extension publishes the effective state, such as `{"mode":"quick"}`,
+under `example-mode` with `ctx.ui.setStatus()`. Publish at `session_start`, after each accepted
+choice and when capabilities change, even if the terminal footer is hidden. The optional
+`state.supported` path selects an object containing one boolean per option. `state.active` selects
+a boolean indicating whether the current model applies the selected value.
 
-The extension must publish this machine-readable state through `ctx.ui.setStatus()` at
-`session_start`, after an accepted selection, and whenever its effective capability changes.
-Publish it independently of optional terminal/footer visibility. If `supported` is selected,
-provide a boolean for every option value; if `active` is selected, provide a boolean. Keep
-the requested value distinct from whether it is active for the current model.
-
-Command discovery alone does not establish this state contract. Missing or invalid state leaves
-live controls unavailable; a pre-session selection cannot release the first message without
-confirmation. A successful command receipt is not a substitute. The extension owns persistence
-and restoration; the adapter only selects fields and sends commands. When upgrading a customized
-extension, verify its published package still provides the required status, not just the command
-name. Keep producer changes in the extension and presentation declarations in its adapter module.
+A control appears when the target directory exposes its extension command. A live change requires
+valid status from Pi. Before creating a session, an untouched control keeps Pi's default. An explicit
+choice waits for Pi's status confirmation before sending the first message. If confirmation fails,
+the new session keeps the draft and its attachments. The extension owns persistence and restoration.
 
 ## Native Codemode and nested calls
 
-CodeMode and nested tools show child calls inside the parent card. CodeMode headers summarize the
-observed tools and any child failures; the native tool name stays `codemode`. CodeMode keeps Calls,
-Output and Script in that order during execution and afterward. Calls lists always appear directly
-inside an open parent card; long CodeMode call lists use conversation scrolling rather than a nested
-list viewport. Other nested call lists retain their bounded scrolling. Script remains behind its own
-disclosure. Open a call to inspect available parameters, errors and duration. Parameter previews
-remain labelled. Inspecting Calls or Script
-keeps the card open through completion; child failures do not change the parent's recorded outcome.
-
-Calls use compact rows with path/command summaries; output sits in a separate reading area using
-the native tool-card style. Output blocks retain their order, JSON keeps its fields and hierarchy,
-and multiline strings show actual newlines. Long results scroll inside the card, without mode tabs,
-JSON tree controls or collection paging. The header shows call/failure counts and available duration.
-Its copy button copies the complete tool block—arguments/Script, original result text and recorded
-result details—like other tool cards. Images and recorded full-output files use the existing viewers.
-The shared call view requires no custom presentation profile and preserves the configured tool/activity
-display preferences.
-
-Declarations select data; they cannot execute code, inject HTML/CSS, or access the filesystem/network. For commands, widgets, or dedicated GUI controls, see [Extension adaptation](extensions.md).
+The shipped `codemode` presentation shows Calls, Output and Script. Child rows retain available
+arguments, failures and durations. A child failure leaves the parent outcome intact. Opening a
+child or the script keeps the card open through completion. Output preserves block order and
+multiline JSON values. Copy includes the original script, result and recorded details. Images
+and recorded full-output files open in their usual viewers. Other tools with child calls use
+the same rows without a profile.

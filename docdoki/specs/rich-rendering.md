@@ -1,7 +1,7 @@
 ---
 purpose: Shared streaming Markdown, mathematics, code, tables, and links for Pi content.
 covers:
-  - src/components/{RichText,CodeView}.tsx
+  - src/components/{RichText,RichTextMath,RichTextMermaid,CodeView}.tsx
   - src/{rich-text-parser,rich-text-parser-client,rich-text-worker}.ts
   - vite.config.ts
   - package.json
@@ -18,6 +18,7 @@ covers:
   - tests/browser/{rich-text-delimiters,filesystem-files,custom-message,rich-text-layout}.spec.ts
   - tests/fixtures/rich-text-benchmark.tsx
   - scripts/benchmark-rich-text.mjs
+area: "Conversation & Content"
 ---
 
 # Rich rendering
@@ -29,14 +30,15 @@ thinking, documents, and extension Markdown share one rendering authority with d
 
 ### Content semantics
 
-- Support CommonMark-style Markdown, GFM tables and task lists, links, images, inline mathematics,
+- Support CommonMark-style Markdown, GFM tables and task lists, links, images, Mermaid diagrams
+  (lazy-loaded with `securityLevel: "strict"` and Diagram/Source toggle), inline mathematics,
   and display mathematics. Streaming keeps incomplete fences, links, tables, and math readable.
   Read-only task markers hang beside a dedicated text column: wrapped lines, additional paragraphs,
   and nested lists keep their text alignment and hierarchy. Original Markdown and read-only
   checkbox semantics remain intact. Ordinary entries in mixed lists keep their bullets or
   ordered numbers and share the content column with task entries.
-  Table columns preserve whole-word minimum widths and wrap ordinary prose at word boundaries;
-  wide tables and unbroken cell tokens scroll within the table, not the reading column.
+  Table columns honor authored alignment, preserve whole-word minimum widths and wrap at word
+  boundaries. Wide tables scroll within the reading column.
   Inline mathematics keeps its natural text baseline and visible script/fraction extents, without
   becoming an independent scroll container. Display mathematics scrolls locally only when the
   expression exceeds the available reading width. Chat and Markdown file previews share this rule.
@@ -51,7 +53,8 @@ thinking, documents, and extension Markdown share one rendering authority with d
   by a slash and ordinal suffixes, remain valid.
 - Raw HTML-shaped source, including generic types such as `Array<T>`, renders as inert text; it is
   never interpreted as elements or silently discarded.
-- Code blocks preserve whitespace, identify their language when available, highlight syntax, and
+- Inline code and code blocks share the current reading code size. Code in headings follows the
+  heading scale. Blocks preserve whitespace, identify their language, highlight syntax, and
   copy the original source. Parsed `pre` structure determines block identity: unlabeled, indented,
   and incomplete fences keep block/copy behavior. Only inline code can become a file-reference button.
   Markdown fences, notebook code, file source and tool output share a code surface. Git and tool

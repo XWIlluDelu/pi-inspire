@@ -7,42 +7,16 @@ scope:
   - server/task-notifications.ts
   - public/service-worker.js
   - docs/host.md
+specs: [notifications]
 ---
 
 # Task-alert device acceptance
 
-## Objective
+## Verified on devices
 
-Complete background task-alert acceptance against [[notifications]] without changing native Pi
-execution or replacing the separate tab-title/favicon signal.
-
-## Implemented
-
-- The Host classifies task outcomes for built-in and reporter-enabled external Pi sessions.
-  Page-independent Web Push delivers them to enrolled installations.
-- Device-local Off / Mark tab / System notification intent remains separate from browser permission
-  and push enrollment. Settings show the chosen value, effective status and a manual Test action.
-- Session grouping replaces one native notification per Pi session. Project grouping combines
-  distinct sessions in the same project, counts each once, and links to the latest session.
-  Grouping is saved by the Host for each installation; changing it does not request permission
-  or enable alerts.
-- Host-scoped settings revisions fence late page messages and pushes. A new Host starts with its
-  own policy. Outcome ordering, restart persistence, dismissal and viewed-session clearing preserve
-  the latest content and unread peers.
-- Enrollment repair follows worker and receiver replacement without rewriting saved intent.
-  Core navigation and prompt offers do not wait for enrollment.
-- Notification click-through reuses a paired page, preserves navigation identity through reload,
-  and supports a later prompt in the same Pi.
-
-## Evidence
-
-Linux Chrome native display/click-through, installed-PWA refresh continuity and Android system
-display of a manual test are verified. Automated tests cover classification, startup independence,
-permission/enrollment races, late Test results after a mode change, expired-subscription retirement,
-session/project grouping, deduplication, restart ordering, click ownership and lifecycle event delivery.
-
-A manual Android test covers the receiver path only; background Pi outcomes and same-Pi prompting
-still need physical-device acceptance. iOS/iPadOS push has not been physically verified.
+Linux Chrome displayed native task notifications and opened the owning conversation on click.
+The installed PWA retained the target across refresh. Android displayed a manual Test notification.
+[[notifications]] defines outcome classification, grouping, enrollment and delivery.
 
 ## Remaining work
 

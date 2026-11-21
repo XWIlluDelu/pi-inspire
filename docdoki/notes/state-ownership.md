@@ -18,7 +18,7 @@ Session-addressed resource reads, forks and saved-history observations use the t
 Host's global selection. Capture automatic-selection intent before queued work begins; capturing it
 after reconciliation can overwrite a choice made while the request waited.
 
-See `src/store.ts`, `src/controllers/branch-controller.ts`, `server/runtime-reads.ts` and
+See `src/store.ts`, `src/controllers/branch-controller.ts`, `server/runtime.ts` and
 `tests/web/store-async-ownership.test.ts`. Contracts: [[session-transport]], [[session-branches]].
 
 ## State and observations
@@ -93,10 +93,10 @@ Split modules where state, transport or lifecycle ownership changes. A facade th
 callbacks adds no boundary; a socket subscription owner or PTY gateway does. Organize regression
 fixtures by those responsibilities so distinct failure modes remain independently testable.
 
-Worker startup and retirement are orchestrated by `RuntimeWorkerLifecycle`, which calls the existing
-process registry, projection coordinator, extension UI and Bash owners directly. Its Host callbacks
-retain runtime-owned policy: selection, admission, configured process creation, reconciliation and
-browser event authority. See `server/runtime-worker-lifecycle.ts` and `server/runtime.ts`.
+`RuntimeWorkerLifecycle` binds, attests and retires a Pi process. Runtime owns slot admission,
+projection subscriptions, eviction and browser events. Enhanced workers send display status to
+their own Herdr pane through their bound process handle. See `server/runtime-worker-lifecycle.ts`,
+`server/runtime.ts` and `server/herdr-enhancement.ts`.
 
 React StrictMode can replay a modal's layout effect after focus has entered the dialog. Preserve
 the original outside opener rather than capturing the focused close button as its replacement.

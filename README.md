@@ -16,14 +16,14 @@ connect remotely to the same Host.
 
 ## Features
 
-- **Technical conversations:** streaming Markdown, syntax-highlighted code, tables, and inline/display mathematics, with search and a prompt outline.
+- **Technical conversations:** streaming Markdown, syntax-highlighted code, Mermaid diagrams, tables, and inline/display mathematics, with search and a prompt outline.
 - **Concurrent sessions:** search retained conversation text, inspect History, continue branches, and Fork/Clone independent sessions. Switching keeps background work running; navigation shows running work and unseen results.
-- **Shared with terminal Pi:** a terminal Pi and Inspire can use the same session; **Take over** continues a running terminal Pi from the browser while the terminal keeps working.
+- **Shared with terminal Pi:** with `attach-control` installed, an idle terminal Pi can attach automatically. **Take over** controls a running Pi from the browser while its process stays in the terminal.
 - **Rich input:** project-file references, images/files, retained drafts and prompt history, plus Steer/Queue with text/image recovery during a run.
 - **Native Pi controls:** model/thinking selection, saved defaults/common models, provider configuration/login, direct shell input, compaction, and HTML/JSONL export.
-- **Inspectable activity:** live tool output, native and customizable tool cards, and independent Thinking/tool detail settings. Adaptive mode shows current work and compacts completed activity.
+- **Inspectable activity:** live tool output, native and customizable tool cards, and adaptive disclosure that expands current work and compacts completed activity into clean single-line summaries.
 - **Files and Changes:** browse the workspace, inspect Git diffs, and preview images, Markdown, notebooks, HTML, PDF, source, audio, and video beside the conversation.
-- **Persistent terminals:** project-scoped shell tabs survive browser disconnects and ordinary Inspire restarts.
+- **Project terminals:** project-scoped shell tabs run in the Host and survive browser disconnects.
 - **Desktop and narrow layouts:** resizable panes, a command palette, keyboard shortcuts, and Wisteria, Hydrangea, Lycoris, Chimonanthus, Jade, Amber and Carbon & Silicon palettes, each in light and dark.
 
 <table>
@@ -105,7 +105,7 @@ branching and session controls. [Task notifications](docs/host.md#task-notificat
 alerts on each browser or phone; installing the PWA alone does not enable them.
 
 Use `npm run inspire -- stop` from source or `inspire stop` for an installed package when you want to
-stop the Host. See [Lifecycle](docs/host.md#lifecycle) for restart scopes and their effects on Pi work
+stop the Host. See [Lifecycle](docs/host.md#lifecycle) for restart behavior and its effects on Pi work
 and terminals.
 
 ### Platform support
@@ -118,8 +118,6 @@ fixes, with platform-specific differences in features such as installation and n
 | --- | --- | --- | --- |
 | Host, Pi sessions, launcher, project terminals | Supported | Supported | Supported |
 | Page Restart (launcher-owned or installed service) | Supported | Supported | Supported |
-| Restart all (Pi sessions + installed Host and terminals) | Supported | — | — |
-| Chromium workbench tests in CI | Yes | Yes | Yes |
 | Native session Trash | Freedesktop Trash | `~/.Trash` | Recycle Bin |
 | Persistent systemd services | Yes | — | — |
 | Herdr enhancement and managed reverse SSH | Yes | — | — |
@@ -139,8 +137,6 @@ lists changes and upgrade notes.
 - [MCP configuration](docs/mcp.md): scoped native server forms, protected values, and explicit Reload.
 - [Tool presentations](docs/tool-presentations.md): local JSON rules for custom tools and Thinking cards, including exact tool-name overrides.
 
-Tool-presentation files customize the GUI; they do not select which extensions run.
-
 ## Remote access and Herdr
 
 [Reverse SSH](docs/ssh-reverse.md) connects a Linux Host to a user-controlled HTTPS edge. The browser and terminal use the same tunnel; Pi, session files, and project processes stay on the Host.
@@ -151,7 +147,7 @@ prerequisites. Herdr is optional; Pi launches directly by default.
 
 ### Access and trust
 
-Pairing grants full control of the installation, including a shell with the Host user's permissions. Pair only trusted browser profiles and use HTTPS remotely. A remote HTTPS edge can observe application traffic, so it must also be trusted.
+Pairing grants full control of the installation, including a shell with the Host user's permissions. On shared or untrusted devices, uncheck **Remember this browser** on the pairing screen for a one-time session, or use **Sign out** in **Settings → System → Host** (or the command palette) to forget the browser key. Use HTTPS remotely; a remote HTTPS edge can observe application traffic, so it must also be trusted.
 
 Provider credentials stay on the Host. Conversation Markdown is sanitized. HTML previews are static by default; **Enable interaction** runs a trusted file's scripts and loads its resources in an isolated frame, and **Stop interaction** returns to static viewing. Local file previews are authorized against the selected session and workspace.
 
@@ -162,15 +158,13 @@ integration, a two-parent synchronization commit brings `auto-dev` to the review
 retaining both branch histories. Preserve `auto-dev` history during routine development.
 
 ```bash
-npm run dev       # Host and Vite development servers
-npm run check          # Lint, types, build, unit and launcher tests
-npm run ci             # Also runs Chromium and Firefox tests
+npm run dev            # Host and Vite development servers
+npm run check          # Static checks, build and non-browser tests
+npm run ci             # Also runs key workflows in Chromium
 npm run format:check   # Check formatting on demand
 ```
 
-`npm run dev` (or `npm run inspire -- dev`) opens the Vite page once the Host is ready, with a
-one-use pairing link and separate development credentials. An occupied port is an error rather than
-a fallback to another port. See [development checkout](docs/host.md#development-checkout).
+See [development checkout](docs/host.md#development-checkout) for ports and pairing.
 
 The [design overview](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/spec_abstract.md) links to the design contracts and open work. [Host operations](docs/host.md#build-and-install-a-package) covers release packaging.
 

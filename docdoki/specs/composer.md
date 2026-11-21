@@ -16,6 +16,7 @@ covers:
   - tests/web/{composer*,session-drafts,native-commands,readonly-session,content-copy,welcome*,directory-picker,model-selector,model-store}.test.ts*
   - tests/web/{image-preview,attachments}.test.tsx
   - tests/browser/{composer,file-attachments,usage-facts,model-selection,model-workflow,project-directory,project-file-picker,pending-input,image-interactions}.spec.ts
+area: "Input & Models"
 ---
 
 # Conversation composer
@@ -51,13 +52,9 @@ handoff cannot match a cleared or replaced draft. First-message creation transfe
 input to the assigned session. Before submission it checks the destination after attachment upload
 and initial controls. New input typed during that handoff remains available.
 
-An uncertain prompt retains the original operation. Automatic restoration requires the revision
-left by the handoff. After an edit and clear, Restore can recover the prior input explicitly.
-Editing the restored draft keeps its link. Retry delivery observes the original receipt. **New
-input** detaches the link so an intentional duplicate can be sent as a separate prompt, restaging
-browser-held files. Same-version tab reload retains receipt tracking for observation only.
-Unreadable receipt records remain in place until Stop tracking. A failure to publish the next
-receipt leaves the draft editable and blocks its dispatch.
+Same-version tab reload retains observation metadata. Unsupported metadata is discarded
+automatically. A browser storage failure that prevents dispatch leaves the draft editable and
+reports that the message could not be sent.
 Append-only transcript updates preserve textarea focus and selection.
 
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
@@ -301,9 +298,9 @@ Submission, including the first Welcome message, synchronously hands the exact d
 an operation keyed by its original receipt and leaves the editor ready for the next input.
 Sending, unknown acceptance and draft recovery belong to that record. On definitive failure,
 input returns to the unedited draft left by the handoff. Restore offers it alongside later edits.
-An ambiguous response is checked silently against its original receipt, including on reopening a
-tab. If the check still cannot confirm delivery, one quiet notice offers another receipt check
-when the Host can address it. It can be dismissed and the normal Send action keeps working. While text or artifacts occupy the
+An ambiguous response is checked silently against its original receipt, including after reconnecting
+or reopening a tab. The tab retains text and project file references with the original receipt.
+Confirmed rejection returns that input to the draft or Restore. While text or artifacts occupy the
 editor, Restore's compact quiet action uses the shared neutral unavailable state and keeps its 32px
 target. Artifacts are released only on confirmed acceptance, explicit Clear, or withdrawal after
 restoration. Known acceptance remains non-retryable even if later projection reconciliation
@@ -319,9 +316,8 @@ accepts bounded Host-held input at Pi's actual boundary under [[pi-integration]]
 remains abortable but is not active busy ownership.
 
 The adjacent activity surface names Retry/Compaction from session state, including automatic work and
-reconnect. Available attempt/reason details enrich the label; missing details never invent counters.
-Ordinary, compaction and summary retry keep short status separate from wrapping reasons. Executing
-and failed tools remain in their chronological activity entries.
+reconnect. Active retries use short labels with optional details on hover. Executing and failed
+tools remain in their chronological activity entries.
 
 Pending sits at Transcript's end and immediately shows ordered Steer/Queue input. Its header contains
 the total and the actions Copy, Return, Clear, in that order; panel emphasis and action visibility
@@ -330,11 +326,11 @@ queues use quiet group labels without group counts or per-row S/Q badges. Bounde
 omitted entries keep a generic header and visible group labels, because they cannot establish the
 whole queue's mode.
 
-The activity surface's compact count is a native Jump to Pending button with neutral interaction
-feedback; it disappears when the queue is empty. Pointer and keyboard activation align the queue's
-start below floating reading controls, scroll only Transcript and focus the Pending region, not the
-editor. Latest-follow stays active only when the destination is at the latest boundary. The region
-adds no ordinary Tab stop.
+The Pending count is a neutral Jump to Pending pill above the Composer's left edge. It floats
+without reducing Transcript height when shown alone and sits inline with retry or compaction
+status when present. It disappears when the queue is empty. Activation scrolls only Transcript,
+aligns the queue's start below the floating reading controls, and focuses the Pending region.
+Latest-follow stays active only at the latest boundary. The region adds no ordinary Tab stop.
 
 Text previews keep up to three leading lines and one trailing line within 512 characters, separated
 by an explicit middle ellipsis. Short text stays whole; omitted rows keep total and omitted counts.
@@ -363,8 +359,10 @@ full content is unavailable.
   receipt merges into its original partition, preserving newer text/artifacts and another session's
   work. Receipt reclamation applies each handoff once, including after a lost HTTP result or a
   reconnect with the previous observer still pending. Host-held uploads and recalled images are
-  included in the receipt even when another browser performs Return or Stop. The original prompt
-  observer receives those same staging handles and an image-handoff identity. Apply each handle
+  included in the receipt even when another browser performs Return or Stop. The tab holding the
+  submitted images can recover the same handles and handoff ID from either the prompt response
+  or a later read of its receipt. After a full page reload, the saved receipt carries text and
+  project paths only. Apply each live image handle
   once per authority/session/handoff, including after the user removes or resends it and after an
   empty draft is discarded; later recovery handoffs may return that handle again. Either response
   order preserves subsequent user actions; preview observation does not own staging validity. If
@@ -491,9 +489,10 @@ bounded successful-only provider-local MRU; unavailable MRU entries stay saved b
 - Changes commit selection/recency only on success; failed thinking rolls back, and both failures
   warn.
 
-New shares the editor, attachment controls and project-file picker with the session composer. The
-first-message editor receives autofocus. The editable project path and its browse control sit above
-it. Enter in the path field does not submit a session, and IME confirmation stays native.
+New shares the editor, attachment controls and project-file picker with the session composer.
+Its first-message editor takes focus unless the user is already editing another field. The project
+path and browse control sit above it. Enter in the path field does not submit a session, and
+IME confirmation stays native.
 [[workbench]] owns directory browsing and [[session-continuity]] owns explicit folder creation.
 **Create folder and start** needs no second confirmation. Changing the path retires the action for
 the old path. Creation preserves the staged input and explicit or inherited model and thinking

@@ -17,6 +17,7 @@ covers:
   - tests/browser/extension-ui.spec.ts
   - tests/web/extension-ui-ownership.test.tsx
   - tests/web/{store*,events}.test.ts
+area: "Pi & Hosting"
 ---
 
 # Pi integration
@@ -116,11 +117,24 @@ owns selection and discovery semantics; [[herdr-enhancement]] owns the TUI recei
 assistance and resource preparation. [[pi-capability-gaps]] tracks generic argument completion and
 the public callback interface it needs.
 
+### Tool Loadout
+
+Tool Loadout reads the live Inspire-owned worker's tool inventory, including exposure and Pi's
+active selection. Activation affects Pi's selected tools. Exposure and extension hooks still
+determine which tools are discoverable, callable, or declared to the provider.
+
+An edit addresses one tool on the observed worker and view. The worker merges the change into its
+fresh active set through Pi's public Extension API and reports the resulting selection. Hidden
+tools are informational. The inventory is bounded and may be truncated. A cold session, attached
+terminal, or replaced worker requires a new observation of a suitable worker.
+
 ## Extension UI reuse and source DIY
 
-Standard dialog bodies accept controlled props for values, pending/error state and response/cancel
-callbacks. Their connected wrapper owns session/request identity, communication, lifetime, deadlines
-and modal focus. Reusing the body grants no runtime control or global-store dependency.
+Standard dialog bodies accept presentation props for the question and text draft, pending and error
+state, and answer and cancel callbacks. The body reports the answer value. Its connected wrapper
+owns session/request identity, wire response shape, communication, lifetime, deadlines and modal
+focus. The [extension guide](../../docs/extensions.md#reusable-components-in-a-source-checkout)
+documents optional props-based components for source views.
 
 Prefer native RPC primitives, then typed declarative displays. Purpose-built source customization
 uses a Pi extension for state and namespaced commands, an adapter for admitted data/actions, and a
@@ -128,7 +142,7 @@ React view. Actions require both declared capability and current command invento
 `sendPreparedCommand` preserves drafts and attachments. Nested-property display alone does not
 provide subagent management or scheduling.
 
-The [task-board example](../../docs/extensions.md#choose-the-smallest-integration) demonstrates
+The [task-board example](../../docs/examples/task-board/README.md) demonstrates
 persisted custom messages, editable notes and cancellable local timers. Startup/tree navigation
 cancels local timers and restores the selected branch's saved state without resuming process-local
 work. UI state belongs to its session/view/transport. An explicit Show tasks action obtains a missing snapshot; selection

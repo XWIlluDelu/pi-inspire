@@ -10,7 +10,7 @@ first session. This guide covers Host configuration, pairing, daily commands and
 | Start or configure the Host | [Run and reopen](#run-and-reopen), [Shell environment](#shell-environment) |
 | Connect a browser or install the app | [Browser pairing](#browser-pairing), [Installed browser apps](#installed-browser-apps), [Remote access](ssh-reverse.md) |
 | Use a running Host | [Lifecycle commands](#lifecycle), [Task notifications](#task-notifications) |
-| Maintain or upgrade | [Host and terminal maintenance](#host-and-terminal-maintenance), [Linux user services](#linux-user-services), [Updating Inspire](#updating-inspire) |
+| Maintain or upgrade | [Host maintenance](#host-maintenance), [Linux user services](#linux-user-services), [Updating Inspire](#updating-inspire) |
 | Recover data or investigate errors | [Session recovery](#recover-a-deleted-session), [Uploaded files](#uploaded-file-retention-and-cleanup), [Diagnostics](#diagnostics) |
 | Work from source or distribute a build | [Development checkout](#development-checkout), [Build and install a package](#build-and-install-a-package) |
 
@@ -20,17 +20,15 @@ Commands in this guide use the globally installed `inspire` entry. From a source
 `npm run inspire -- <arguments>` (or `./inspire <arguments>` on Linux/macOS). With restricted
 Windows PowerShell, use the [batch shims from the README](../README.md#run-locally).
 
-Running the launcher again reopens the matching Host. `inspire status` checks that instance and
-prints a fresh local pairing link; it does not start a stopped Host. A direct launch stays attached
-to its terminal, so keep that terminal open, or use [Linux user services](#linux-user-services).
-Closing a browser page does not stop the Host.
+A direct launch stays attached to its terminal. Use [Linux user services](#linux-user-services)
+to keep it running after the terminal closes. Closing the browser leaves the Host running.
 
 Set overrides in the environment that launches the Host:
 
 | Variable | Meaning |
 | --- | --- |
 | `INSPIRE_HOST` | Loopback address: `127.0.0.1` (default), `::1`, or `localhost`. Remote access goes through an HTTPS ingress such as reverse SSH. |
-| `INSPIRE_PORT` | TCP port, default `4587`. Use a separate port for another Host or a development instance. |
+| `INSPIRE_PORT` | Decimal TCP port from 1 to 65535, default `4587`. Use a separate port for another Host or a development instance. |
 | `INSPIRE_OPEN=0` | Do not open a browser automatically; the launcher still prints a local pairing link. |
 | `INSPIRE_PI_COMMAND` | A specific Pi executable, by name or path, instead of `pi` on PATH. It must resolve to the Pi package, not a shell command with arguments. |
 | `INSPIRE_STATE_PATH` | Private launcher instance-state file. Normally unset; if set, reuse it for that instance's status, stop and restart commands. |
@@ -85,10 +83,13 @@ terminal and enter the token in the Pair form. Keep it out of logs and URLs; HTT
 accept a token in the query string. See [remote pairing](ssh-reverse.md#browser-pairing).
 
 Every paired browser can operate Pi sessions, files and project terminals as the Host account, so
-protect the browser profile and the token. Rotating the token or clearing the site's IndexedDB
-requires pairing again. Trusted non-browser clients can send an explicit bearer header. Download
-URLs contain no bearer credential, and downloads deliver the complete file regardless of preview
-limits. The [pairing contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#pairing-and-authenticated-ingress)
+protect the browser profile and the token. On shared or untrusted devices, uncheck **Remember this
+browser** on the pairing screen for a one-time session that clears on reload or tab close, or use
+**Sign out** in **Settings → System → Host** (or the command palette) to clear the saved key.
+Rotating the token or clearing the site's IndexedDB also requires pairing again. Trusted non-browser
+clients can send an explicit bearer header. Download URLs contain no bearer credential, and downloads
+deliver the complete file regardless of preview limits. The
+[pairing contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#pairing-and-authenticated-ingress)
 defines the credential, ticket and origin boundaries.
 
 ## Installed browser apps
@@ -97,43 +98,28 @@ On a trusted HTTPS origin, use the browser's **Install app** or **Add to Home Sc
 installed app uses the same Host and project data, so the Host and any remote connection must stay
 available. Enable [task notifications](#task-notifications) separately on that device.
 
-The page follows Inspire's theme. Android's gesture/navigation area belongs to the browser and OS:
-the manifest sets no theme color and the page supplies a dynamic hint, which does not guarantee
-that the system bar matches. The manifest background stays neutral light for startup.
-
-An Android WebAPK can keep older installed colors after a manifest update. Open the installed app
-so Chrome checks for an update, then let the background update finish (Chrome usually waits until
-the app is closed and the device has Wi-Fi and power; see
-[Chrome's manifest update process](https://web.dev/articles/manifest-updates#updates_on_chrome_for_android)).
-`chrome://webapks` shows the installed metadata and offers **Update**; a current package has no
-fixed **Theme color**. Keep the same app URL and installation; clearing site data, pairing again or
-reinstalling does not speed up the update. To tell a browser issue from an installed-app issue,
-compare the same page and theme in an ordinary Chrome tab.
+The page supplies a dynamic theme hint. Android's browser and OS control the system navigation
+area. If the installed app keeps older colors after a manifest update, compare the same page in a
+Chrome tab and let the existing installation update.
+See [Chrome's manifest update process](https://web.dev/articles/manifest-updates#updates_on_chrome_for_android).
 
 ## Lifecycle
 
 | Command | Effect |
 | --- | --- |
 | `inspire` | Start or reopen the matching instance. |
-| `inspire status` | Check the managed Host and print a fresh local pairing link. |
+| `inspire status` | Check a running Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
-| `inspire restart` | Prepare the next build and runtime, then restart the Host and its own Pi workers. Project terminals keep running. |
-| `inspire restart --terminals` | Restart the Linux Host and terminal services, closing project terminals. |
-| `inspire restart --all` | Close current-user Pi sessions, then restart the Linux Host and terminals. Include Herdr Pi when enhancement is active. |
-| `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
-| `inspire terminal status` | Inspect the matching terminal daemon without creating one. |
-| `inspire terminal stop` | Stop that daemon; running terminals require `--force`. |
-| `inspire terminal restart` | Replace that daemon; saved tabs return as exited. Running terminals require `--force`. |
+| `inspire restart` | Prepare the next build and runtime, then restart Inspire, its Pi workers, and project terminals. |
+| `inspire stop` | Stop the service or local Host (along with its Pi workers and project terminals). |
 
 ## Task notifications
 
-In **Settings → Behavior → Task alerts**, choose **System notification** on each device that should
-receive alerts, then click **Enable notifications**, allow the browser permission, and check for
-**Background notifications enabled**. Choosing **System notification** alone does not finish setup.
-**While Inspire is open** means background delivery is unavailable, though alerts still work while
-the page is open. Settings explains setup failures. Reopening Inspire or Settings retries an
-interrupted registration without asking for permission again; an expired subscription needs
-**Enable notifications** again.
+In **Settings → Behavior → Task alerts**, choose **System notification** and allow the browser
+permission. **Background notifications enabled** confirms enrollment. **While Inspire is open**
+means delivery uses the open page. Reopening Inspire or Settings can repair the Host registration
+for an existing subscription. Use **Enable notifications** to retry setup or replace an expired
+subscription.
 
 Completions and errors notify you when you are away from the conversation; a confirmed Stop does
 not. **Notification grouping** chooses **Session** (default) or **Project** on this device, and a
@@ -141,7 +127,7 @@ newer result replaces the group's older notification. Project grouping shows the
 one conversation or **n sessions** for several; repeated runs in one session count once.
 Dismissing or clicking a notification resets its count, and viewing one session leaves its unread
 project peers in place. Changing grouping clears existing notifications without affecting
-permission or enrollment. **Mark tab** applies only to open pages.
+permission or enrollment. **Mark tab** uses the browser tab indicator.
 
 Titles show the saved session name (or **Unnamed session**) and can appear on the lock screen; the
 body names the project, never message text or error details. Duplicate or delayed delivery of an
@@ -159,9 +145,8 @@ Push needs no inbound access to the Host, but opening the conversation still nee
 (including VPN or reverse SSH). Remote phones need trusted HTTPS; on iPhone/iPad, add Inspire to the
 Home Screen and enable notifications in that app. Force-stopping the browser can prevent delivery.
 
-Alert choices are device-local: a new browser starts Off, and existing paired browsers keep their
-choice but must enable background delivery explicitly. Reset preferences affects only the current
-device. Pending alerts expire after 15 minutes. Notification state, including VAPID and
+Alert choices and Reset apply to this browser installation, which defaults to Off. Pending alerts
+expire after 15 minutes. Notification state, including VAPID and
 subscription secrets, is stored beside the preferences file as
 `<preferences-path>.notifications-<authority-namespace>.json`; do not publish it.
 
@@ -169,96 +154,32 @@ A terminal Pi reports completion, failure and cancellation through
 [attach-control](extensions.md#share-sessions-with-terminal-pi). After updating it, run `/reload` in
 that Pi to apply the update.
 
-## Host and terminal maintenance
+## Host maintenance
 
-**Settings → System → Host** offers two restart actions.
+In **Settings → System → Host**, **Restart** replaces Inspire, its own Pi workers, and its project
+terminals. Attached terminal Pi processes stay open; use `/reload` in a terminal Pi to reload its
+resources. If work is active, the Host identifies it and offers **Stop work and restart**.
 
-| Action | Effect |
-| --- | --- |
-| **Restart** | Restarts Inspire and its own Pi workers. Project terminals and attached Pi processes stay open. Use `/reload` in a terminal Pi to reload its resources. |
-| **Restart all** | Closes current-user Pi sessions and project terminals, then restarts Inspire. Includes Herdr Pi when enhancement is active. |
+The page follows the restart in the background and retains saved browser pairing. Page restart
+requires a launcher or installed service. A Host started directly from the internal server entry
+needs an operator restart. If the listener is down, run `inspire stop` with the same port and
+state-path overrides and start it again after shutdown.
 
-**Restart** checks for unfinished work, including work in a taken-over Pi. After a workload refusal,
-the same row offers **Stop work and restart**. If the Host cannot confirm Stop for an attached Pi,
-it lists the affected sessions; **Restart anyway** proceeds without another Stop request.
-
-**Restart all** confirms that running tasks will stop. It uses the current Host\'s Herdr mode,
-not a saved setting waiting for restart: disabled mode preserves Herdr Pi; enabled mode closes
-Pi in Herdr too. The shared Herdr server stays running. Pi shutdown must succeed before Inspire
-starts again. This action requires the installed Linux services.
-
-Use **Recheck status** if a restart request is unconfirmed. **Reset restart recovery…** clears
-an invalid browser record while any submitted restart continues on the Host.
-
-Page restart works with the Inspire launcher on Windows, macOS and Linux, and with the installed
-Linux service. It reuses the launcher or service, configuration and browser pairing. Preparation
-or worker-retirement failure prevents replacement. A Host started directly from the internal
-server entry point needs an operator restart.
-
-Restarts leave connection services running. `inspire restart --all` and `--terminals` require the
-installed Linux services and an external OS terminal, since the project terminal running the command could close
-before it shows the result. Run `--all` outside Pi as well, so closing Pi cannot end the restart command. Settings shows the availability of both restart scopes.
-
-If the listener is down, use `inspire stop` with the running Host's port and state-path overrides,
-then start Inspire after shutdown. Stopping an installed service also ends its project terminals.
-
-### Terminal-service maintenance
-
-**Restart** keeps the existing terminal daemon. Manage it from an
-**external terminal**, not from an Inspire project terminal (stopping the daemon would end the
-command; it refuses to run there, while `status` is allowed):
-
-```sh
-inspire terminal status
-inspire terminal restart
-# Confirm ending every live project terminal in this daemon:
-inspire terminal restart --force
-# Or stop it without a replacement:
-inspire terminal stop --force
-```
-
-Reuse the Host's `INSPIRE_HOST`, `INSPIRE_PORT`, `INSPIRE_TERMINAL_DAEMON_ADDRESS`,
-`INSPIRE_TERMINAL_TOKEN_PATH` and `INSPIRE_TERMINAL_STATE_PATH` overrides. These commands leave the
-Host and Pi workers running. `--force` confirms ending live terminals but does not bypass
-authentication; saved tabs return as exited without rerunning commands.
-
-If PTY cleanup fails or is unconfirmed, replacement is refused and terminal writes are blocked;
-status and lifecycle controls stay available. A missing endpoint means nothing is listening, not
-that the process has exited. The installed Linux terminal unit keeps systemd ownership;
-[terminal ownership](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/terminal.md#process-ownership)
-defines the handoff.
-
-### Connection recovery and upgrades
-
-The terminal service reconnects on demand after a connection failure. It does not replay terminal
-input or controls. Inspect `inspire terminal status` and the owning service. The error card keeps
-the connection detail for copying.
-
-After enabling the Linux units, a compatible terminal daemon retained from a direct launch keeps
-serving the Host. `inspire restart --terminals` affects the installed terminal service. The retained daemon keeps
-running, and the installed daemon can exit with code 78 when it finds that owner. To move terminal
-ownership to the installed service, finish terminal work, run `inspire terminal stop` from an
-external OS terminal, then run `systemctl --user start inspire-terminal.service`. See
-[Updating Inspire](#updating-inspire) to replace an older daemon.
-
-Custom token or socket paths on POSIX need a parent directory private to the current user, or one
-Inspire can create with mode `0700`; Inspire refuses shared parents and does not change their
-permissions.
+Run CLI `inspire restart` from an external OS terminal so the restart command survives Host and
+project-terminal shutdown. Connection services continue across restarts.
 
 ## Linux user services
 
 Before moving a direct launch to services, finish its Pi work and run `inspire stop` from an
-external terminal. This stops the direct Host but not an independent terminal daemon; see
-[Connection recovery and upgrades](#connection-recovery-and-upgrades).
+external terminal.
 
 ```bash
 inspire service install-host
 inspire service enable-host
 ```
 
-This installs `inspire-host.service`, `inspire-terminal.service` and an optional maintenance timer.
-Launcher commands for the default host, port and state path then manage these units. Stop or
-disable shuts down both services.
+This installs `inspire-host.service` and an optional maintenance timer. Launcher commands for the
+default host, port and state path then manage the service. Stop or disable shuts it down.
 
 Scheduled maintenance stays off unless you enable it with
 `systemctl --user enable --now inspire-idle-maintenance-restart.timer` (`disable --now` turns it
@@ -340,11 +261,10 @@ The Host writes rotated JSONL diagnostics in the per-user state directory:
 | macOS | `~/Library/Application Support/Inspire` |
 | Windows | `%LOCALAPPDATA%\Inspire` |
 
-A projection-conflict banner shows an incident ID that matches a log record. Logs contain operation,
-process, timing and persistence metadata, never prompts, tool output, extension payloads,
-credentials or raw child stderr. Files are private (`0700`/`0600` on POSIX, the user-profile ACL on
-Windows). Rotation keeps five 5 MiB files. `INSPIRE_LOG_PATH` selects another file inside an
-existing private directory.
+For a conversation conflict, find the `projection_conflict` record by session ID and time. Its
+incident ID correlates recovery records. Logs contain operation, process, timing and persistence
+metadata. Files are private (`0700`/`0600` on POSIX, the user-profile ACL on Windows). Rotation
+keeps five 5 MiB files. `INSPIRE_LOG_PATH` selects another file inside an existing private directory.
 
 ## Development checkout
 
@@ -362,21 +282,19 @@ printed link expires after 30 seconds; Vite's `o` + Enter opens a fresh one.
 
 ## Build and install a package
 
-Inspire packages the browser client and compiled Host as a standalone npm CLI. The installed
-application uses an external Pi; the Pi development dependency is only for compatibility checks.
-
 ```bash
 npm ci
-npm run release:verify
 npm pack
 npm install --global ./inspire-pi-gui-0.7.0.tgz
 inspire
 ```
 
-Use the tarball name printed by `npm pack`. `prepack` builds the release. `release:verify` installs
-the tarball with production dependencies and exercises the installed CLI, an external Pi session
-and a project terminal that survives Host restart. CI runs this on Linux, macOS and Windows.
-[Platform evidence](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
+Use the tarball name printed by `npm pack`. Package from a separate checkout if the source Host is
+running. Packaging keeps only the current assets, so older tabs can lose lazy-loaded assets.
+
+To verify a release on the target platform, run `npm run release:verify` separately. It builds a
+temporary tarball and tests the installed CLI, an external Pi session and terminal continuity
+across Host restart. The [platform baseline](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
 records the checked versions.
 
 ## Updating Inspire
@@ -388,7 +306,8 @@ through its original owner. Stop all old Hosts that share the same upload store.
 Start the updated Host and reload the browser. Use the launcher link or Pair form if pairing is
 needed. A stored generated token with an unsupported format requires explicit replacement and
 browser re-pairing.
-Before upgrading across a Host control format change, stop the running Host with its current
-launcher or installed service manager. Start Inspire with the new version after it exits.
-In a source checkout, `npm run inspire -- restart` rebuilds changed client inputs when restarting a
-current Host. Pi extension changes use [`/reload`](pi-commands.md#compaction-and-reload).
+
+In a source checkout, `npm run build:web` publishes frontend changes while open pages keep working.
+The next page load uses the new frontend. For Host changes, use `npm run inspire -- restart`;
+it also rebuilds changed frontend inputs. Pi extension changes use
+[`/reload`](pi-commands.md#compaction-and-reload).

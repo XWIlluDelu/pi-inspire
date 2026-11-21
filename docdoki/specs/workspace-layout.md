@@ -12,8 +12,9 @@ covers:
   - tests/integration/git-long-prefix.test.ts
   - tests/web/source-presentation.test.ts
   - src/styles/*.css
-  - tests/web/{workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
+  - tests/web/{workspace-controller,pane-resize,modal-focus}.test.ts*
   - tests/browser/{composer,session-actions}.spec.ts
+area: "Workbench & Layout"
 ---
 
 # Workspace layout and contextual panes
@@ -27,10 +28,9 @@ independent project shells in [[terminal]].
 ## Responsive reading and pane geometry
 
 - The desktop layout has stable regions for project/session navigation, conversation, and contextual
-  work. Conversation search and the prompt outline launcher occupy the reading surface without
-  reserving a toolbar row. The prompt outline opens as the same bounded dialog on desktop and
-  narrow screens. The transcript scrollbar fits the trailing reading gutter.
-  [[conversation]] owns search, prompt outline, and floating `Jump to latest` behavior.
+  work. Conversation search and Prompt Map sit on the reading surface without reserving a toolbar
+  row. The transcript scrollbar fits the trailing reading gutter. [[conversation]] owns these
+  reading tools and the floating `Jump to latest` control.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
   width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses it,
@@ -61,8 +61,8 @@ independent project shells in [[terminal]].
 
   Each side region's width is adjusted by dragging its boundary with the conversation through a
   focusable handle with pointer and keyboard control. Widths persist across reloads, and
-  double-click resets only the chosen side to its default. Each boundary's scroll thumb keeps grab
-  priority where the two overlap. The two desktop side panes share a width budget that reserves
+  double-click resets only the chosen side to its default. Scrollbars stay inside their panes so
+  the boundary remains available for resizing. The side panes share a width budget that reserves
   400px for the conversation, or all remaining width after their 220px/320px minimums immediately
   above the drawer breakpoint. Resizing either side (pointer or keyboard) holds the other side at
   its current rendered width and clamps only the active side. A saved width is clamped live as the
@@ -78,11 +78,8 @@ independent project shells in [[terminal]].
   2px divider with round caps and inset ends, not an outline around the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
 
-  Composer's model and thinking selectors follow the reading pane's actual width, not only the
-  browser viewport. When side panes narrow the desktop conversation, selectors use the existing
-  compact upper row; file/attachment actions, usage, and separate Stop/Send controls stay below in
-  their existing order. Normal-width desktop panes keep the single-row toolbar, and narrow-screen
-  startup composition keeps its existing responsive arrangement.
+  Composer toolbar groups wrap when the reading pane cannot fit both groups on one row, including
+  when desktop side panes or additional actions consume its width.
 
 ## Short-window input and extension content
 
@@ -96,20 +93,22 @@ which documents the strip lists and preserves the mounted terminal view.
 
 Files, Changes and History use the same selection tint as open file and terminal tabs. The Terminal shortcut
 creates a terminal. A pane at most 400px wide gives open tabs a second row when present.
-File and terminal actions float over their content. PDF keeps its compact control row and reserves
-clearance below the file actions in a narrow pane. Terminal search
-and selection overlays stay within the output area.
+File actions occupy a row above the reader, including above the PDF controls. Terminal actions
+float over the output, and search takes their corner while open. Terminal menus fit and scroll
+within the pane.
 Desktop HTML previews use the context perimeter instead of a second complete inner frame.
 
-The Files search field starts 8px below contextual chrome with 12px horizontal insets. It uses the
-shared search control and keeps its adjacent hidden-files control.
+Files and History share search geometry under [[design-system]]. Files keeps its adjacent
+hidden-files control.
 
-Files uses one 4px search-to-heading gap and 24px section headings, keeping the 12px break between
-Recent and workspace and the existing item heights. Changes section headings use the same 24px tier
-and 12px text origin. The Changes branch-summary row uses the search row's 8px top inset and 34px
-desktop / 40px narrow height, aligning Changes with Recent without an empty placeholder row. List
-surfaces use a 4px outer inset plus their own content padding; both lists reserve the same stable
-native-scrollbar gutter. In a compact Changes pane, renamed and copied paths put the destination
+Files and Changes share the header height, section heading and list insets. The search and branch
+summary use the same 8px top inset and 34px desktop or 40px narrow control area. The search field's
+lower edge and the branch summary divider share a baseline, followed by 4px of space before the
+24px section heading. At the top of either list, the heading, first file icon and filename align
+when switching tabs. Both lists show the filename first and put its directory in secondary text.
+Notices and conflict groups precede the ordinary Changes group when present.
+Both lists reserve the same stable native-scrollbar gutter. Files uses a 12px break between Recent
+and the workspace tree. In a compact Changes pane, renamed and copied paths put the destination
 above the quieter origin and allow both to wrap so their directories stay distinguishable.
 Recent, workspace search and Changes share the row layout, file icon and Git status marker. Each
 row keeps the path context and action of its owning list.
@@ -131,8 +130,9 @@ completion behavior are unchanged.
   conversation shows its normalized first prompt (or `New session` before any prompt); that
   fallback is never promoted into session metadata or OS-visible titles. The heading truncates at
   its available width. Beside it, the project location appears as folder name or full path per a
-  global preference. When the header is compact, a folder glyph carries the same action. Clicking
-  copies the absolute path, and Ctrl/⌘+click shows the project folder in the Host's file manager.
+  global preference. On mobile, the location stays visible as text and truncates to fit.
+  Clicking copies the absolute path, and Ctrl/⌘+click shows the project folder in the Host's file
+  manager.
 
   A quiet clickable Git summary follows. It shows the current branch or detached/unborn identity,
   adds a total only when the worktree has changes, and opens the detailed Changes pane on
@@ -149,23 +149,25 @@ completion behavior are unchanged.
   The narrow-layout navigation toggle and collapsed desktop rail's expand button share a count of
   other sessions with an unseen completion, failure or attention state. Completions use success tone;
   any failure or attention state takes error tone. The visible count caps at `9+`, while its accessible
-  description retains the full count. The badge sits in the upper-right clearance of the navigation
-  entrance, clear of the icon at either count width. The currently viewed session and running-only
-  sessions are excluded. Consuming the last unseen state removes the badge. Expanded desktop navigation keeps
+  description retains the full count. On mobile, the badge slightly overlaps the icon's upper-right
+  corner. On the desktop rail it sits in the clearance above the icon. The currently viewed session
+  and running-only sessions are excluded. Consuming the last unseen state removes the badge. Expanded desktop navigation keeps
   its session-row indicators without a duplicate header badge. Both layouts preserve background
   outcome visibility when navigation hides the list, using text rather than color alone.
 
-  Session title, project, Git and extension status form one leading cluster. Secondary labels
-  truncate as space shrinks. The project and Git controls retain glyphs when their labels are hidden
-  in a compact header. Git shows up to `99+` changes, with the exact total and branch in the
-  accessible name. Truncated extension statuses remain available by click, tap or keyboard.
+  Session title, project, Git and extension status form one leading cluster. Project, Git and
+  extension labels use 11.5px Flux Mono SC. All four controls share quiet pill-shaped hover and
+  pressed feedback. Extension status also has a faint resting fill. Secondary labels truncate
+  as space shrinks. A compact desktop header can hide the project label. On mobile,
+  Git yields space to the project location by showing the branch glyph and numeric count.
+  Git shows up to `99+` changes, with the exact change and conflict counts and branch in the
+  accessible name. A narrow header shows extension status as a puzzle icon. It adds a count for
+  multiple entries when space allows. The full statuses remain available by click, tap or keyboard.
   Trailing actions keep their own space.
 
-  Global controls stay on the right. Header actions are the command palette, Settings (desktop
-  only) and the contextual pane toggle. Conversation search stays with its reading surface under
-  [[conversation]], rather than adding a global header launcher. Narrow
-  layouts reach Settings from the navigation drawer header and the palette, giving that width to
-  session identity. Detailed Git status remains in Changes.
+  On desktop and narrow screens, the right end of the header holds the command palette, Settings
+  and the contextual pane toggle, in that order. Conversation search stays on its reading surface.
+  Detailed Git status remains in Changes.
 
   The text-only title opens the session menu on desktop and phones, with no chevron or separate
   More control; hover feedback and a keyboard focus outline keep the interactive affordance. The
@@ -210,9 +212,8 @@ completion behavior are unchanged.
 
   The strip keeps the selected tab visible and lists the remaining overflow in More tabs. A
   choice restores focus to the newly visible tab. Terminal tabs can be reordered by dragging or
-  with their keyboard shortcut. File and terminal controls float above the content. Interacting
-  with the reading surface reduces the controls to their toggle. Keyboard Escape also collapses
-  the controls and returns focus to that toggle.
+  with their keyboard shortcut. Interacting with a file reader reduces its actions to their toggle.
+  Keyboard Escape collapses the file or terminal controls and returns focus to the toggle.
 
   F5 restores the browser tab's navigation, pane widths and visibility, contextual tool, file-tab
   order and selection, and Files query and expansions. Saved session navigation is scoped to Host,

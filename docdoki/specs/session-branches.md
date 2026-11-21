@@ -18,6 +18,7 @@ covers:
   - tests/web/{branch-controller,branch-store}.test.ts*
   - tests/browser/history.spec.ts
   - src/styles/{history,transcript}.css
+area: "Sessions"
 ---
 
 # History, branches and independent copies
@@ -129,6 +130,15 @@ Pi determines ancestry, labels, metadata and the generated identity:
 
 Neither action sends a model prompt or transfers the source's unsent draft/artifacts or pending input.
 
+### Workspace recovery
+
+When the original project folder is unavailable, **Fork into another folder…** chooses an existing
+directory from the Host. Bind the picker to its original session and view. Recovery copies the
+whole admitted Pi tree, including alternate branches and metadata, into Pi's session directory for
+the chosen workspace. It opens an empty Composer and keeps the source file, draft and worker state.
+Generate the new header with Pi's public SessionManager. Record the real source file as its parent.
+Stage beside the final path and check destination availability again before publication.
+
 ### Snapshot and publication
 
 Capture a fresh conflict-free committed source prefix and retained endpoint. A worker thread reads
@@ -139,10 +149,11 @@ including header-only output. Source work and pending input continue while the c
 Appends and partial trailing writes beyond the admitted prefix stay outside the copy.
 
 Before publication, open the private projection, reserve the generated id/final path, and recheck
-the source view. Publish the complete JSONL atomically without replacement, reopen under that reservation, and attach a processless
-destination. Viewing the copy stays processless until a worker-backed action. Concurrent
-open/create/delete shares the reservation;
-catalog-driven opens wait for it. Destination attachment is independent of Host selection.
+the source view. Publish the complete JSONL atomically without replacement. Under the same
+reservation, verify the published file's identity and committed bytes, then attach the staged
+projection at its final path. Viewing the copy stays processless until a worker-backed action.
+Concurrent open, create and delete share the reservation. Catalog-driven opens wait for it.
+Destination attachment is independent of Host selection.
 
 The response always identifies the destination. Change automatic Host selection only if the source
 is still selected and no newer selection intent arose since dispatch, including while awaiting the
@@ -188,9 +199,9 @@ all acquired handles close. [[composer]] owns the dialog and typed receipts.
 
 ## Earlier-branch presentation
 
-When a worker holds a navigation lease away from the latest saved point, show a compact notice above
-the transcript explaining that new messages continue from earlier history. **Restore saved position**
-uses the confirmed snapshot revision to restore where the next message will continue. If
+When a verified navigation leaves the worker on an earlier branch, show a compact notice in the
+shared top-right notification stack. It explains where the next message continues.
+**Continue from latest saved point** uses the confirmed snapshot revision to change that continuation. If
 the saved point is a user or custom message, restoring it retires the idle owned worker and the next
 local action opens Pi at the exact saved point. Other branch ends that Pi can only edit are still
 available through **Edit from here** in History.
@@ -198,7 +209,7 @@ The notice is available with History closed. Dismissing it hides it for the curr
 the continuation in place. The command palette still offers the restore action. **Clone current branch**
 in the session menu copies through the displayed point without changing the source session.
 
-Use the Host's navigation lease and durable/effective leaf pair for this presentation. A difference
-caused by following an attached Pi or viewing a saved session alone does not qualify. The notice fits
-the reading stage in normal flow above the transcript. Wrapped diagnostics resize the notice and
-leave the reading viewport and restore control accessible.
+Use the Host's verified navigation lease and durable/effective leaf pair for this presentation.
+Ordinary differences while the worker and saved history update independently do not qualify,
+including while following an attached Pi or viewing a saved session. The notice floats below the
+conversation tools and leaves the reading viewport in place.
