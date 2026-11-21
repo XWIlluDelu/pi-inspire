@@ -18,7 +18,7 @@ export const preferenceChoices = {
     settingsOnly: true,
     label: "Content text size",
     description: "Applies to messages, input, code and previews.",
-    options: preferenceOptions(["compact", "comfortable", "large"]),
+    options: preferenceOptions(["large", "comfortable", "compact"]),
   },
   readingWidth: {
     settingsOnly: true,
