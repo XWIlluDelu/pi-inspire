@@ -85,6 +85,16 @@ test("interrupted calls stay neutral and nested failures remain keyboard-readabl
     .filter({ hasText: "CodeMode" })
     .first();
   await codeCard.locator(".card__disclosure").click();
+  const copy = codeCard.locator(".card__copy");
+  await expect(copy).toBeVisible();
+  const metadataEnd = await codeCard
+    .locator(".card__summary")
+    .evaluate((summary) => {
+      const text = document.createRange();
+      text.selectNodeContents(summary);
+      return text.getBoundingClientRect().right;
+    });
+  expect((await copy.boundingBox())!.x - metadataEnd).toBeLessThan(10);
   const detail = codeCard
     .locator("details.child-call")
     .filter({ hasText: "preview_check" });
