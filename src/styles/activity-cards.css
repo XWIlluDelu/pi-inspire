@@ -1038,38 +1038,67 @@ details > .activity-reader { margin-top: var(--space-1); }
   height: auto;
 }
 
-/* Mono changes interface accents only. Keep the existing default syntax colors
-   inside code leaves; their toolbar, gutter and controls retain Mono's UI roles. */
+/* Dedicated semantic syntax tokens for crisp, accessible code reading in both
+   light and dark modes, independent of the interface accent palette. */
+:root {
+  --syn-keyword: #9A3B7A;
+  --syn-string: #2E7D4F;
+  --syn-number: #B45309;
+  --syn-title: #1D5FA7;
+  --syn-type: #0F766E;
+  --syn-attr: #7C4A1E;
+  --syn-meta: #63589B;
+  --syn-comment: var(--muted);
+}
+
+:root[data-theme="dark"] {
+  --syn-keyword: #E08AC2;
+  --syn-string: #7BD88F;
+  --syn-number: #F5B062;
+  --syn-title: #79B8FF;
+  --syn-type: #5EEAD4;
+  --syn-attr: #D8A878;
+  --syn-meta: #B4A7F5;
+  --syn-comment: var(--muted);
+}
+
+/* Mono changes interface accents only. Keep balanced syntax colors inside code
+   leaves while toolbar, gutter and controls retain Mono's monochrome UI roles. */
 :root[data-palette="mono"] :is(.hljs, .source-diff .code-row code) {
-  --accent-deep: #8A4605;
-  --muted: #635E56;
+  --syn-comment: #635E56;
 }
 
 :root[data-theme="dark"][data-palette="mono"] :is(.hljs, .source-diff .code-row code) {
-  --accent-deep: #F2B25C;
-  --muted: #968E83;
+  --syn-comment: #968E83;
 }
 
-/* Retain the palette's syntax roles using text-strength semantic colors. */
 .hljs-keyword,
-.hljs-literal,
-.hljs-selector-tag {
-  color: var(--accent-deep);
+.hljs-selector-tag,
+.hljs-doctag {
+  color: var(--syn-keyword);
 }
 
 .hljs-string,
-.hljs-regexp {
-  color: var(--warning);
+.hljs-regexp,
+.hljs-template-tag {
+  color: var(--syn-string);
 }
 
 .hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: var(--syn-number);
+}
+
 .hljs-addition {
   color: var(--activity-success);
 }
 
 .hljs-comment,
 .hljs-quote {
-  color: var(--muted);
+  color: var(--syn-comment);
   font-style: italic;
 }
 
@@ -1079,21 +1108,38 @@ details > .activity-reader { margin-top: var(--space-1); }
 
 .hljs-title,
 .hljs-section,
-.hljs-name {
-  color: var(--accent-deep);
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--syn-title);
+}
+
+.hljs-type,
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-class .hljs-title {
+  color: var(--syn-type);
 }
 
 .hljs-attr,
 .hljs-attribute,
-.hljs-variable,
-.hljs-template-variable,
-.hljs-type {
-  color: var(--muted);
+.hljs-name,
+.hljs-property,
+.hljs-variable.language_,
+.hljs-template-variable {
+  color: var(--syn-attr);
 }
 
-.hljs-built_in,
-.hljs-meta {
-  color: var(--activity-success);
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: var(--syn-meta);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
 }
 
 /* Inline KaTeX keeps its natural baseline and visible script/fraction extent.
