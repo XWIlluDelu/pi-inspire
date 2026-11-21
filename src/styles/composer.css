@@ -126,7 +126,7 @@
   margin: var(--space-1) 0 0;
   color: var(--ink);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
 }
 
 .command-activity__session dt {
@@ -1044,7 +1044,7 @@
   display: block;
   color: var(--muted);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
 }
 
 .thinking-selector__menu {

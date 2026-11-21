@@ -164,7 +164,7 @@
   }
 
   .composer__input {
-    line-height: 1.45;
+    line-height: var(--leading-ui);
   }
 
   .composer__meta .thinking-select {

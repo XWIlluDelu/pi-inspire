@@ -241,7 +241,7 @@ body.pane-resizing .nav {
 .dock-tab__select > svg { flex: none; }
 .dock-tab :is(button, input):focus-visible { outline-offset: -2px; }
 
-.dock-tab .terminal-tab__status { margin-inline: 3.5px; }
+.dock-tab .terminal-tab__status { margin-inline: 4px; }
 
 .dock-tab__rename.text-field {
   flex: 1;

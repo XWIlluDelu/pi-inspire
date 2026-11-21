@@ -311,7 +311,7 @@
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
 }
 
 .nav__search {

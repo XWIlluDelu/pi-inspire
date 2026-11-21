@@ -200,9 +200,7 @@
   border: 0;
   background: transparent;
   color: var(--muted);
-  /* Use an even integer line-height so the centered label shares the 14px
-     chevron's subpixel phase inside the 28px/32px disclosure row. */
-  font: var(--text-xs)/16px var(--font-mono);
+  font: var(--text-xs)/var(--leading-ui) var(--font-mono);
   text-align: start;
 }
 

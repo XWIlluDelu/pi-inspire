@@ -228,7 +228,7 @@
   max-width: 62ch;
   color: var(--muted);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
 }
 
 /* The content scroller, not each card, bounds open setting menus. */
@@ -897,7 +897,7 @@
   color: var(--muted);
   max-width: 46%;
   text-align: right;
-  line-height: 1.45;
+  line-height: var(--leading-ui);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
