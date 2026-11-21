@@ -4726,30 +4726,6 @@ export class RuntimeController extends EventEmitter {
         await process.request(command);
         if (command.type === "set_auto_retry")
           await this.readRetryState(slot, process);
-        // Quietly keep other ready idle Inspire workers aligned with the new setting.
-        for (const other of this.slots.values()) {
-          if (
-            other.id === sessionId ||
-            !other.process ||
-            other.startupPhase !== "ready" ||
-            other.readOnlyReason ||
-            this.externalSessions?.has(other) ||
-            isBusyRunState(other.runState) ||
-            other.nativeBash
-          )
-            continue;
-          const otherProcess = other.process;
-          void otherProcess
-            .request(command)
-            .then(() =>
-              command.type === "set_auto_retry"
-                ? this.readRetryState(other, otherProcess)
-                : undefined,
-            )
-            .catch(() => {
-              /* Best-effort background alignment for sibling idle workers. */
-            });
-        }
       }),
     );
   }

@@ -126,6 +126,7 @@ export function languageForFile(name: string): string {
   if (basename.startsWith(".env.")) return "ini";
   const ext = /\.([a-z0-9]{1,12})$/.exec(basename)?.[1];
   if (!ext) return "plaintext";
+  if (hljs.getLanguage(ext)) return ext;
   return EXTENSION_LANGUAGES[ext] ?? ext;
 }
 
