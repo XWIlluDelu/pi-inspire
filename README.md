@@ -153,9 +153,10 @@ Provider credentials stay on the Host. Conversation Markdown is sanitized. HTML 
 
 ## Development
 
-Day-to-day development happens on `auto-dev`. `main` carries the reviewed outcomes. After
-integration, a two-parent synchronization commit brings `auto-dev` to the reviewed tree while
-retaining both branch histories. Preserve `auto-dev` history during routine development.
+`auto-dev` records day-to-day changes. On `main`, the net changes since the previous release
+are organized into reviewed commits. At each release, a `sync: jump` commit on `auto-dev`
+uses the exact file tree from the `main` release. Its only parent is the previous `auto-dev`
+commit, so each branch keeps its own history.
 
 ```bash
 npm run dev            # Host and Vite development servers
