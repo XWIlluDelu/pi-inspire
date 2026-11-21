@@ -105,28 +105,72 @@ function McpConfiguration({
   const editor = selection?.kind === "edit" ? selection : null;
   const removing = selection?.kind === "remove" ? selection : null;
   const [saved, setSaved] = useState<string | null>(null);
-  const [confirmReload, setConfirmReload] = useState(false);
+  const [needsReload, setNeedsReload] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const { cwd, sessionId } = owner;
-  const read = useCallback(
-    () => load(() => store.readMcpConfig(sessionId ? { sessionId } : { cwd })),
-    [load, sessionId, cwd],
+  const readConfig = useCallback(
+    () => store.readMcpConfig(sessionId ? { sessionId } : { cwd }),
+    [sessionId, cwd],
   );
+  const read = useCallback(() => load(readConfig), [load, readConfig]);
   useEffect(() => {
     if (active && !snapshot && !readFailed) void read();
   }, [active, read, readFailed, snapshot]);
+  useEffect(() => {
+    if (!active || !configuration.browsing || !snapshot) return;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && !busy && !reloading)
+        void read();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [active, busy, configuration.browsing, read, reloading, snapshot]);
   const open = (next: Selection, opener: HTMLElement) => {
     configuration.open(next, opener, next.kind === "edit");
-    setConfirmReload(false);
   };
   const projectFile = snapshot?.files.find((file) => file.scope === "project");
+  function reload(successMessage = "Pi reloaded.") {
+    if (!sessionId || store.getState().sessionId !== sessionId) return;
+    setError(null);
+    if (
+      !store.reloadSessionResources(sessionId, (status, message) => {
+        setReloading(false);
+        if (status === "success") {
+          setNeedsReload(false);
+          setSaved(successMessage);
+        } else if (status === "cancelled") {
+          setNeedsReload(true);
+          setSaved(message);
+        } else {
+          setNeedsReload(true);
+          setError(message);
+        }
+      })
+    ) {
+      setNeedsReload(true);
+      setError("Pi reload couldn’t start.");
+      return;
+    }
+    setNeedsReload(false);
+    setSaved("MCP settings saved.");
+    setReloading(true);
+  }
   function save(edit: McpConfigEdit) {
     void write(() => store.editMcpConfig(owner, edit), {
       close: true,
-      onSaved: (result) => {
-        setSaved(
-          result.warning ??
-            "Saved to file. Running sessions have not been reloaded.",
-        );
+      readBack: readConfig,
+      onSaved: () => {
+        if (
+          canReload &&
+          !reloadBlocked &&
+          sessionId &&
+          store.getState().sessionId === sessionId
+        ) {
+          reload("MCP settings saved and Pi reloaded.");
+          return;
+        }
+        setSaved("MCP settings saved.");
+        setNeedsReload(canReload);
       },
       onError: () =>
         configuration.root.current?.querySelector<HTMLElement>(
@@ -148,28 +192,6 @@ function McpConfiguration({
         revision: file.revision,
         operation: editor?.entry ? "update" : "add",
       });
-  }
-  function reload() {
-    setError(null);
-    const current = store.getState();
-    if (
-      current.sessionId !== owner.sessionId ||
-      current.readOnlyReason ||
-      (current.sessionId &&
-        current.sessionStatuses[current.sessionId]?.external) ||
-      isBusyRunState(selectedRunState(current))
-    ) {
-      setError("Reload requires an available, idle session.");
-      return;
-    }
-    if (!store.runPaletteNativeCommand("/reload")) {
-      setError(
-        "Reload could not be started. Check the selected session and try again.",
-      );
-      return;
-    }
-    setConfirmReload(false);
-    setSaved("Reload requested. Check its result in the conversation.");
   }
   return (
     <div
@@ -209,7 +231,7 @@ function McpConfiguration({
           id="mcp"
           icon={<Server size={14} />}
           title="MCP"
-          description="Saved MCP settings apply in new or reloaded sessions."
+          description="Saved MCP settings reload idle sessions automatically."
           headerAction={
             <div className="models-actions">
               <ConfigurationAction
@@ -247,42 +269,24 @@ function McpConfiguration({
             ) : null}
             {saved ? (
               <div className="mcp-save-result" role="status">
-                <p className="models-status">{saved}</p>
-                {canReload ? (
+                <p className="models-status">
+                  {reloading ? "Reloading Pi…" : saved}
+                </p>
+                {canReload && needsReload ? (
                   <button
                     type="button"
                     className="models-text-button"
-                    disabled={reloadBlocked || busy}
-                    onClick={() => setConfirmReload(!confirmReload)}
+                    disabled={reloadBlocked || reloading || busy}
+                    onClick={() => reload()}
                   >
-                    Reload selected session…
+                    Reload selected session
                   </button>
-                ) : (
+                ) : nativeReload ? (
                   <p className="models-status">
-                    {nativeReload
-                      ? "Run /reload in the original Pi terminal."
-                      : "New sessions use the saved configuration."}
-                  </p>
-                )}
-                {canReload && reloadBlocked ? (
-                  <p className="models-status">
-                    Wait for Pi to finish before reloading.
+                    Run /reload in the original Pi terminal.
                   </p>
                 ) : null}
               </div>
-            ) : null}
-            {confirmReload ? (
-              <ConfigurationConfirmation
-                primary
-                confirmLabel="Reload Pi resources"
-                cancelLabel="Cancel reload"
-                confirmDisabled={!canReload || reloadBlocked || busy}
-                onConfirm={reload}
-                onCancel={() => setConfirmReload(false)}
-              >
-                Reload Pi in the selected session. Unsaved extension state may
-                be lost.
-              </ConfigurationConfirmation>
             ) : null}
             {snapshot && snapshot.cwd === null ? (
               <p className="models-status">

@@ -1,4 +1,4 @@
-import { Download, GitBranch, GitFork, Pencil } from "lucide-react";
+import { Download, GitBranch, GitFork, Pencil, SlidersHorizontal } from "lucide-react";
 import { isAbortableRunState, type SessionActionId } from "../shared/contracts";
 import { userMessageTitle } from "../shared/user-message";
 import {
@@ -15,12 +15,23 @@ export const sessionActions = {
   clone: { title: "Clone current branch", command: "clone", icon: GitBranch },
   "switch-branch": { title: "Switch branch…", command: "tree", icon: GitFork },
   export: { title: "Export session…", command: "export", icon: Download },
+  "tool-loadout": { title: "Tool Loadout…", command: null, icon: SlidersHorizontal },
 } as const satisfies Record<
   SessionActionId,
   { title: string; command: string | null; icon: typeof Pencil | null }
 >;
 
 export function sessionActionAvailable(id: SessionActionId, state: AppState) {
+  if (id === "tool-loadout") {
+    return Boolean(
+      state.sessionId &&
+      state.view.viewId &&
+      !state.view.conflict &&
+      !state.sessionSelectionPending &&
+      !state.readOnlyReason &&
+      !state.sessionStatuses[state.sessionId]?.external,
+    );
+  }
   return (
     Boolean(state.sessionId) &&
     (id === "rename"
@@ -29,9 +40,11 @@ export function sessionActionAvailable(id: SessionActionId, state: AppState) {
   );
 }
 
+export type SessionInspection = "export" | "tool-loadout";
+
 interface SessionActionControls {
   rename: (sessionId: string, name: string) => void;
-  export: () => void;
+  inspect: (kind: SessionInspection) => void;
   renameName?: (state: AppState) => string;
   copyId?: () => void;
   closeMenu?: (restoreFocus?: boolean) => void;
@@ -63,7 +76,7 @@ export function runSessionAction(
         controls.renameName?.(state) ?? state.sessionName,
       );
     if (id === "switch-branch") store.openBranchMenu();
-    if (id === "export") controls.export();
+    if (id === "export" || id === "tool-loadout") controls.inspect(id);
   }
   return true;
 }
@@ -99,7 +112,7 @@ export type WorkbenchDestinations = Record<
 >;
 
 /** Prefer explicit metadata and the catalog. A complete short transcript covers the first catalog refresh. */
-export function sessionHeading(
+function sessionHeading(
   sessionName: string,
   catalogTitle: string | undefined,
   messages: readonly { role: string; content?: unknown }[],

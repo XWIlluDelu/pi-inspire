@@ -31,7 +31,7 @@ export function shellStatus(shell: ShellStatus) {
 export function shellContext(shell: ShellContext) {
   if (shell.excludeFromContext) return "Excluded from context";
   return shell.__inspireBashError
-    ? "Context unconfirmed"
+    ? "Not added to context"
     : "Included in context";
 }
 

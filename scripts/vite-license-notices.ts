@@ -28,6 +28,11 @@ const licenseOverrides = new Map<string, string>([
   ],
 ]);
 
+const declaredLicenseOverrides = new Map<string, string>([
+  // khroma@2.1.0 ships an MIT `license` file without a package.json license field.
+  ["khroma@2.1.0", "MIT"],
+]);
+
 function packageRootFor(moduleId: string): string | null {
   const clean = moduleId.replace(/^\0+/u, "").split("?", 1)[0]!;
   if (!isAbsolute(clean)) return null;
@@ -60,7 +65,10 @@ async function noticeFor(packageRoot: string): Promise<PackageNotice> {
   const metadata = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
   ) as PackageMetadata;
-  if (!metadata.name || !metadata.version || !metadata.license) {
+  const identity = `${metadata.name}@${metadata.version}`;
+  const declaredLicense =
+    metadata.license ?? declaredLicenseOverrides.get(identity);
+  if (!metadata.name || !metadata.version || !declaredLicense) {
     throw new Error(
       `Bundled package at ${packageRoot} has incomplete license metadata`,
     );
@@ -69,7 +77,6 @@ async function noticeFor(packageRoot: string): Promise<PackageNotice> {
   const files = (await readdir(packageRoot))
     .filter((name) => /^(?:licen[cs]e|copying|notice)(?:\.|$)/iu.test(name))
     .sort((left, right) => left.localeCompare(right));
-  const identity = `${metadata.name}@${metadata.version}`;
   const override = licenseOverrides.get(identity);
   const texts = override
     ? [{ name: "upstream LICENSE", text: await readFile(override, "utf8") }]
@@ -87,7 +94,7 @@ async function noticeFor(packageRoot: string): Promise<PackageNotice> {
 
   return {
     identity,
-    license: metadata.license,
+    license: declaredLicense,
     repository: repositoryUrl(metadata.repository),
     texts,
   };

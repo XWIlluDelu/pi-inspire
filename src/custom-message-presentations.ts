@@ -1,3 +1,4 @@
+import { jsonValueAt } from "../shared/json-record";
 import type {
   CustomMessagePresentationDeclaration,
   ToolPresentationConfiguration,
@@ -8,20 +9,6 @@ interface CustomMessagePresentation {
   title: string;
   source: string;
   body: string;
-}
-
-function select(message: ChatMessage, path: string): unknown {
-  let value: unknown = message;
-  for (const key of path.split(".")) {
-    if (
-      value === null ||
-      typeof value !== "object" ||
-      !Object.hasOwn(value, key)
-    )
-      return undefined;
-    value = (value as Record<string, unknown>)[key];
-  }
-  return value;
 }
 
 /** A reading projection only: original content and details remain owned by the
@@ -40,13 +27,15 @@ export function createCustomMessagePresentationRegistry(
       if (!rule) return null;
       // Require actual absence, not a falsey value, for trust/shape guards.
       if (
-        rule.requireAbsent?.some((path) => select(message, path) !== undefined)
+        rule.requireAbsent?.some(
+          (path) => jsonValueAt(message, path) !== undefined,
+        )
       )
         return null;
-      const body = select(message, rule.body);
+      const body = jsonValueAt(message, rule.body);
       if (typeof body !== "string") return null;
       for (const path of rule.title) {
-        const title = select(message, path);
+        const title = jsonValueAt(message, path);
         if (title === undefined || title === null || title === "") continue;
         if (typeof title !== "string") return null;
         if (!title.trim()) continue;

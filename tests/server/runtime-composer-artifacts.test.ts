@@ -8,14 +8,11 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { resolveProjectFiles } from "../../server/attachments.js";
 import {
-  assertPromptArtifactBudget,
-  resolveComposerHistoryArtifacts,
   revalidateProjectFiles,
 } from "../../server/runtime-composer-artifacts.js";
-import type { RuntimeSlot } from "../../server/runtime-slot.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -62,37 +59,4 @@ it("revalidates one canonical file after Git changes and refuses symlink retarge
       revalidateProjectFiles(cwd, ["selected.txt"], expected),
     ).rejects.toMatchObject({ status: 409 });
   }
-});
-
-it("keeps an explicitly recalled root separate from the durable branch and rejects malformed image bytes", async () => {
-  const composerHistoryMessages = vi.fn(() => []);
-  const slot = {
-    viewId: "root-view",
-    viewLeafId: null,
-    projection: {
-      incarnation: "source-a",
-      leafId: "durable-leaf",
-      composerHistoryMessages,
-    },
-  } as unknown as RuntimeSlot;
-  await resolveComposerHistoryArtifacts(
-    slot,
-    {
-      sessionId: "a",
-      message: "",
-      historyArtifacts: {
-        viewId: "root-view",
-        incarnation: "source-a",
-        effectiveLeafId: null,
-        imageReferences: [],
-        fileReferences: [],
-      },
-    },
-    { ready: async () => {}, ownsPromptFile: () => false },
-  );
-  expect(composerHistoryMessages).toHaveBeenCalledExactlyOnceWith(null);
-  for (const data of ["T Q==", ""])
-    expect(() => assertPromptArtifactBudget(1, 0, [{ data }])).toThrow(
-      "A prompt image is invalid",
-    );
 });

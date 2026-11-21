@@ -14,7 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ModelOption } from "../../shared/contracts";
-import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
+import type { ProjectFileResult } from "../api";
 import {
   type CaretCompletion,
   commandArgumentCandidates,
@@ -26,7 +26,7 @@ import {
   replaceFileCompletion,
   resolveCommandInventory,
 } from "../composer-completion";
-import { isComposingKeyboardEvent } from "../keyboard-input";
+import { isComposingKeyboardEvent, isEditableTarget } from "../keyboard-input";
 import { textareaCaretLineBounds } from "../textarea-caret";
 import {
   useFloatingMenuDismissal,
@@ -37,6 +37,7 @@ import { type ListOption, OptionList, useOptionList } from "./OptionList";
 import {
   ProjectFileFeedback,
   ProjectFileLabel,
+  type ProjectFileSearch,
   projectFileOption,
   useProjectFileSearch,
 } from "./ProjectFiles";
@@ -216,14 +217,14 @@ export function ComposerInput({
   completionDisabled?: boolean;
   disabled?: boolean;
   completionScope?: string | null;
-  searchProjectFiles?: (query: string) => Promise<ProjectFileSearchResult>;
+  searchProjectFiles?: ProjectFileSearch;
   showHiddenFiles?: boolean;
   onShowHiddenFilesChange?: (value: boolean) => void;
   rows?: number;
   placeholder: string;
   label: string;
   completionLabel?: string;
-  autoFocus?: boolean;
+  autoFocus?: boolean | "unless-editing";
   initialCaretAtEnd?: boolean;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -282,7 +283,12 @@ export function ComposerInput({
   );
   // Let an enclosing modal capture its opener before moving focus.
   useEffect(() => {
-    if (autoFocus) textareaRef.current?.focus({ preventScroll: true });
+    if (
+      autoFocus === true ||
+      (autoFocus === "unless-editing" &&
+        !isEditableTarget(document.activeElement))
+    )
+      textareaRef.current?.focus({ preventScroll: true });
   }, [autoFocus]);
   const composingRef = useRef(false);
   const completionSelectionRef = useRef<{
@@ -533,7 +539,7 @@ export function ComposerInput({
           aria-label={label}
           spellCheck={false}
           autoCorrect="off"
-          data-modal-autofocus={autoFocus || undefined}
+          data-modal-autofocus={autoFocus === true || undefined}
         />
         {completion &&
           createPortal(

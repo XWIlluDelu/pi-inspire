@@ -1,3 +1,4 @@
+import { stageUpload } from "../server/fixtures/runtime.js";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -63,7 +64,10 @@ it.each([
       await runtime.openSession("a");
       await startWorker(runtime);
       const worker = workers[0]!;
-      const image = await attachments.add(upload("intent.png", "image/png"));
+      const image = await stageUpload(
+        attachments,
+        upload("intent.png", "image/png"),
+      );
       const original = await attachments.imagePreview(image.id);
       let isCompacting = true;
       worker.responseOverrides.set("get_state", () => ({
@@ -97,7 +101,7 @@ it.each([
       const connect = () => initStore(snapshot, host.application.authorityId);
       const { store: sender } = await connect();
       const store = observer === "sender" ? sender : (await connect()).store;
-      await sender.addFiles([
+      await sender.composer.addFiles([
         new File(["pixels"], "intent.png", { type: "image/png" }),
       ]);
       sending = sender.sendPrompt(
@@ -156,7 +160,7 @@ it.each([
         expect(await next).toBe(false);
         expect(imageHandles(store)).toEqual([image.id]);
       }
-      store.removeAttachment(draft(store).attachments[0]!.localId);
+      store.composer.removeAttachment(draft(store).attachments[0]!.localId);
       await vi.waitFor(() => expect(draft(store).attachments).toEqual([]));
       await vi.waitFor(async () =>
         expect(attachments.imagePreview(image.id)).rejects.toMatchObject({

@@ -43,17 +43,30 @@ function detailsOf(
   return jsonRecord(input.result?.details);
 }
 
-function summary(
-  parts: ToolPresentationSummary["parts"],
-): ToolPresentationSummary {
-  return { parts };
-}
-
 function presentation(
-  compact: ToolPresentationSummary,
+  parts: ToolPresentationSummary["parts"],
   blocks: ToolPresentation["blocks"],
 ): ToolPresentation {
-  return { summary: compact, blocks };
+  return { summary: { parts }, blocks };
+}
+
+function fileSummary(
+  path: string,
+  detail?: string,
+): ToolPresentationSummary["parts"] {
+  const parts: ToolPresentationSummary["parts"] = [];
+  if (path) parts.push({ kind: "resource", text: path, reference: path });
+  if (detail) parts.push({ kind: "text", text: detail, separator: "dot" });
+  return parts;
+}
+
+function streamedString(
+  args: Record<string, unknown>,
+  field: string,
+  partial: boolean,
+): string | null {
+  return stringValue(args, field) ??
+    (partial && args[field] === undefined ? "" : null);
 }
 
 function compactSummary(value: string, maximum = 90): string {
@@ -143,19 +156,8 @@ function truncationNotice(
   return `${subject} truncated${count}`;
 }
 
-function resultTextBlock(
-  input: ToolPresentationInput,
-  label = "Result",
-): ToolPresentationBlock | null {
-  if (!input.result) return null;
-  const text = toolResultText(input.result);
-  if (!text) return null;
-  return {
-    type: "text",
-    label,
-    text,
-    error: Boolean(input.result.isError),
-  };
+function resultErrorBlocks(text: string): ToolPresentationBlock[] {
+  return text ? [{ type: "text", label: "Error", text, error: true }] : [];
 }
 
 function readRule(): ToolPresentationRule {
@@ -201,12 +203,7 @@ function readRule(): ToolPresentationRule {
           ? "image"
           : range;
       return presentation(
-        summary([
-          { kind: "resource", text: path, reference: path },
-          ...(kind
-            ? ([{ kind: "text", text: kind, separator: "dot" }] as const)
-            : []),
-        ]),
+        fileSummary(path, kind ?? undefined),
         () => {
           const properties: ToolProperty[] = [
             { label: "File", value: path, resourceRef: path },
@@ -231,16 +228,7 @@ function readRule(): ToolPresentationRule {
           )
             blocks.push({ type: "properties", items: properties });
           if (!input.result) return blocks;
-          if (input.result.isError) {
-            if (resultText)
-              blocks.push({
-                type: "text",
-                label: "Error",
-                text: resultText,
-                error: true,
-              });
-            return blocks;
-          }
+          if (input.result.isError) return blocks.concat(resultErrorBlocks(resultText));
           if (image) {
             blocks.push({ ...image, label: "Preview" });
             if (
@@ -286,12 +274,8 @@ function writeRule(): ToolPresentationRule {
       const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const partial = Boolean(input.call.__inspireToolCall);
-      const path =
-        stringValue(args, "path") ??
-        (partial && args.path === undefined ? "" : null);
-      const content =
-        stringValue(args, "content") ??
-        (partial && args.content === undefined ? "" : null);
+      const path = streamedString(args, "path", partial);
+      const content = streamedString(args, "content", partial);
       if (path === null || (!partial && path.length === 0) || content === null)
         return null;
       // Avoid rescanning the growing body just to resolve a collapsed summary.
@@ -300,20 +284,7 @@ function writeRule(): ToolPresentationRule {
         ? ""
         : `${lines === 0 ? "empty" : formatCount(lines, "line")} · ${formatBytes(utf8Bytes(content))}`;
       return presentation(
-        summary([
-          ...(path
-            ? [{ kind: "resource" as const, text: path, reference: path }]
-            : []),
-          ...(description
-            ? [
-                {
-                  kind: "text" as const,
-                  text: description,
-                  separator: "dot" as const,
-                },
-              ]
-            : []),
-        ]),
+        fileSummary(path, description),
         () => {
           const blocks: ToolPresentationBlock[] = [
             {
@@ -324,10 +295,8 @@ function writeRule(): ToolPresentationRule {
               text: content,
             },
           ];
-          if (input.result?.isError) {
-            const error = resultTextBlock(input, "Error");
-            if (error) blocks.push(error);
-          }
+          if (input.result?.isError)
+            blocks.push(...resultErrorBlocks(toolResultText(input.result)));
           return blocks;
         },
       );
@@ -389,42 +358,26 @@ function editRule(): ToolPresentationRule {
       const args = jsonRecord(input.call.arguments);
       if (!args) return null;
       const partial = Boolean(input.call.__inspireToolCall);
-      const path =
-        stringValue(args, "path") ??
-        (partial && args.path === undefined ? "" : null);
+      const path = streamedString(args, "path", partial);
       const edits = editReplacements(args, partial);
       if (path === null || (!partial && path.length === 0) || !edits)
         return null;
       return presentation(
-        summary([
-          ...(path
-            ? [{ kind: "resource" as const, text: path, reference: path }]
-            : []),
-          ...(!partial
-            ? [
-                {
-                  kind: "text" as const,
-                  text: formatCount(edits.length, "replacement"),
-                  separator: "dot" as const,
-                },
-              ]
-            : []),
-        ]),
+        fileSummary(
+          path,
+          partial ? undefined : formatCount(edits.length, "replacement"),
+        ),
         () => {
           if (input.result && !input.result.isError) {
             const details = detailsOf(input);
-            const patch =
-              typeof details?.patch === "string" ? details.patch : null;
-            // The selected semantic rule owns this name. If its authoritative
-            // native result shape is absent, return null directly to raw rather
-            // than guessing from the requested old/new text.
-            if (!patch || !parseUnifiedDiff(patch)) return null;
+            const lines = typeof details?.patch === "string" ? parseUnifiedDiff(details.patch) : null;
+            if (!lines) return null;
             return [
               {
                 type: "diff",
                 label: "Applied changes",
                 path,
-                text: patch,
+                lines,
               },
             ];
           }
@@ -438,10 +391,8 @@ function editRule(): ToolPresentationRule {
             oldText: edit.oldText,
             newText: edit.newText,
           }));
-          if (input.result?.isError) {
-            const error = resultTextBlock(input, "Error");
-            if (error) blocks.push(error);
-          }
+          if (input.result?.isError)
+            blocks.push(...resultErrorBlocks(toolResultText(input.result)));
           return blocks;
         },
       );
@@ -470,7 +421,7 @@ function shellRule(name: "bash" | "powershell"): ToolPresentationRule {
         ...(timeout !== null ? [`${timeout}s timeout`] : []),
       ];
       return presentation(
-        summary([
+        [
           { kind: "text", text: firstLine },
           ...(metadata.length > 0
             ? ([
@@ -481,7 +432,7 @@ function shellRule(name: "bash" | "powershell"): ToolPresentationRule {
                 },
               ] as const)
             : []),
-        ]),
+        ],
         () => {
           const blocks: ToolPresentationBlock[] = [
             { type: "terminal", label: "Command", text: command },
@@ -582,30 +533,21 @@ function grepRule(): ToolPresentationRule {
       const root = stringValue(args, "path") ?? ".";
       const glob = stringValue(args, "glob");
       return presentation(
-        summary([
+        [
           { kind: "text", text: `/${compactSummary(pattern, 70)}/` },
           { kind: "text", text: "in", separator: "space", subdued: true },
           { kind: "resource", text: root, reference: root, separator: "space" },
           ...(glob
             ? ([{ kind: "text", text: glob, separator: "dot" }] as const)
             : []),
-        ]),
+        ],
         () => {
           const blocks: ToolPresentationBlock[] = [
             { type: "properties", items: grepProperties(args) },
           ];
           if (!input.result) return blocks;
           const raw = toolResultText(input.result);
-          if (input.result.isError) {
-            if (raw)
-              blocks.push({
-                type: "text",
-                label: "Error",
-                text: raw,
-                error: true,
-              });
-            return blocks;
-          }
+          if (input.result.isError) return blocks.concat(resultErrorBlocks(raw));
           if (raw === "No matches found") {
             blocks.push({
               type: "search",
@@ -669,12 +611,8 @@ function pathListBlocks(
   tool: "find" | "ls",
 ): ToolPresentationBlock[] {
   if (!input.result) return [];
-  if (input.result.isError) {
-    const error = resultTextBlock(input, "Error");
-    return error ? [error] : [];
-  }
-
   const raw = toolResultText(input.result);
+  if (input.result.isError) return resultErrorBlocks(raw);
   const listing = tool === "ls";
   const label = listing ? "Contents" : "Results";
   if (
@@ -724,11 +662,11 @@ function findRule(): ToolPresentationRule {
       if (pattern === null) return null;
       const root = stringValue(args, "path") ?? ".";
       return presentation(
-        summary([
+        [
           { kind: "text", text: compactSummary(pattern) },
           { kind: "text", text: "in", separator: "space", subdued: true },
           { kind: "resource", text: root, reference: root, separator: "space" },
-        ]),
+        ],
         () => pathListBlocks(input, root, "find"),
       );
     },
@@ -745,7 +683,7 @@ function lsRule(): ToolPresentationRule {
       if (pathValue !== undefined && typeof pathValue !== "string") return null;
       const root = typeof pathValue === "string" && pathValue ? pathValue : ".";
       return presentation(
-        summary([{ kind: "resource", text: root, reference: root }]),
+        fileSummary(root),
         () => pathListBlocks(input, root, "ls"),
       );
     },
@@ -779,7 +717,7 @@ function codemodeRule(): ToolPresentationRule {
       const args = jsonRecord(input.call.arguments);
       if (!args || typeof args.code !== "string") return null;
       return presentation(
-        summary([{ kind: "text", text: "JavaScript" }]),
+        [{ kind: "text", text: "JavaScript" }],
         () => (input.result ? codeModeResultBlocks(input.result) : []),
       );
     },

@@ -1,6 +1,6 @@
 /* Status choices for extension controls. */
 .status-choice {
-  font: var(--text-xs)/1.45 var(--font-sans);
+  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
   color: var(--body);
   padding: 8px 12px;
   border-bottom: 1px solid var(--hairline);

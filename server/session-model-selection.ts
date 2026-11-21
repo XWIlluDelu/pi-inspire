@@ -25,24 +25,6 @@ export function appendModelSelection(
   return { change, fallback };
 }
 
-export function branchModelSelection(
-  byId: ReadonlyMap<string, SessionEntry>,
-  leaf: string | null,
-): BranchModelSelection {
-  const branch: SessionEntry[] = [];
-  let id = leaf;
-  while (id !== null) {
-    const entry = byId.get(id);
-    if (!entry) break;
-    branch.push(entry);
-    id = entry.parentId;
-  }
-  return appendModelSelection(
-    { change: null, fallback: null },
-    branch.reverse(),
-  );
-}
-
 /** Pi getBranchSelection: only the latest registered virtual model_change
  * holds across physical replies. Physical/legacy branches keep reply recovery;
  * unavailable virtual definitions fall back to the last physical responder. */

@@ -3,7 +3,6 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { Express } from "express";
 import { WebSocket, WebSocketServer } from "ws";
-import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import { hostEndpoints as routes } from "../shared/host-endpoints.js";
 import { MAX_TERMINAL_INPUT_BYTES } from "../shared/terminal-contracts.js";
 import {
@@ -14,17 +13,12 @@ import {
   terminalReceiptIdentity,
 } from "../shared/terminal-operations.js";
 import { canonicalOrigin } from "./browser-auth.js";
-import {
-  maintainBrowserSockets,
-  terminateUpgradedSockets,
-} from "./browser-socket-lifecycle.js";
+import { maintainBrowserSockets, terminateUpgradedSockets } from "./browser-socket-lifecycle.js";
 import { jsonRoute } from "./json-route.js";
 import { settleOperation } from "./operation-receipts.js";
 import { requestError } from "./request-error.js";
-import { terminalDaemonMethods } from "./terminal-daemon-protocol.js";
 import {
   type TerminalAttachment,
-  type TerminalConnection,
   type TerminalService,
 } from "./terminal-service.js";
 
@@ -36,42 +30,27 @@ const MAX_TERMINAL_SOCKETS = 128;
 interface TerminalSocketState {
   responsive: boolean;
   attachment: TerminalAttachment | "attaching" | null;
-  browserBuild: string | undefined;
   detach(): void;
 }
 
 /** Register after /api authentication. Upgrade admission remains in the Host:
- * exact-origin single-use socket tickets are required before attach is read.
- * This gateway owns only tickets/attachments; the daemon still owns the PTYs. */
+ * exact-origin single-use socket tickets are required before attach is read. */
 export function createTerminalGateway(
   app: Express,
-  service: TerminalService | Pick<TerminalConnection, "run"> | undefined,
+  service: TerminalService | undefined,
   heartbeatIntervalMs: number,
-  currentBrowserBuild: () => Promise<string | undefined>,
 ) {
   const terminalTickets = new Map<
     string,
     { terminalId: string; origin: string; expiresAt: number }
   >();
-  const pruneTerminalTickets = (now = Date.now()): void => {
-    for (const [ticket, entry] of terminalTickets) {
-      if (entry.expiresAt <= now) terminalTickets.delete(ticket);
-    }
-    while (terminalTickets.size >= MAX_TERMINAL_ATTACH_TICKETS) {
-      const oldest = terminalTickets.keys().next().value;
-      if (typeof oldest !== "string") break;
-      terminalTickets.delete(oldest);
-    }
-  };
   const consumeTerminalTicket = (
     ticket: string,
     origin: string | undefined,
   ): { terminalId: string } | null => {
-    const now = Date.now();
-    pruneTerminalTickets(now);
     const entry = terminalTickets.get(ticket);
     terminalTickets.delete(ticket);
-    return entry && entry.expiresAt > now && entry.origin === origin
+    return entry && entry.expiresAt > Date.now() && entry.origin === origin
       ? { terminalId: entry.terminalId }
       : null;
   };
@@ -82,12 +61,12 @@ export function createTerminalGateway(
       throw requestError("Terminal service is unavailable", 503, {
         code: "terminal_unavailable",
       });
-    return "run" in service ? service.run(operation) : operation(service);
+    return operation(service);
   };
   app.get(TERMINAL_OPERATIONS_PATH, async (_request, response) => {
     response.set("Cache-Control", "no-store");
     response.json({
-      epoch: (await terminal(terminalDaemonMethods.ping)).operationEpoch,
+      epoch: await terminal((service) => service.operationEpoch()),
     });
   });
   app.post(TERMINAL_OPERATIONS_PATH, async (request, response) => {
@@ -110,10 +89,7 @@ export function createTerminalGateway(
       terminalReceiptIdentity(operation),
       async () =>
         (await terminal((service) =>
-          terminalDaemonMethods[observeOnly ? "observeOperation" : "operate"](
-            service,
-            operation,
-          ),
+          service.operate(operation, observeOnly),
         )) ?? null,
       ({ code, status }) =>
         status < 400 ||
@@ -131,27 +107,25 @@ export function createTerminalGateway(
     response.json(receipt);
   });
   jsonRoute(app, routes.terminals, ({ query }) =>
-    terminal((service) =>
-      terminalDaemonMethods.getCatalog(service, { projectCwd: query.cwd }),
-    ),
+    terminal((service) => service.list(query.cwd)),
   );
   jsonRoute(app, routes.terminalSettings, () =>
-    terminal(terminalDaemonMethods.getSettings),
+    terminal((service) => service.getSettings()),
   );
   jsonRoute(
     app,
     routes.terminalAttachTicket,
-    async ({ params: { id: terminalId } }, request) => {
-      const catalog = await terminal((service) =>
-        terminalDaemonMethods.getCatalog(service, {}),
-      );
-      if (!catalog.terminals.some((candidate) => candidate.id === terminalId))
-        throw requestError("Terminal was not found", 404, {
-          code: "terminal_not_found",
-        });
-      pruneTerminalTickets();
+    ({ params: { id: terminalId } }, request) => {
+      // The daemon checks the live terminal at attachment, where it owns admission.
+      const now = Date.now();
+      for (const [ticket, entry] of terminalTickets)
+        if (entry.expiresAt <= now) terminalTickets.delete(ticket);
+      if (terminalTickets.size === MAX_TERMINAL_ATTACH_TICKETS) {
+        const oldest = terminalTickets.keys().next();
+        if (!oldest.done) terminalTickets.delete(oldest.value);
+      }
       const ticket = randomUUID();
-      const expiresAt = Date.now() + TERMINAL_ATTACH_TICKET_TTL_MS;
+      const expiresAt = now + TERMINAL_ATTACH_TICKET_TTL_MS;
       terminalTickets.set(ticket, {
         terminalId,
         origin: canonicalOrigin(request.get("host"), request.secure),
@@ -189,23 +163,18 @@ export function createTerminalGateway(
     }
   };
   const stopHeartbeat = maintainBrowserSockets(
-    terminalSockets,
-    heartbeatIntervalMs,
-    currentBrowserBuild,
+    terminalSockets, heartbeatIntervalMs,
     (peer) => !!peer.attachment && peer.attachment !== "attaching",
-    sendTerminalBounded,
-    (socket) => terminalSockets.get(socket)?.detach(),
+    sendTerminalBounded, (socket) => terminalSockets.get(socket)?.detach(),
   );
 
   function openTerminalSocket(
     socket: WebSocket,
     origin: string | undefined,
-    build: string | undefined,
   ): void {
     const peer: TerminalSocketState = {
       responsive: true,
       attachment: null,
-      browserBuild: build,
       detach,
     };
     terminalSockets.set(socket, peer);
@@ -314,8 +283,6 @@ export function createTerminalGateway(
           attachment.send({ data });
         } else {
           const control = JSON.parse(data.toString("utf8"));
-          if (control?.type === "terminal_daemon_detach")
-            throw new Error("Terminal message is invalid");
           attachment.send({ control });
         }
       } catch (error) {
@@ -332,20 +299,10 @@ export function createTerminalGateway(
   }
 
   return {
-    rejectUpgrade(
-      request: IncomingMessage,
-      socket: Duplex,
-      head: Buffer,
-    ): void {
-      terminalWebsocket.handleUpgrade(request, socket, head, (client) =>
-        client.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire"),
-      );
-    },
     upgrade(
       request: IncomingMessage,
       socket: Duplex,
       head: Buffer,
-      build: string | undefined,
     ): void {
       if (terminalSockets.size >= MAX_TERMINAL_SOCKETS) {
         socket.write(
@@ -355,7 +312,7 @@ export function createTerminalGateway(
         return;
       }
       terminalWebsocket.handleUpgrade(request, socket, head, (client) => {
-        openTerminalSocket(client, request.headers.origin, build);
+        openTerminalSocket(client, request.headers.origin);
       });
     },
     close(): void {

@@ -6,9 +6,7 @@ import { openFixtureSession, pairedPage } from "./support/navigation";
 
 // UI wire fixture only; real native execution is checked by the isolated Pi
 // lifecycle integration tests, never the test Host or independent terminal.
-test("native shell cards stream, stop and fit the narrow composer without an automatic model turn", {
-  tag: "@platform-ui",
-}, async ({ page }) => {
+test("native shell cards stream, stop and fit the narrow composer without an automatic model turn", async ({ page }) => {
   const sessionId = "fixture-history";
   const submitted: Array<Record<string, unknown>> = [];
   let stopped = 0;
@@ -50,9 +48,6 @@ test("native shell cards stream, stop and fit the narrow composer without an aut
   };
   const transport = await routeSnapshots(page, {
     snapshot: projectShell,
-    bootstrap: ({ preferences }) => {
-      preferences.toolVisibility = "hidden";
-    },
   });
   await page.route("**/api/prompt", async (route) => {
     const body = route.request().postDataJSON() as Record<string, unknown>;

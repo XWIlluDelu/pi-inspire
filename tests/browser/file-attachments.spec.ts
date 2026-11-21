@@ -7,9 +7,7 @@ import { openEventSession } from "./support/host-events";
 // Exercise native artifact admission and persisted file references through the Host.
 test.use({ serviceWorkers: "block" });
 
-test("sent file prompts retain readable names, original bytes, and history across reload", {
-  tag: "@cross-browser",
-}, async ({ page, context, browserName }) => {
+test("sent file prompts retain readable names, original bytes, and history across reload", async ({ page, context, browserName }) => {
   if (browserName === "chromium")
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await openEventSession(
@@ -55,10 +53,8 @@ test("sent file prompts retain readable names, original bytes, and history acros
   const uploadedNames: string[] = attachments.map(
     (file: { fileName: string }) => file.fileName,
   );
-  // Safari normalizes local filenames before uploading. Verify the same
-  // Unicode name and require the UI to show the Host's accepted spelling.
-  expect(uploadedNames.map((name) => name.normalize("NFC"))).toEqual(
-    names.map((name) => name.normalize("NFC")),
+  expect(uploadedNames.map((name) => name.normalize())).toEqual(
+    names.map((name) => name.normalize()),
   );
   expect(
     attachments.find(
@@ -103,7 +99,7 @@ test("sent file prompts retain readable names, original bytes, and history acros
   for (const path of sourcePaths)
     expect(copied).toContain(JSON.stringify(path));
   await page.reload();
-  await expect(files.getByText(names[0]!, { exact: true })).toBeVisible();
+  await expect(files.getByText(uploadedNames[0]!, { exact: true })).toBeVisible();
   await expect(bubble.locator(".rich-text")).toHaveText(question);
   await input.press("ArrowUp");
   await expect(input).toHaveValue(question);

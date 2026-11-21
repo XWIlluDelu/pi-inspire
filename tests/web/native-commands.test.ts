@@ -119,7 +119,7 @@ describe("Pi native command dispatch", () => {
       expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
         command: "export",
         status: "warning",
-        message: expect.stringMatching(/check the session before trying again/),
+        message: "Couldn’t confirm that the command finished.",
       }),
     );
     expect(native().map(([, init]) => jsonBody(init!))).toEqual([

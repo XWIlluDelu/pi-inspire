@@ -1,3 +1,4 @@
+import { stageUpload } from "./fixtures/runtime.js";
 import { execFile as execFileCallback } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -39,7 +40,7 @@ it.runIf(enabled)(
       sweepIntervalMs: 0,
     });
     try {
-      const doc = await store.add({
+      const doc = await stageUpload(store, {
         originalname: "notes.txt",
         mimetype: "text/plain",
         size: 5,

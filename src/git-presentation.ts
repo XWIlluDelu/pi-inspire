@@ -1,4 +1,14 @@
-import type { GitFileChange, GitStatusResponse } from "../shared/contracts";
+import type {
+  GitFileChange,
+  GitStatusDetail,
+  GitStatusResponse,
+} from "../shared/contracts";
+
+export function gitStatusDetail(
+  status: GitStatusResponse | null,
+): GitStatusDetail | null {
+  return status?.kind === "repository" && !("files" in status) ? null : status;
+}
 
 interface GitFacetPresentation {
   mark: string;
@@ -9,7 +19,7 @@ interface GitFacetPresentation {
 export function gitHeadLabel(
   status: GitStatusResponse | null | undefined,
 ): string | null {
-  if (!status || status.kind !== "repository") return null;
+  if (status?.kind !== "repository") return null;
   if (status.head.kind === "branch") return status.head.name;
   if (status.head.kind === "unborn") return `${status.head.name} · unborn`;
   return `${status.head.oid.slice(0, 8)} · detached`;
@@ -61,28 +71,33 @@ export function gitDecorationForChange(
   return null;
 }
 
-/** Directory rollup: the most severe decoration among changed descendants,
- * conflict > modified > untracked (the VS Code precedence). Files without a
- * safe workspace projection cannot be attributed to the tree and are skipped
- * rather than guessed. */
-export function gitDecorationForDirectory(
-  status: GitStatusResponse | null | undefined,
-  dirPath: string,
-): GitDecoration | null {
-  if (!status || status.kind !== "repository") return null;
-  const prefix = `${dirPath}/`;
-  let best: GitDecoration | null = null;
-  for (const file of status.files) {
-    const workspacePath = file.path.workspacePath;
-    if (
-      !workspacePath ||
-      (workspacePath !== dirPath && !workspacePath.startsWith(prefix))
-    )
-      continue;
-    const decoration = gitDecorationForChange(file);
-    if (decoration === "conflict") return "conflict";
-    if (decoration === "modified") best = "modified";
-    else if (decoration === "untracked" && best === null) best = "untracked";
+/** A directory (including a submodule itself) takes its most severe change. */
+export function workspaceGitChanges(status: GitStatusResponse | null) {
+  const files = new Map<string, GitFileChange>();
+  const directories = new Map<string, GitDecoration>();
+  const detail = gitStatusDetail(status);
+  if (detail?.kind === "repository") {
+    for (const file of detail.files) {
+      const path = file.path.workspacePath;
+      if (!path) continue;
+      files.set(path, file);
+      const decoration = gitDecorationForChange(file);
+      if (!decoration) continue;
+      let dir = path;
+      while (dir) {
+        const previous = directories.get(dir);
+        if (
+          previous === decoration ||
+          previous === "conflict" ||
+          (previous === "modified" && decoration === "untracked")
+        )
+          break;
+        directories.set(dir, decoration);
+        const slash = dir.lastIndexOf("/");
+        if (slash < 0) break;
+        dir = dir.slice(0, slash);
+      }
+    }
   }
-  return best;
+  return { files, directories };
 }

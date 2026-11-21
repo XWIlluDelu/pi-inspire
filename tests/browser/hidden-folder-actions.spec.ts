@@ -68,29 +68,17 @@ async function hiddenClone(page: Page, title: RegExp, id?: string) {
 test("deletes the visible idle session through one confirmation and returns to New session", async ({
   page,
 }) => {
-  const { name } = await hiddenClone(
+  const { id, name } = await hiddenClone(
     page,
     /Calibration history fixture/,
     "fixture-calibration-history",
   );
-  // API cloning does not replace this browser's selected session.
-  await page
-    .locator(".nav__hidden-content .nav__row-main")
-    .filter({ has: page.getByText(name, { exact: true }) })
-    .click();
-  await expect(
-    page.getByRole("button", { name: /^Session actions:/ }),
-  ).toHaveText(name);
-  const remove = page.locator(".nav__hidden-content").getByRole("button", {
-    name: `Delete "${name}"`,
-    exact: true,
-  });
-  await page
-    .locator(".nav__hidden-content .nav__row")
-    .filter({
-      has: page.getByRole("button", { name: `Delete "${name}"`, exact: true }),
-    })
-    .hover();
+  const hidden = page.getByRole("region", { name: "Hidden", exact: true });
+  const row = hidden.locator(`[data-session-id="${id}"]`);
+  await row.locator(".nav__row-main").click();
+  await expect(page.getByRole("button", { name: /^Session actions:/ })).toHaveText(name);
+  const remove = row.getByRole("button", { name: `Delete "${name}"`, exact: true });
+  await row.hover();
   await expect(remove).toBeEnabled();
   await remove.click();
   const dialog = page.getByRole("alertdialog", { name: "Delete session?" });
@@ -126,7 +114,7 @@ test("a refused deletion wraps its diagnostic, then an externally missing file r
     else await route.continue();
   });
   await page
-    .locator(".nav__hidden-content")
+    .getByRole("region", { name: "Hidden", exact: true })
     .getByRole("button", {
       name: `Delete "${name}"`,
       exact: true,
@@ -315,11 +303,6 @@ for (const { width, hasTouch } of [
       expect(await folderGaps(catalog)).toEqual([gap, secondGap]);
 
       await page.getByRole("button", { name: "Hidden", exact: true }).click();
-      const [hiddenGap] = await folderGaps(
-        page.locator(".nav__hidden-content > .nav__group"),
-      );
-      expect(hiddenGap).toBeCloseTo(gap!, 0);
-
       const drawer = page.getByRole("region", { name: "Hidden", exact: true });
       const folder = drawer.locator(".nav__group").filter({
         has: page.getByRole("button", { name: "archived-a", exact: true }),

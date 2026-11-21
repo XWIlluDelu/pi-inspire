@@ -71,18 +71,15 @@ export async function terminalCatalog(page: Page, cwd = browserWorkspace) {
 
 function terminalFixtures(page: Page) {
   const ids = new Set<string>();
+  async function remove(id: string) {
+    const response = await terminalOperation(page, {
+      command: "remove",
+      params: { id, force: true },
+    });
+    expect(response.ok()).toBe(true);
+    ids.delete(id);
+  }
   return {
-    track(id: string) {
-      ids.add(id);
-    },
-    async remove(id: string) {
-      const response = await terminalOperation(page, {
-        command: "remove",
-        params: { id, force: true },
-      });
-      expect(response.ok()).toBe(true);
-      ids.delete(id);
-    },
     async create(title?: string) {
       const created = await terminalOperation(page, {
         command: "create",
@@ -91,7 +88,7 @@ function terminalFixtures(page: Page) {
       expect(created.ok()).toBe(true);
       const terminal = (await created.json()).result as TerminalDescriptor;
       ids.add(terminal.id);
-      if (title !== undefined) {
+      if (title) {
         const renamed = await terminalOperation(page, {
           command: "rename",
           params: { id: terminal.id, title },
@@ -101,14 +98,12 @@ function terminalFixtures(page: Page) {
       }
       return terminal;
     },
+    track(id: string) {
+      ids.add(id);
+    },
+    remove,
     async close() {
-      for (const id of ids) {
-        const response = await terminalOperation(page, {
-          command: "remove",
-          params: { id, force: true },
-        });
-        expect(response.ok()).toBe(true);
-      }
+      for (const id of ids) await remove(id);
     },
   };
 }

@@ -1,13 +1,15 @@
 import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { TRANSCRIPT_PAGE_MAX_BYTES } from "../../server/session-projection.js";
 import {
   disposeProjectionFixture,
+  initializeProjectionFixture,
   setup,
   runtimeProjection,
 } from "./fixtures/runtime-projection.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
+beforeEach(initializeProjectionFixture);
 afterEach(disposeProjectionFixture);
 
 const entry = (id: string, parentId: string, role: string, content: string) =>
@@ -140,25 +142,22 @@ it("retains unsaved live output and reads only the saved prefix while Pi's leaf 
     type: "message_end",
     message: { role: "assistant", timestamp: 2, content: "unsaved output" },
   });
-  worker.publishCheckpoint([], { sealed: "settled" });
+  worker.publishCheckpoint([]);
   worker.emit("event", { type: "agent_settled" });
   const page = (await runtime.snapshot("session-a")).active!.transcriptPage;
   expect(page.messages.at(-1)).toMatchObject({
     content: "unsaved output",
-    __inspireUnconfirmed: true,
+    __inspireLiveId: expect.any(String),
   });
   expect(page.messages.at(-1)).not.toHaveProperty("__inspireEntryId");
 
   const native = entry("native", "u1", "assistant", "unsaved output");
-  worker.publishCheckpoint([native], { sealed: "settled" });
-  expect((await runtime.snapshot("session-a")).active).toMatchObject({
-    effectiveLeafId: "native",
-    transcriptPage: {
-      messages: expect.arrayContaining([
-        expect.objectContaining({ __inspireEntryId: "native" }),
-      ]),
-    },
-  });
+  worker.publishCheckpoint([native]);
+  const live = (await runtime.snapshot("session-a")).active!;
+  expect(live.effectiveLeafId).toBe("native");
+  expect(live.transcriptPage.messages.slice(1)).toMatchObject([
+    { __inspireEntryId: "native", content: "unsaved output" },
+  ]);
   const saved = () =>
     runtime.sessionHistory("session-a", page.viewId, { kind: "page" });
   expect((await saved()).leafId).toBe("u1");

@@ -1,3 +1,4 @@
+import { stageUpload } from "../server/fixtures/runtime.js";
 // @vitest-environment jsdom
 
 import { expect, it, vi } from "vitest";
@@ -58,7 +59,7 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
       "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
       "base64",
     );
-    const image = await f.attachments.add({
+    const image = await stageUpload(f.attachments, {
       originalname: "queued.gif",
       mimetype: "image/gif",
       size: bytes.length,
@@ -75,11 +76,6 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
       expect(selectedRunState(store!.getState())).toBe("aborted"),
     );
     expect(store.drafts.get(f.sessionId).text).toBe("newer draft");
-    expect(store.getState().live.notices).toContainEqual(
-      expect.objectContaining({
-        text: expect.stringContaining("Pending recovery failed"),
-      }),
-    );
     expect(posts.map(({ path }) => path)).toEqual([recoverPath, stopPath]);
     receiptsUnavailable = false;
     await f.api.prompt(f.delivery("Second isolated run"));

@@ -66,13 +66,29 @@ it("replaces old Settings and picker results with the committed catalog and keep
 it("serializes active cycle actions and does not wait for retired actions to finish", async () => {
   const held = deferred<RouteResponse>();
   const calls: unknown[] = [];
-  const snapshot = (sessionId = "s1") =>
-    activeSnapshot({ sessionId, model: first, thinkingLevel: "off" });
+  const snapshot = (sessionId = "s1") => {
+    const result = activeSnapshot({
+      sessionId,
+      model: first,
+      thinkingLevel: "off",
+    });
+    if (sessionId === "s2") result.sessionStatuses[sessionId]!.external = true;
+    return result;
+  };
   installStoreRoutes((url, init) => {
     if (url === "/api/sessions/open") return { body: snapshot("s2") };
     if (url === "/api/control/model-cycle") {
       calls.push(jsonBody(init));
       return held.promise;
+    }
+    if (url === "/api/control/thinking-cycle") {
+      calls.push(jsonBody(init));
+      return {
+        body: {
+          model: first,
+          thinkingLevel: calls.length === 1 ? "medium" : "high",
+        },
+      };
     }
     if (url === "/api/control/thinking") {
       const body = jsonBody(init);
@@ -82,10 +98,8 @@ it("serializes active cycle actions and does not wait for retired actions to fin
   });
   const { store } = await initStore(snapshot());
   await Promise.all([store.cycleThinking(), store.cycleThinking()]);
-  expect(calls).toEqual([
-    { sessionId: "s1", level: "minimal" },
-    { sessionId: "s1", level: "low" },
-  ]);
+  expect(calls).toEqual([{ sessionId: "s1" }, { sessionId: "s1" }]);
+  expect(store.getState().thinkingLevel).toBe("high");
 
   const old = store.cycleModel(1);
   const queued = store.cycleThinking();

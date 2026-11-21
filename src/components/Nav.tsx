@@ -1,14 +1,12 @@
 import {
   CheckCheck,
   Bell,
-  ChevronUp,
-  EyeOff,
+  ChevronRight,
   Inbox,
   PanelLeft,
   Pin,
   Plus,
   SearchX,
-  Settings as SettingsIcon,
   Trash2,
   X,
 } from "lucide-react";
@@ -39,7 +37,6 @@ import { NavigationToggle } from "./NavigationToggle";
 import { ProjectGroup, SessionRow } from "./NavSessions";
 import {
   buildSessionCatalog,
-  catalogSections,
   hiddenDeletionBlockReason,
   sectionSessions,
 } from "./nav-model";
@@ -52,7 +49,6 @@ export const Nav = memo(function Nav({
   collapsed,
   isModal = false,
   onClose,
-  onOpenSettings,
   onToggleNavigation,
   onNewSession,
   onSelectSession,
@@ -61,38 +57,12 @@ export const Nav = memo(function Nav({
   collapsed: boolean;
   isModal?: boolean;
   onClose?: () => void;
-  /** Narrow drawers own Settings so the header can favor session identity. */
-  onOpenSettings?: () => void;
   onToggleNavigation: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
   searchInputRef?: Ref<HTMLInputElement>;
 }) {
-  const {
-    sessions,
-    pinnedSessionIds,
-    pinnedProjectCwds,
-    curatedHiddenSessionIds,
-    hiddenProjectCwds,
-    collapsedGroupCwds,
-    selectedSessionId,
-    openingSessionId,
-    sessionStatuses,
-    externalSessionActivities,
-    sessionQuery,
-    sessionListNextOffset,
-    sessionListTotal,
-    sessionListLoading,
-    sessionListLoadingOlder,
-    sessionListHydrating,
-    sessionListOperation,
-    sessionListError,
-    sessionListIssues,
-    sessionActionError,
-    curationPending,
-    clearingHidden,
-    deletingSessionId,
-  } = useAppState(
+  const catalogState = useAppState(
     (state) => ({
       sessions: state.sessions,
       pinnedSessionIds:
@@ -122,7 +92,6 @@ export const Nav = memo(function Nav({
       sessionListHydrating: state.sessionListHydrating,
       sessionListOperation: state.sessionListOperation,
       sessionListError: state.sessionListError,
-      sessionListIssues: state.sessionListIssues,
       sessionActionError: state.sessionActionError,
       curationPending: state.curationPending,
       clearingHidden: state.clearingHidden,
@@ -131,6 +100,29 @@ export const Nav = memo(function Nav({
     shallowEqual,
   );
 
+  const {
+    sessions,
+    pinnedSessionIds,
+    pinnedProjectCwds,
+    curatedHiddenSessionIds,
+    hiddenProjectCwds,
+    collapsedGroupCwds,
+    selectedSessionId,
+    openingSessionId,
+    sessionStatuses,
+    externalSessionActivities,
+    sessionQuery,
+    sessionListNextOffset,
+    sessionListTotal,
+    sessionListLoading,
+    sessionListLoadingOlder,
+    sessionListHydrating,
+    sessionListOperation,
+    sessionListError,
+    sessionActionError,
+    curationPending,
+    clearingHidden,
+  } = catalogState;
   const internalNavRef = useRef<HTMLElement>(null);
   const modalNavRef = useModalFocus<HTMLDivElement>(
     isModal,
@@ -209,12 +201,16 @@ export const Nav = memo(function Nav({
     setRetainedNeed(row?.reason ? { id, reason: row.reason } : null);
     onSelectSession(id);
   };
-  const displayed = catalogSections(
-    catalog,
-    view,
-    false,
-    needsYou.map(({ session }) => session),
-  );
+  const displayed = (
+    view === "needs-you"
+      ? [
+          {
+            kind: "needs-you" as const,
+            sessions: needsYou.map(({ session }) => session),
+          },
+        ]
+      : catalog.all
+  ).filter((section) => sectionSessions(section).length);
   const showHidden = view === "all" && (hiddenOpen || searching);
   const hiddenSections = view === "all" ? catalog.hidden : [];
   const searchResults = [
@@ -309,21 +305,9 @@ export const Nav = memo(function Nav({
         ? "Loading older sessions…"
         : "Loading sessions…";
   const hiddenSessions = catalog.hidden.flatMap(sectionSessions);
-  const deletionState = {
-    openingSessionId,
-    sessionQuery,
-    sessionListLoading,
-    sessionListLoadingOlder,
-    sessionListHydrating,
-    sessionListError,
-    sessionListIssues,
-    curationPending,
-    clearingHidden,
-    deletingSessionId,
-  };
   const hiddenClearReason = hiddenDeletionBlockReason(
     hiddenSessions,
-    deletionState,
+    catalogState,
   );
 
   const renderSection = (section: (typeof displayed)[number]) => {
@@ -352,7 +336,7 @@ export const Nav = memo(function Nav({
           }
           deleteGroupDisabledReason={
             hidden
-              ? hiddenDeletionBlockReason(group.sessions, deletionState)
+              ? hiddenDeletionBlockReason(group.sessions, catalogState)
               : null
           }
         />
@@ -426,28 +410,15 @@ export const Nav = memo(function Nav({
               ) : null}
             </button>
             {isModal && onClose ? (
-              <>
-                {onOpenSettings ? (
-                  <button
-                    type="button"
-                    className="icon-button nav__settings"
-                    aria-label="Settings"
-                    title="Settings"
-                    onClick={onOpenSettings}
-                  >
-                    <SettingsIcon size={15} aria-hidden />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="icon-button nav__close"
-                  aria-label="Close navigation"
-                  title="Close navigation"
-                  onClick={onClose}
-                >
-                  <X size={15} aria-hidden />
-                </button>
-              </>
+              <button
+                type="button"
+                className="icon-button nav__close"
+                aria-label="Close navigation"
+                title="Close navigation"
+                onClick={onClose}
+              >
+                <X size={15} aria-hidden />
+              </button>
             ) : !isModal ? (
               <button
                 type="button"
@@ -495,7 +466,7 @@ export const Nav = memo(function Nav({
             onCompositionEnd={() => {
               composing.current = false;
             }}
-            onValueChange={store.searchSessions}
+            onValueChange={store.catalog.search}
             onKeyDown={(event) => {
               if (
                 isComposingKeyboardEvent(event.nativeEvent) ||
@@ -518,7 +489,7 @@ export const Nav = memo(function Nav({
               event.preventDefault();
               event.stopPropagation();
               if (event.key === "Escape") {
-                if (sessionQuery) store.searchSessions("");
+                if (sessionQuery) store.catalog.search("");
                 else event.currentTarget.blur();
               } else if (event.key === "Enter") {
                 if (highlighted && highlighted.id !== openingSessionId)
@@ -563,31 +534,6 @@ export const Nav = memo(function Nav({
         aria-busy={curationPending || undefined}
       >
         {displayed.map(renderSection)}
-        {sessionListIssues.length ? (
-          <div className="nav__pagination">
-            <details className="nav__source-issues">
-              <summary>Some sessions may be missing</summary>
-              <p>Counts may be incomplete.</p>
-              <ul>
-                {sessionListIssues.map((issue) => (
-                  <li key={issue.path}>
-                    <strong>{issue.path}</strong>
-                    <br />
-                    {issue.message}
-                  </li>
-                ))}
-              </ul>
-            </details>
-            <button
-              type="button"
-              className="button button--quiet"
-              disabled={sessionListBusy}
-              onClick={() => void store.refreshSessions()}
-            >
-              Retry loading sessions
-            </button>
-          </div>
-        ) : null}
         {showSessionListActivity ? (
           <div className="nav__pagination">
             <span
@@ -602,7 +548,7 @@ export const Nav = memo(function Nav({
               <button
                 type="button"
                 className="button button--quiet"
-                onClick={() => void store.retrySessionList()}
+                onClick={() => void store.catalog.retryCurrent()}
               >
                 {retrySessionLabel}
               </button>
@@ -621,7 +567,7 @@ export const Nav = memo(function Nav({
                 type="button"
                 className="button button--quiet"
                 disabled={sessionListBusy}
-                onClick={() => void store.loadOlderSessions()}
+                onClick={() => void store.catalog.loadOlder()}
               >
                 Load older sessions
               </button>
@@ -631,8 +577,7 @@ export const Nav = memo(function Nav({
         {displayed.length === 0 &&
           (!showHidden || hiddenSessions.length === 0) &&
           !sessionListBusy &&
-          !sessionListError &&
-          !sessionListIssues.length && (
+          !sessionListError && (
             <div className="empty-state">
               {searching ? (
                 <SearchX size={26} strokeWidth={1.5} aria-hidden />
@@ -655,10 +600,10 @@ export const Nav = memo(function Nav({
       </div>
       {hiddenSections.length > 0 && (
         <section className="nav__group nav__group--hidden" aria-label="Hidden">
-          <h2 className="nav__hidden-heading nav__dock-heading">
+          <h2 className="nav__hidden-heading">
             <button
               type="button"
-              className="nav__hidden-toggle nav__dock-toggle"
+              className="nav__hidden-toggle"
               aria-expanded={showHidden}
               disabled={searching}
               aria-controls={hiddenContentId}
@@ -668,16 +613,11 @@ export const Nav = memo(function Nav({
                 saveHiddenSessionsOpen(next);
               }}
             >
-              <EyeOff size={16} aria-hidden />
-              <span className="nav__group-name nav__dock-title">Hidden</span>
+              <ChevronRight size={16} className="chev" aria-hidden />
+              <span className="nav__hidden-title">Hidden</span>
               <span className="nav__hidden-count" aria-hidden>
                 {hiddenSessions.length}
               </span>
-              <ChevronUp
-                size={12}
-                className={`chev-flip ${showHidden ? "chev-flip--open" : ""}`}
-                aria-hidden
-              />
             </button>
             <button
               type="button"
@@ -709,7 +649,7 @@ export const Nav = memo(function Nav({
         <SessionDeleteDialog
           session={deleteCandidate}
           onClose={() => {
-            store.clearSessionDeleteError();
+            store.sessionManagement.clearSessionDeleteError();
             setDeleteCandidate(null);
           }}
         />
@@ -719,7 +659,7 @@ export const Nav = memo(function Nav({
           sessionIds={hiddenClearCandidate.sessionIds}
           projectCwd={hiddenClearCandidate.projectCwd}
           onClose={() => {
-            store.clearSessionDeleteError();
+            store.sessionManagement.clearSessionDeleteError();
             setHiddenClearCandidate(null);
           }}
         />

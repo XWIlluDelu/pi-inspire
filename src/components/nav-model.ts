@@ -4,7 +4,6 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 import type { AppState } from "../app-state";
-import type { SessionCatalogView } from "../workbench-session";
 
 type HiddenDeletionState = Pick<
   AppState,
@@ -14,7 +13,6 @@ type HiddenDeletionState = Pick<
   | "sessionListLoadingOlder"
   | "sessionListHydrating"
   | "sessionListError"
-  | "sessionListIssues"
   | "curationPending"
   | "clearingHidden"
   | "deletingSessionId"
@@ -42,8 +40,6 @@ export function hiddenDeletionBlockReason(
   ) {
     return "Wait for Hidden sessions to finish loading";
   }
-  if (state.sessionListIssues.length)
-    return "Restore unavailable session sources and refresh before clearing Hidden";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
   return null;
@@ -167,21 +163,4 @@ export function buildSessionCatalog(
       ).map((group) => groupSection(group, true)),
     ],
   };
-}
-
-export function catalogSections(
-  catalog: Catalog,
-  view: SessionCatalogView,
-  searching: boolean,
-  needsYou: SessionSummary[],
-): CatalogSection[] {
-  const sections =
-    view === "needs-you"
-      ? [{ kind: "needs-you" as const, sessions: needsYou }]
-      : view === "hidden"
-        ? catalog.hidden
-        : searching
-          ? [...catalog.all, ...catalog.hidden]
-          : catalog.all;
-  return sections.filter((section) => sectionSessions(section).length);
 }

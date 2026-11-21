@@ -8,6 +8,8 @@ import {
   openWorkspaceFile,
 } from "./support/navigation";
 
+test.use({ serviceWorkers: "block" });
+
 async function openReadingPane(page: Page, width = 1280, height = 900) {
   await page.setViewportSize({ width, height });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -63,12 +65,8 @@ test("Recent retains a literal written file during refresh recovery and opens it
   ).toBeVisible();
 });
 
-test("source follows a saved line link and keeps its position after refresh", async ({
-  page,
-}) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("inspire.ctx-width", "680"),
-  );
+test("source follows a saved line link and keeps its position after refresh", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("inspire.ctx-width", "680"));
   const pane = await openReadingPane(page, 1500, 600);
   await openPreviewFixture(pane, "document.md");
   await pane.getByRole("tab", { name: "Files", exact: true }).click();
@@ -81,37 +79,30 @@ test("source follows a saved line link and keeps its position after refresh", as
   });
   expect(position).toEqual([100, 80]);
 
-  const file = join(
-    browserWorkspace,
-    "tests/browser/fixtures/file-previews/document.md",
-  );
+  const file = join(browserWorkspace, "tests/browser/fixtures/file-previews/document.md");
   const original = await readFile(file, "utf8");
   try {
     await writeFile(file, original.replace("Station 07", "Station 08"));
     await pane.getByRole("button", { name: "Refresh context pane" }).click();
     await expect(source).toContainText("Observation log · Station 08");
-    await expect
-      .poll(() => source.evaluate((node) => [node.scrollTop, node.scrollLeft]))
-      .toEqual(position);
+    await expect.poll(() => source.evaluate((node) => [node.scrollTop, node.scrollLeft])).toEqual(position);
   } finally {
     await writeFile(file, original);
   }
 });
 
-test("a Files preview error keeps Retry reachable in a short drawer", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("a Files preview error keeps Retry reachable in a short drawer", async ({ page }) => {
   const pane = await openReadingPane(page, 568, 320);
-  await page.route(
-    "**/api/resources/resolve",
-    (route) =>
-      route.fulfill({
-        status: 403,
-        json: {
-          error: "This file is unavailable. Check access and try again.",
-        },
-      }),
-    { times: 1 },
+  let inaccessible = true;
+  await page.route("**/api/resources/resolve", (route) =>
+    inaccessible
+      ? route.fulfill({
+          status: 403,
+          json: {
+            error: "This file is unavailable. Check access and try again.",
+          },
+        })
+      : route.continue(),
   );
   await openPreviewFixture(pane, "document.md");
   const frame = pane.locator(".file-preview__content");
@@ -120,15 +111,14 @@ test("a Files preview error keeps Retry reachable in a short drawer", {
   await expect(state).toContainText("Preview unavailable");
   await retry.scrollIntoViewIfNeeded();
   await expect(retry).toBeInViewport({ ratio: 1 });
+  inaccessible = false;
   await retry.click();
   await expect(
     pane.getByRole("heading", { name: "Observation log · Station 07" }),
   ).toBeVisible();
 });
 
-test("BOM text previews decode Unicode and download original bytes", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("BOM text previews decode Unicode and download original bytes", async ({ page }) => {
   const name = "encoding-be.plist";
   const source =
     '<?xml version="1.0" encoding="UTF-16"?>\r\n<plist version="1.0"><dict><key>message</key><string>你好 🌍</string></dict></plist>\r\n';

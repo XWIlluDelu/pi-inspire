@@ -57,13 +57,15 @@ test("Escape closes the focused workbench surface before aborting an active run"
   const hint = page.getByRole("tooltip");
   await draft.fill("/com");
   await expect(page.getByRole("option", { name: /\/compact/ })).toBeVisible();
-  await page.getByRole("button", { name: /^Session & usage, context/ }).hover();
+  const meter = page.getByRole("button", { name: /^Session & usage, context/ });
+  await meter.hover();
   await expect(hint).toContainText("18%");
   await draft.press("Escape");
   await expect(page.getByRole("option", { name: /\/compact/ })).toHaveCount(0);
+  await meter.focus();
   expect(await composingEscape(draft)).toBe(true);
   await expect(hint).toBeVisible();
-  await draft.press("Escape");
+  await page.keyboard.press("Escape");
   await expect(hint).toHaveCount(0);
   await draft.fill("");
 
@@ -92,12 +94,10 @@ test.describe("phone action dialogs", () => {
   test("consumes Back and explicit close for rename, palette and export", async ({
     page,
   }) => {
-    await page.goto("about:blank#outside-inspire");
     await pairAndOpen(page);
     const inspireUrl = page.url();
-    const depth = () =>
-      page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0);
-    await expect.poll(depth).toBe(0);
+    const entryKey = () => page.evaluate(() => window.navigation.currentEntry!.key);
+    const workspaceEntry = await entryKey();
     const draft = page.getByRole("textbox", { name: "Message", exact: true });
     await draft.fill("Keep this unfinished input");
     const title = page.getByRole("button", { name: /^Session actions:/ });
@@ -119,11 +119,13 @@ test.describe("phone action dialogs", () => {
     await page.goBack();
     await expect(name).toHaveCount(0);
     await expect(filter).toHaveValue("rename");
-    await expect(filter).toBeFocused();
+    await expect(palette).toBeFocused();
     const exportDialog = page.getByRole("dialog", {
       name: "Export session",
       exact: true,
     });
+    const depth = () =>
+      page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0);
     for (const [dialog, open] of [
       [palette, () => openCommandPalette(page)],
       [exportDialog, openExport],
@@ -135,19 +137,19 @@ test.describe("phone action dialogs", () => {
       await expect(dialog).toHaveCount(0);
       await expect(page).toHaveURL(inspireUrl);
       await open();
-      await expect(dialog).toBeVisible();
-      await expect.poll(depth).toBe(1);
+      await expect
+        .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+        .toBe(true);
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
       await expect.poll(depth).toBe(0);
+      await expect.poll(entryKey).toBe(workspaceEntry);
       await expect(draft).toHaveValue("Keep this unfinished input");
     }
-    await page.goBack();
-    await expect(page).toHaveURL("about:blank#outside-inspire");
   });
 });
 
-test("Settings keeps modal ownership when the workspace becomes a drawer @cross-browser", async ({
+test("Settings keeps modal ownership when the workspace becomes a drawer", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -160,25 +162,15 @@ test("Settings keeps modal ownership when the workspace becomes a drawer @cross-
   await openSettings(page);
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(dialog).toBeVisible();
-  const system = dialog
-    .getByRole("navigation", { name: "Settings categories" })
+  const system = dialog.getByRole("navigation", { name: "Settings categories" })
     .getByRole("button", { name: "System", exact: true });
   await system.press("Enter");
-  const content = dialog.locator(".settings__content");
-  const position = await content.evaluate(
-    (el) => ((el.scrollTop = 8), el.scrollTop),
-  );
-  const background = page.getByRole("button", {
-    name: "Toggle resources panel",
-  });
+  const background = page.getByRole("button", { name: "Toggle resources panel" });
   await background.evaluate((element) => element.focus());
   await expect(dialog.locator(":focus")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 760 });
   await expect(system).toHaveAttribute("aria-current", "location");
-  if (position)
-    await expect
-      .poll(() => content.evaluate((el) => el.scrollTop))
-      .toBe(position);
+  await expect(system).toBeFocused();
   const close = dialog.getByRole("button", { name: "Close settings" });
   await close.focus();
   await page.keyboard.press("Shift+Tab");

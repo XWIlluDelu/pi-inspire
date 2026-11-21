@@ -124,6 +124,7 @@ export function useConfigurationDocument<Document, Selection>({
       phase: "read" | "write",
       request: () => Promise<Result<Document>>,
       complete?: (result: Result<Document> | null) => void,
+      readBack?: () => Promise<Document>,
     ) => {
       if (!alive.current || pending.current) return null;
       const version = ++revision.current;
@@ -135,8 +136,16 @@ export function useConfigurationDocument<Document, Selection>({
       }
       let result: Result<Document> | null = null;
       try {
-        const next = await request();
+        let next = await request();
         if (!current()) return null;
+        if (!next.snapshot && readBack) {
+          try {
+            next = { snapshot: await readBack() };
+          } catch {
+            // The write is already committed.
+          }
+          if (!current()) return null;
+        }
         setState((previous) => ({
           snapshot: next.snapshot ?? previous.snapshot,
           readFailed: !next.snapshot,
@@ -171,6 +180,7 @@ export function useConfigurationDocument<Document, Selection>({
     request: () => Promise<Result<Document>>,
     options: {
       close?: boolean;
+      readBack?: () => Promise<Document>;
       onSaved?: (next: Result<Document>) => FocusTarget | void;
       onError?: FocusTarget;
     } = {},
@@ -187,7 +197,7 @@ export function useConfigurationDocument<Document, Selection>({
               (() => (options.close ? (edit?.opener ?? null) : claimed.origin)))
             : () => options.onError?.() ?? claimed.origin,
         );
-    });
+    }, options.readBack);
     return Boolean(result);
   }
 

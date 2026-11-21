@@ -32,7 +32,6 @@ export function useTranscriptViewport({
   const projectionIdentity = `${sessionId}\u0000${viewId}`;
 
   const pinnedRef = useRef(true);
-  const [pinned, setPinned] = useState(true);
   // Follow ownership and the visible latest boundary are different facts.
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
@@ -94,17 +93,13 @@ export function useTranscriptViewport({
       element.scrollHeight - element.scrollTop - element.clientHeight;
     if (searchOwnsViewportRef.current) {
       pinnedRef.current = false;
-      setPinned(false);
       return;
     }
     // Markdown reflow and browser scroll anchoring
     // also emit scroll events. They may maintain latest-follow while latest owns
     // the viewport, but they may never take ownership back from a user.
     if (!userScrollIntentRef.current) {
-      if (pinnedRef.current) {
-        setPinned(true);
-        if (remaining >= 80) followLatest();
-      }
+      if (pinnedRef.current && remaining >= 80) followLatest();
       return;
     }
     // Any deliberate movement toward earlier content releases latest-follow,
@@ -118,28 +113,23 @@ export function useTranscriptViewport({
     if (nextPinned && userScrollIntentRef.current === "history") return;
     pinnedRef.current = nextPinned;
     if (nextPinned) userScrollIntentRef.current = null;
-    setPinned(nextPinned);
   }, [followLatest, measureLatest, searchOwnsViewportRef]);
 
   const restoreGeometricFollow = useCallback(() => {
     const element = scrollRef.current;
-    const isPinned = element
-      ? element.scrollHeight - element.scrollTop - element.clientHeight <= 1
-      : true;
-    pinnedRef.current = isPinned;
-    setPinned(isPinned);
+    pinnedRef.current =
+      !element ||
+      element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
     measureLatest();
   }, [measureLatest]);
 
   const releaseLatestFollow = useCallback(() => {
     pinnedRef.current = false;
-    setPinned(false);
   }, []);
 
   const jumpToLatest = useCallback(() => {
     userScrollIntentRef.current = null;
     pinnedRef.current = true;
-    setPinned(true);
     followLatest();
   }, [followLatest]);
 
@@ -151,7 +141,6 @@ export function useTranscriptViewport({
     pinnedRef.current = true;
     userScrollIntentRef.current = null;
     lastScrollTopRef.current = 0;
-    setPinned(true);
     followLatest();
   }, [followLatest, projectionIdentity]);
 
@@ -194,7 +183,6 @@ export function useTranscriptViewport({
   return {
     scrollRef,
     contentRef,
-    pinned,
     atLatest,
     markUserScrollIntent,
     onScroll,

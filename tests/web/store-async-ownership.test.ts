@@ -109,7 +109,7 @@ it.each(["deadline", "selection", "bootstrap"] as const)(
           sessionId: "s1",
           connection: "open",
           sessionSelectionPending: false,
-          sessionActionError: expect.stringContaining("could not confirm"),
+          sessionActionError: expect.stringMatching(/could not confirm/i),
         });
       }
       await store.openSession(current);
@@ -138,53 +138,27 @@ it.each(["deadline", "selection", "bootstrap"] as const)(
   },
 );
 
-it("requires a workspace and asks for confirmation only before repeating a possibly accepted creation", async () => {
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+it("recovers a timed-out creation with the same receipt", async () => {
   const timeout = deferred<RouteResponse>();
-  const superseded = deferred<RouteResponse>();
-  const create = vi
-    .fn<() => RouteResponse | Promise<RouteResponse>>()
-    .mockReturnValueOnce({ status: 400, body: { error: "Invalid directory" } })
+  const create = vi.fn()
     .mockReturnValueOnce(timeout.promise)
-    .mockReturnValueOnce({ body: activeSnapshot({ sessionId: "created" }) })
-    .mockReturnValueOnce(superseded.promise);
+    .mockReturnValueOnce({ body: activeSnapshot({ sessionId: "created" }) });
   installStoreRoutes((url, init) => {
-    if (url === "/api/sessions/new") return create();
+    if (url === "/api/sessions/new") return create(jsonBody(init));
     if (url === "/api/sessions/deselect") return { body: emptySnapshot };
-    if (url === "/api/sessions/open") return openResponse(init);
   });
   const { store } = await initStore();
-  await store.deselectSession();
-  await expect(store.newSession()).resolves.toBeNull();
+  await store.selection.deselect();
+  await expect(store.selection.create()).resolves.toBeNull();
   expect(create).not.toHaveBeenCalled();
-  expect(store.getState().live.notices.at(-1)?.text).toBe(
-    "Enter a project directory to start a session",
-  );
-  await expect(store.newSession("/invalid")).resolves.toBeNull();
-  const creating = store.newSession("/proj");
-  await store.newSession("/proj");
-  expect(create).toHaveBeenCalledTimes(2);
-  expect(confirm).not.toHaveBeenCalled();
-  timeout.resolve({ status: 504, body: { error: "Gateway timed out" } });
-  await expect(creating).resolves.toBeNull();
-  await store.init();
-  await store.newSession("/proj");
-  expect(create).toHaveBeenCalledTimes(2);
-  expect(confirm).toHaveBeenCalledWith(
-    expect.stringContaining("may still complete"),
-  );
-  confirm.mockReturnValue(true);
-  await expect(store.newSession("/proj")).resolves.toBe("created");
 
-  confirm.mockClear().mockReturnValue(false);
-  const interrupted = store.newSession("/proj");
-  await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(4));
-  await store.openSession("other");
-  await expect(interrupted).resolves.toBeNull();
-  expect(confirm).not.toHaveBeenCalled();
-  await store.newSession("/proj");
-  expect(create).toHaveBeenCalledTimes(4);
-  expect(confirm).toHaveBeenCalledOnce();
+  const creating = store.selection.create("/proj");
+  await store.selection.create("/proj");
+  expect(create).toHaveBeenCalledOnce();
+  timeout.resolve({ status: 504, body: { error: "Gateway timed out" } });
+  await expect(creating).resolves.toBe("created");
+  expect(create.mock.calls).toEqual([create.mock.calls[0], create.mock.calls[0]]);
+  expect(create.mock.calls[0][0].receipt.operationId).toEqual(expect.any(String));
 });
 
 it.each(["create", "deselect", "switch", "clear"] as const)(
@@ -210,11 +184,13 @@ it.each(["create", "deselect", "switch", "clear"] as const)(
       gesture === "clear" ? null : gesture === "switch" ? "s2" : "s1";
     const previous =
       gesture === "create"
-        ? store.newSession("/proj")
+        ? store.selection.create("/proj")
         : gesture === "deselect"
-          ? store.deselectSession()
+          ? store.selection.deselect()
           : undefined;
-    const latest = target ? store.openSession(target) : store.deselectSession();
+    const latest = target
+      ? store.openSession(target)
+      : store.selection.deselect();
     if (previous) {
       await previous;
       expect(retiredSignal?.aborted).toBe(true);
@@ -336,9 +312,7 @@ it.each([false, true])(
       sessionId,
       pageMessages: [{ role: "assistant", content: "current" }],
       transcriptPage: { viewId },
-      ...(error
-        ? { projectionHealth: { status: "error", message: error } }
-        : {}),
+      ...(error ? { projectionHealth: { status: "error", message: error } } : {}),
     });
     if (expired) await selectSession(store, current);
     else {

@@ -105,17 +105,6 @@ async function createPrivateToken(path: string): Promise<string> {
   }
 }
 
-export async function readAccessToken(path: string): Promise<string> {
-  await ensurePrivateDirectory(
-    dirname(path),
-    "Inspire access-token directory",
-    {
-      create: false,
-    },
-  );
-  return readPrivateToken(path);
-}
-
 export async function resolveAccessToken(
   explicitToken: string | undefined,
   path: string,

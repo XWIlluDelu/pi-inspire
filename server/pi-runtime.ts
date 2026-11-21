@@ -15,7 +15,6 @@ export const {
   SessionManager,
   SettingsManager,
   buildContextEntries,
-  buildSessionContext,
   CURRENT_SESSION_VERSION,
   migrateSessionEntries,
   resolveModelScopeWithDiagnostics,

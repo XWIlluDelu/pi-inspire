@@ -71,6 +71,12 @@ describe("worker-parsed Markdown", () => {
       view.container.querySelector('[data-file-path="/docs/reference.md"]')
         ?.textContent,
     ).toBe("Forward");
+    expect(view.container.querySelector("sup a")?.getAttribute("href")).toContain(
+      "fn-value",
+    );
+    expect(view.container.querySelector("[data-footnotes]")).toHaveTextContent(
+      "Footnote value",
+    );
     expect(view.container.querySelector("strong")?.textContent).toBe(
       "New text",
     );

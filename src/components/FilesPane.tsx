@@ -9,11 +9,12 @@ import {
 } from "react";
 import {
   projectNameFromCwd,
+  type GitFileChange,
   type ResourceProbeResult,
 } from "../../shared/contracts";
-import { presentGitFacet } from "../git-presentation";
+import { presentGitFacet, workspaceGitChanges } from "../git-presentation";
 import type { ResourceRow } from "../resources";
-import { gitChangeForWorkspacePath, store } from "../store";
+import { store } from "../store";
 import type { ContextPaneView } from "./context-pane-view";
 import { FileIndexRow } from "./FileIndexRow";
 import { FilePreview, type FileReadingState } from "./FilePreview";
@@ -53,7 +54,7 @@ const RecentFileRow = memo(function RecentFileRow({
   selectedPath: string | null;
   selectedReference: string | null;
   availability: ResourceStanding;
-  change: ReturnType<typeof gitChangeForWorkspacePath>;
+  change?: GitFileChange;
 }) {
   const parent = parentPath(displayPath);
   const selected = workspacePath
@@ -158,88 +159,87 @@ function FileBrowser({
     return [...seen.values()];
   }, [rows, state.resourceStanding]);
   const recent = showAll ? listed : listed.slice(0, RECENT_ROWS);
+  const changes = useMemo(
+    () => workspaceGitChanges(state.gitStatus),
+    [state.gitStatus],
+  );
   const searching = Boolean(state.workspaceQuery.trim());
   const projectLabel = workspaceLabel(state.cwd);
   const selectedPath = selectedWorkspacePath(state);
   return (
-    <div className="files-browser">
-      <div className="files-browser__search file-search-controls">
+    <>
+      <div className="res__index-header file-search-controls">
         <WorkspaceFileSearch />
         <WorkspaceVisibilityToggle />
       </div>
       <div
-        className="files-browser__scroll"
+        className="res__index-list"
         data-pane-scroll-active="true"
         ref={scrollRef}
       >
         {searching ? (
-          <section className="files-browser__section files-browser__section--results">
+          <section className="res__index-section">
             <h2>Search results</h2>
-            <WorkspaceSearchResults />
+            <WorkspaceSearchResults changes={changes} />
           </section>
         ) : (
           <>
-            <section className="files-browser__section">
+            <section className="res__index-section">
               <h2>Recent</h2>
-              <div className="recent-files">
-                {recent.map((row) => {
-                  const reference = row.reference ?? row.label;
-                  const standing = state.resourceStanding[reference];
-                  const workspacePath = standing?.workspacePath;
-                  return (
-                    <RecentFileRow
-                      key={reference}
-                      row={row}
-                      reference={reference}
-                      displayPath={workspacePath ?? row.label}
-                      workspacePath={workspacePath}
-                      selectedPath={selectedPath}
-                      selectedReference={state.fileInspection.reference ?? null}
-                      availability={standing}
-                      change={
-                        workspacePath
-                          ? gitChangeForWorkspacePath(
-                              state.gitStatus,
-                              workspacePath,
-                            )
-                          : undefined
-                      }
-                    />
-                  );
-                })}
-                {loading && recent.length === 0 ? (
-                  <div className="files-browser__note" role="status">
-                    <PiLoader size={12} aria-hidden /> Loading…
-                  </div>
-                ) : error && recent.length === 0 ? (
-                  <div className="files-browser__note" role="status">
-                    Recent files unavailable.
-                  </div>
-                ) : recent.length === 0 ? (
-                  <div className="files-browser__note">
-                    No files referenced yet.
-                  </div>
-                ) : null}
-                {listed.length > RECENT_ROWS ? (
-                  <button
-                    type="button"
-                    className="files-browser__note files-browser__more"
-                    aria-expanded={showAll}
-                    onClick={() => setShowAll(!showAll)}
-                  >
-                    {showAll ? "Show fewer" : `Show all ${listed.length}`}
-                  </button>
-                ) : null}
-              </div>
+              {recent.map((row) => {
+                const reference = row.reference ?? row.label;
+                const standing = state.resourceStanding[reference];
+                const workspacePath = standing?.workspacePath;
+                return (
+                  <RecentFileRow
+                    key={reference}
+                    row={row}
+                    reference={reference}
+                    displayPath={workspacePath ?? row.label}
+                    workspacePath={workspacePath}
+                    selectedPath={selectedPath}
+                    selectedReference={state.fileInspection.reference ?? null}
+                    availability={standing}
+                    change={
+                      workspacePath
+                        ? changes.files.get(workspacePath)
+                        : undefined
+                    }
+                  />
+                );
+              })}
+              {loading && recent.length === 0 ? (
+                <div className="files-browser__note" role="status">
+                  <PiLoader size={12} aria-hidden /> Loading…
+                </div>
+              ) : error && recent.length === 0 ? (
+                <div className="files-browser__note" role="status">
+                  Recent files unavailable.
+                </div>
+              ) : recent.length === 0 ? (
+                <div className="files-browser__note">
+                  No files referenced yet.
+                </div>
+              ) : null}
+              {listed.length > RECENT_ROWS ? (
+                <button
+                  type="button"
+                  className="files-browser__note files-browser__more"
+                  aria-expanded={showAll}
+                  onClick={() => setShowAll(!showAll)}
+                >
+                  {showAll ? "Show fewer" : `Show all ${listed.length}`}
+                </button>
+              ) : null}
             </section>
-            <section className="files-browser__section files-browser__section--workspace">
+            <section className="res__index-section res__index-section--workspace">
               <h2 title={state.cwd ?? projectLabel}>{projectLabel}</h2>
-              <WorkspaceTree />
+              <WorkspaceTree changes={changes} />
             </section>
           </>
         )}
       </div>
-    </div>
+    </>
   );
 }
 

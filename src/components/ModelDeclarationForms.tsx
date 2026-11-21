@@ -1,9 +1,5 @@
 import { useState } from "react";
 import {
-  type SecretEdit,
-  secretValue,
-} from "../../shared/configuration-fields";
-import {
   type ModelConfigEdit,
   type ModelDeclaration,
   modelDeclarationFields,
@@ -47,7 +43,7 @@ export function ProviderForm({
     busy,
     declarationTextEdit,
   );
-  const [key, setKey] = useState<SecretEdit>({ kind: "keep" });
+  const [key, setKey] = useState<string | null>();
   const hasNativeApi = nativeApiProviders.includes(value?.id ?? id.trim());
   return (
     <ConfigurationForm
@@ -60,7 +56,7 @@ export function ProviderForm({
           id: value?.id ?? id.trim(),
           values: {
             ...fields.patch(),
-            ...(key.kind !== "keep" ? { apiKey: secretValue(key) } : {}),
+            apiKey: key,
           },
         })
       }
@@ -88,11 +84,11 @@ export function ProviderForm({
         />
         <ProtectedConfigurationInput
           control={{ ...providerApiKey, wide: true }}
-          value={secretValue(key)}
+          value={key}
           stored={value?.apiKeyConfigured}
           busy={busy}
           showValue
-          onChange={(edit) => setKey(edit as SecretEdit)}
+          onChange={setKey}
         />
       </div>
     </ConfigurationForm>

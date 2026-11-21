@@ -61,7 +61,6 @@ function ViewportHarness({
     <div
       ref={viewport.scrollRef}
       role="log"
-      data-pinned={viewport.pinned}
       data-at-latest={viewport.atLatest}
       onScroll={viewport.onScroll}
       onWheel={(event) =>
@@ -109,6 +108,22 @@ function setScrollGeometry(
   });
 }
 
+function openViewport(clientHeight = 400) {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  render(<ViewportHarness />);
+  const log = screen.getByRole("log");
+  setScrollGeometry(log, { clientHeight, scrollTop: 1_000 - clientHeight });
+  fireEvent.scroll(log);
+  return log;
+}
+
+function deliverLayout(log: HTMLElement) {
+  act(() => {
+    TestResizeObserver.trigger(log);
+    flushAnimationFrames();
+  });
+}
+
 describe("transcript viewport geometry", () => {
   beforeEach(() => {
     TestResizeObserver.instances = [];
@@ -138,7 +153,7 @@ describe("transcript viewport geometry", () => {
       content: "Current reply",
     };
     const read = vi
-      .spyOn(store, "readNativeHistory")
+      .spyOn(store.branches, "history")
       .mockImplementation(async (_, __, query) => {
         if (query.kind !== "page") return null;
         return {
@@ -168,8 +183,6 @@ describe("transcript viewport geometry", () => {
           projectionIncarnation="incarnation"
           hasOlder
           streaming={false}
-          thinkingVisibility="expanded"
-          toolVisibility="collapsed"
         />,
       );
       const log = screen.getByRole("log");
@@ -208,11 +221,7 @@ describe("transcript viewport geometry", () => {
   });
 
   it("keeps an upward wheel intent across a queued layout scroll at latest", () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-    fireEvent.scroll(log);
+    const log = openViewport();
 
     fireEvent.wheel(log, { deltaY: -500 });
     // Disclosure reflow can move the bottom before the browser delivers the
@@ -225,13 +234,9 @@ describe("transcript viewport geometry", () => {
     fireEvent.scroll(log);
     log.scrollTop = 110;
     fireEvent.scroll(log);
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
 
     expect(log.scrollTop).toBe(110);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "false");
     act(() => vi.runOnlyPendingTimers());
     expect(log.scrollTop).toBe(110);
@@ -239,38 +244,31 @@ describe("transcript viewport geometry", () => {
     fireEvent.wheel(log, { deltaY: 440 });
     log.scrollTop = 550;
     fireEvent.scroll(log);
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
     expect(log.scrollTop).toBe(550);
-    expect(log).toHaveAttribute("data-pinned", "false");
 
     fireEvent.wheel(log, { deltaY: 60 });
     log.scrollTop = 610;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "true");
     expect(log).toHaveAttribute("data-at-latest", "true");
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_110,
+    });
+    deliverLayout(log);
+    expect(log.scrollTop).toBe(710);
   });
 
   it("retains follow when an upward wheel cannot move a short transcript", () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 1_000, scrollTop: 0 });
-    fireEvent.scroll(log);
+    const log = openViewport(1_000);
     fireEvent.wheel(log, { deltaY: -500 });
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "true");
 
     Object.defineProperty(log, "scrollHeight", {
       configurable: true,
       value: 1_100,
     });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
     expect(log.scrollTop).toBe(0);
     act(() => vi.runOnlyPendingTimers());
     expect(log.scrollTop).toBe(100);
@@ -278,62 +276,44 @@ describe("transcript viewport geometry", () => {
   });
 
   it("reports the visible latest boundary independently of follow ownership", () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-    fireEvent.scroll(log);
+    const log = openViewport();
     fireEvent.wheel(log);
     log.scrollTop = 550;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "false");
 
     // Programmatic navigation can reach latest without acquiring live-follow.
     act(() => vi.advanceTimersByTime(450));
     log.scrollTop = 600;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "true");
     Object.defineProperty(log, "scrollHeight", {
       configurable: true,
       value: 1_100,
     });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    deliverLayout(log);
     expect(log.scrollTop).toBe(600);
     expect(log).toHaveAttribute("data-at-latest", "false");
   });
 
   it.each([
-    { scrollTop: 560, expectedTop: 560, expectedPinned: "false" },
-    { scrollTop: 599.5, expectedTop: 700, expectedPinned: "true" },
+    { scrollTop: 560, expectedTop: 560 },
+    { scrollTop: 599.5, expectedTop: 700 },
   ])(
     "restores follow after clearing search only at the latest boundary ($scrollTop)",
-    ({ scrollTop, expectedTop, expectedPinned }) => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      render(<ViewportHarness />);
-      const log = screen.getByRole("log");
-      setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-      fireEvent.scroll(log);
+    ({ scrollTop, expectedTop }) => {
+      const log = openViewport();
       fireEvent.wheel(log);
       log.scrollTop = scrollTop;
       fireEvent.scroll(log);
-      expect(log).toHaveAttribute("data-pinned", "false");
       act(() => vi.advanceTimersByTime(450));
 
       fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
-      expect(log).toHaveAttribute("data-pinned", expectedPinned);
       Object.defineProperty(log, "scrollHeight", {
         configurable: true,
         value: 1_100,
       });
-      act(() => {
-        TestResizeObserver.trigger(log);
-        flushAnimationFrames();
-      });
+      deliverLayout(log);
       expect(log.scrollTop).toBe(expectedTop);
     },
   );
@@ -349,11 +329,9 @@ describe("transcript viewport geometry", () => {
     fireEvent.wheel(log);
     log.scrollTop = 300;
     fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "false");
     expect(log).toHaveAttribute("data-at-latest", "false");
 
     rerender(<ViewportHarness {...projection} />);
-    expect(log).toHaveAttribute("data-pinned", "true");
     expect(log).toHaveAttribute("data-at-latest", "true");
     expect(log.scrollTop).toBe(600);
 

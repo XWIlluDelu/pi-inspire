@@ -6,12 +6,6 @@
   overflow: clip;
 }
 
-.host-restart__status {
-  margin: 0;
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-
 .dialog.settings,
 .dialog.terminal-settings {
   --set-control-h: 32px;
@@ -148,19 +142,18 @@
   display: none;
 }
 
-.dialog.settings .button {
+.dialog:is(.settings, .terminal-settings) .button {
   height: var(--set-control-h);
   min-height: var(--set-control-h);
   padding: 0 var(--space-3);
-  font-size: 13px;
-  box-sizing: border-box;
+  font-size: var(--text-sm);
 }
 
-@media (pointer: coarse) {
-  .dialog.settings .button {
-    min-height: 40px;
-    height: 40px;
-  }
+.dialog:is(.settings, .terminal-settings) .button--small {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -184,16 +177,24 @@
   background: transparent;
 }
 
+.settings__section-heading,
 .settings__section-title-wrap {
   display: flex;
-  align-items: start;
   gap: var(--space-2);
-  width: 100%;
+}
+
+.settings__section-heading {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings__section-title-wrap {
+  min-width: 0;
+  align-items: start;
 }
 
 .settings__section-action {
   flex: none;
-  margin-left: auto;
 }
 
 .settings__section-action .button {
@@ -227,7 +228,7 @@
   max-width: 62ch;
   color: var(--muted);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
 }
 
 /* The content scroller, not each card, bounds open setting menus. */
@@ -251,9 +252,14 @@
   gap: var(--space-3);
   min-height: 48px;
   padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--hairline);
   background: transparent;
   position: relative;
   transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.session-action-order__row:last-child {
+  border-bottom: 0;
 }
 
 .session-action-order__row:hover:where(:not([data-dragging])) {
@@ -346,10 +352,16 @@
   justify-items: start;
   gap: var(--space-1);
   padding: var(--set-row-pad);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.settings__card-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .settings__field {
@@ -386,7 +398,7 @@
 }
 
 .settings__field-label {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--ink);
   line-height: 19px;
@@ -396,13 +408,13 @@
   margin: 0;
   max-width: 52ch;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 17px;
 }
 
 .settings__field-status,
 .settings__field-feedback {
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--warning-ink);
   overflow-wrap: anywhere;
@@ -419,6 +431,11 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: 2px;
+}
+
+.settings__field-status .models-text-button {
+  padding: 2px 0;
+  font-size: var(--text-xs);
 }
 
 .settings__field-info {
@@ -621,7 +638,9 @@
 }
 
 @container settings-card (max-width: 439px) {
-  .settings__field-control > .palette-picker { width: 100%; }
+  .settings__field-control > :is(.palette-picker, .dropdown-trigger, .segmented) {
+    width: 100%;
+  }
   .settings__field[data-layout="adaptive"] {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -878,7 +897,7 @@
   color: var(--muted);
   max-width: 46%;
   text-align: right;
-  line-height: 1.45;
+  line-height: var(--leading-ui);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1060,6 +1079,62 @@
   gap: 0;
   padding: 0;
   overflow: hidden;
+}
+
+.tool-loadout {
+  width: min(600px, 100%);
+  max-height: 75dvh;
+}
+
+.tool-loadout__controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.tool-loadout__controls > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-loadout__list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 0;
+  padding: 0 2px;
+  border-block: 1px solid var(--line);
+}
+
+.tool-loadout__tool {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.tool-loadout__tool + .tool-loadout__tool {
+  border-top: 1px solid var(--line);
+}
+
+.tool-loadout__tool small,
+.tool-loadout__tool p {
+  display: block;
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.tool-loadout__tool p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.tool-loadout__tool > [role="switch"] {
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .palette.dialog {
@@ -1397,13 +1472,14 @@
 /* --- Notices --- */
 
 .notices {
-  --notice-header-bottom: calc(
-    var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top)
+  --notice-inset: var(--space-4);
+  --notice-top: calc(
+    var(--window-titlebar-height) + max(var(--notice-inset), var(--safe-top))
   );
   --notice-bottom-inset: max(var(--space-4), var(--safe-bottom));
   position: fixed;
-  top: calc(var(--notice-header-bottom) + var(--space-2));
-  right: max(var(--space-4), var(--safe-right));
+  top: var(--notice-top);
+  right: max(var(--notice-inset), var(--safe-right));
   z-index: 60;
   pointer-events: none;
   display: flex;
@@ -1412,10 +1488,7 @@
   width: min(380px, calc(100vw - 2 * var(--space-4)));
   max-height: max(
     0px,
-    calc(
-      100dvh - var(--notice-header-bottom) - var(--space-2) -
-        var(--notice-bottom-inset)
-    )
+    calc(100dvh - var(--notice-top) - var(--notice-bottom-inset))
   );
 }
 
@@ -1430,7 +1503,6 @@
   align-self: flex-end;
 }
 .notices--scrollable {
-  overflow-anchor: none;
   pointer-events: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1532,6 +1604,18 @@
   color: var(--body);
 }
 
+.earlier-branch-banner__restore.button {
+  min-height: var(--notice-control-size);
+  padding: 0;
+  color: var(--accent-deep);
+  font: inherit;
+  text-align: start;
+}
+
+.earlier-branch-banner [role="alert"] {
+  color: var(--error-ink);
+}
+
 @media (pointer: coarse), (max-width: 640px) {
   .notice { --notice-control-size: 32px; }
 }
@@ -1602,39 +1686,6 @@
   border-color: var(--error);
 }
 
-.host-restart__status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  min-block-size: calc(3lh + var(--space-4));
-  padding: var(--space-2) var(--space-3);
-  /* The preceding field already supplies the divider. Match the outer border's inner curve. */
-  border-radius: 0 0 calc(var(--radius-surface) - 1px)
-    calc(var(--radius-surface) - 1px);
-  background: var(--bg-control);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
-}
-
-.host-restart__status-copy {
-  flex: 1 1 13rem;
-  min-inline-size: 0;
-}
-
-.host-restart__status-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-@container settings-card (max-width: 439px) {
-  .host-restart__status-row {
-    min-block-size: calc(4lh + var(--set-control-h) + var(--space-6));
-  }
-}
-
 /* --- Terminal Settings stepper --- */
 .terminal-settings__stepper {
   --stepper-button-size: calc(var(--set-control-h) - 8px);
@@ -1662,7 +1713,7 @@
 }
 
 .terminal-settings__field--subordinate {
-  padding-left: calc(14px + 16px);
+  padding-left: calc(var(--space-4) + var(--space-4));
 }
 
 .export-dialog__hint {

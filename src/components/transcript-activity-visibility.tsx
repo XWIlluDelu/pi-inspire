@@ -51,16 +51,6 @@ type ReaderValue = boolean | ReaderScrollPosition;
 export type ActivityReadingChoices = Map<string, Map<string, ReaderValue>>;
 export const ACTIVITY_CARD_READER = "card";
 
-export function hasOpenActivityCard(
-  choices: ActivityReadingChoices | null,
-  toolCallId?: string,
-) {
-  return (
-    toolCallId !== undefined &&
-    choices?.get(toolCallId)?.get(`/${ACTIVITY_CARD_READER}`) === true
-  );
-}
-
 export const ReadingChoices = createContext<ActivityReadingChoices | null>(
   null,
 );

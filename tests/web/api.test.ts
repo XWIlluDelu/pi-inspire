@@ -68,22 +68,30 @@ describe("prompt delivery transport", () => {
     ).toHaveLength(1);
   });
 
-  it("recovers a lost submission after a transient receipt read failure", async () => {
-    vi.useFakeTimers();
-    const fetch = transport(
-      new TypeError("Lost submission response"),
-      Response.json({}, { status: 503 }),
-      Response.json(accepted),
-    );
-    const delivery = createApi().prompt(prompt);
-    await vi.advanceTimersByTimeAsync(1_500);
-    await expect(delivery).resolves.toEqual({ accepted: true });
-    expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
-      ["/api/prompt", "POST"],
-      [receiptPath, undefined],
-      [receiptPath, undefined],
-    ]);
-  });
+  it.each([
+    new TypeError("Lost submission response"),
+    new Response("<html>Malformed submission response</html>"),
+  ])(
+    "recovers an uncertain submission through the original receipt",
+    async (initial) => {
+      vi.useFakeTimers();
+      const fetch = transport(
+        initial,
+        Response.json({}, { status: 503 }),
+        Response.json(accepted),
+      );
+      const delivery = createApi().prompt(prompt);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await expect(delivery).resolves.toEqual({ accepted: true });
+      expect(
+        fetch.mock.calls.map(([url, init]) => [url, init?.method]),
+      ).toEqual([
+        ["/api/prompt", "POST"],
+        [receiptPath, undefined],
+        [receiptPath, undefined],
+      ]);
+    },
+  );
 
   it("waits beyond 30s using owned pending receipts without posting the prompt again", async () => {
     vi.useFakeTimers();
@@ -154,7 +162,7 @@ it("requires a restart receipt to confirm the routed interruption grant", async 
   const intent: HostRestartRequest = {
     hostId: crypto.randomUUID(),
     operationId: crypto.randomUUID(),
-    scope: "all-pi",
+    scope: "host",
     interruptWork: true,
     skipAttachedStop: true,
   };
@@ -213,9 +221,9 @@ describe("ordinary HTTP observation", () => {
 
   it("leaves a dispatched creation unconfirmed after losing the error body", async () => {
     const response = new Response("", { status: 400 });
-    vi.spyOn(response, "json").mockRejectedValue(
-      new DOMException("Connection lost", "AbortError"),
-    );
+    vi.spyOn(response, "json").mockRejectedValue(new DOMException(
+      "Connection lost", "AbortError",
+    ));
     const fetch = transport(response);
     await expect(
       createApi().json("newSession", { body: { cwd: "/workspace" } }),
@@ -253,11 +261,9 @@ describe("ordinary HTTP observation", () => {
     vi.useFakeTimers();
     const fetch = vi.fn(() => new Promise<never>(() => {}));
     vi.stubGlobal("fetch", fetch);
-    const outcome = expect(
-      createApi().json("forkBranch", {
-        body: { sessionId: "s1", viewId: "view-1", targetId: "t1" },
-      }),
-    ).rejects.toMatchObject({ timedOut: true, outcomeUnknown: true });
+    const outcome = expect(createApi().json("forkBranch", {
+      body: { sessionId: "s1", viewId: "view-1", targetId: "t1" },
+    })).rejects.toMatchObject({ timedOut: true, outcomeUnknown: true });
     await vi.advanceTimersByTimeAsync(120_000);
     await outcome;
     expect(fetch).toHaveBeenCalledOnce();

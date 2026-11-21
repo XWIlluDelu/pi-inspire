@@ -1,3 +1,5 @@
+import { jsonValueAt } from "./json-record.js";
+
 /** Host-authored, display-only argument updates. These never execute a tool. */
 export type ToolArgumentPath = (string | number)[];
 export type ToolArgumentUpdate =
@@ -19,18 +21,6 @@ function container(
   value: unknown,
 ): value is Record<string, unknown> | unknown[] {
   return value !== null && typeof value === "object";
-}
-
-export function toolArgumentAt(
-  value: unknown,
-  path: ToolArgumentPath,
-): unknown {
-  let current = value;
-  for (const key of path) {
-    if (!container(current) || !Object.hasOwn(current, key)) return undefined;
-    current = (current as Record<string | number, unknown>)[key];
-  }
-  return current;
 }
 
 function validPath(path: unknown): path is ToolArgumentPath {
@@ -111,7 +101,7 @@ export function applyToolArgumentUpdates(
     const update = candidate as ToolArgumentUpdate;
     let value: unknown;
     if ("append" in update) {
-      const prefix = toolArgumentAt(next, update.path);
+      const prefix = jsonValueAt(next, update.path);
       if (
         typeof update.append !== "string" ||
         typeof prefix !== "string" ||

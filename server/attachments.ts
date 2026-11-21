@@ -34,13 +34,13 @@ import {
   MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
   MAX_PROMPT_IMAGE_BYTES,
-  MAX_PROMPT_IMAGE_ENCODED_BYTES,
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { processStartIdentity } from "./instance-state.mjs";
+import { replacePrivateStateFile } from "./replace-private-state-file.mjs";
 import { inspireStateDirectory } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
 
@@ -149,30 +149,21 @@ function payloadTooLarge(message: string): Error {
   return requestError(message, 413);
 }
 
-function assertAttachmentBudget(files: readonly Express.Multer.File[]): void {
-  if (files.length > MAX_ATTACHMENTS)
+export function assertAttachmentBudget(
+  count: number,
+  totalBytes: number,
+  imageBytes: number,
+): void {
+  if (count > MAX_ATTACHMENTS)
     throw payloadTooLarge(`At most ${MAX_ATTACHMENTS} attachments per message`);
-  if (files.some((file) => file.size > MAX_ATTACHMENT_FILE_BYTES)) {
-    throw payloadTooLarge(
-      `Each attachment must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
-    );
-  }
-  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-  if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
+  if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES)
     throw payloadTooLarge(
       `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
     );
-  }
-  const imageBytes = files.reduce(
-    (sum, file) =>
-      sum + (isSupportedPromptImageMimeType(file.mimetype) ? file.size : 0),
-    0,
-  );
-  if (imageBytes > MAX_PROMPT_IMAGE_BYTES) {
+  if (imageBytes > MAX_PROMPT_IMAGE_BYTES)
     throw payloadTooLarge(
       `Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`,
     );
-  }
 }
 
 const DEFAULT_UPLOAD_PARENT = join(inspireStateDirectory(), "attachments");
@@ -351,17 +342,8 @@ export class AttachmentStore {
       delivery: "possible",
     };
     const metadata = join(this.root, `${value.id}.json`);
-    const temporary = `${metadata}.${randomUUID()}`;
-    try {
-      await writeFile(temporary, JSON.stringify(ownership), {
-        mode: 0o600,
-        flag: "wx",
-      });
-      await rename(temporary, metadata);
-      this.owned.set(value.path, ownership);
-    } finally {
-      await rm(temporary, { force: true });
-    }
+    await replacePrivateStateFile(metadata, JSON.stringify(ownership));
+    this.owned.set(value.path, ownership);
   }
 
   /** Unsubmitted copies of retired owners and expired transport-only images
@@ -570,33 +552,31 @@ export class AttachmentStore {
     return this.publicValue(value);
   }
 
-  async add(file: Express.Multer.File): Promise<UploadedAttachment> {
-    try {
-      assertAttachmentBudget([file]);
-      return await this.storeFile(file);
-    } catch (error) {
-      await this.discardUpload(file);
-      throw error;
-    }
-  }
-
   async addMany(
     files: readonly Express.Multer.File[],
   ): Promise<UploadedAttachment[]> {
     const added: UploadedAttachment[] = [];
     try {
-      assertAttachmentBudget(files);
+      if (files.some((file) => file.size > MAX_ATTACHMENT_FILE_BYTES))
+        throw payloadTooLarge(
+          `Each attachment must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
+        );
+      assertAttachmentBudget(
+        files.length,
+        files.reduce((sum, file) => sum + file.size, 0),
+        files.reduce(
+          (sum, file) =>
+            sum +
+            (isSupportedPromptImageMimeType(file.mimetype) ? file.size : 0),
+          0,
+        ),
+      );
       for (const file of files) added.push(await this.storeFile(file));
       return added;
     } catch (error) {
       await Promise.allSettled([
         ...files.map((file) => this.discardUpload(file)),
-        ...added.map(async (item) => {
-          const value = this.values.get(item.id);
-          if (value?.state !== "staged") return;
-          this.values.delete(item.id);
-          await this.removeStoredFile(value);
-        }),
+        ...added.map(({ id }) => this.remove(id)),
       ]);
       throw error;
     }
@@ -606,10 +586,6 @@ export class AttachmentStore {
     files: StoredAttachment[];
     images: Array<{ type: "image"; data: string; mimeType: string }>;
   }> {
-    if (ids.length > MAX_ATTACHMENTS)
-      throw payloadTooLarge(
-        `At most ${MAX_ATTACHMENTS} attachments per message`,
-      );
     const unique = [...new Set(ids)];
     const files = unique
       .map((id) => this.values.get(id))
@@ -623,19 +599,12 @@ export class AttachmentStore {
           matches: unique.filter((id) => !this.values.has(id)),
         },
       );
-    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-    if (totalBytes > MAX_ATTACHMENT_UPLOAD_BYTES) {
-      throw payloadTooLarge(
-        `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
-      );
-    }
-    const imageFiles = files.filter((item) => item.kind === "image");
-    const imageBytes = imageFiles.reduce((sum, file) => sum + file.size, 0);
-    if (imageBytes > MAX_PROMPT_IMAGE_BYTES) {
-      throw payloadTooLarge(
-        `Images per message must total at most ${MAX_PROMPT_IMAGE_BYTES} bytes`,
-      );
-    }
+    const imageFiles = files.filter(({ kind }) => kind === "image");
+    assertAttachmentBudget(
+      ids.length,
+      files.reduce((sum, file) => sum + file.size, 0),
+      imageFiles.reduce((sum, file) => sum + file.size, 0),
+    );
     // One staging, one send: a file already leased to an in-flight prompt or
     // consumed by a delivered one cannot join a second message.
     if (files.some((file) => file.state !== "staged")) {
@@ -648,18 +617,15 @@ export class AttachmentStore {
     // and a concurrent withdrawal can no longer delete them mid-delivery.
     for (const file of files) file.state = "in-flight";
     try {
-      const images: Array<{ type: "image"; data: string; mimeType: string }> =
-        [];
-      let encodedBytes = 0;
-      for (const item of imageFiles) {
-        const data = (await readFile(item.path)).toString("base64");
-        encodedBytes += Buffer.byteLength(data);
-        if (encodedBytes > MAX_PROMPT_IMAGE_ENCODED_BYTES) {
-          throw payloadTooLarge(
-            `Encoded images exceed the ${MAX_PROMPT_IMAGE_ENCODED_BYTES}-byte prompt budget`,
-          );
-        }
-        images.push({ type: "image", data, mimeType: item.mimeType });
+      const images = [];
+      for (const file of imageFiles) {
+        const { bytes, mimeType } = await this.readImage(file);
+        if (!bytes.length) throw requestError("A prompt image is invalid", 422);
+        images.push({
+          type: "image" as const,
+          data: bytes.toString("base64"),
+          mimeType,
+        });
       }
       // Persist the handoff before anything can reach Pi. A crash or lost receipt
       // must never turn a possibly delivered file back into collectible staging.
@@ -731,12 +697,7 @@ export class AttachmentStore {
     originalIds: readonly string[],
     transportIds: readonly string[],
   ): void {
-    for (const id of originalIds) {
-      const value = this.values.get(id);
-      if (value?.state !== "in-flight") continue;
-      if (value.kind === "file") value.retainOnWithdraw = true;
-      value.state = "staged";
-    }
+    this.restage(originalIds, true);
     // The receiver may still be reading these independent copies. Their
     // persisted expiration handles both normal cleanup and Host restart.
     for (const id of transportIds) this.values.delete(id);
@@ -747,7 +708,7 @@ export class AttachmentStore {
   async holdPendingImages(
     ids: readonly string[],
     recalled: readonly { data: string; mimeType: string }[],
-  ): Promise<{ attachments: UploadedAttachment[]; copiedIds: string[] }> {
+  ): Promise<{ imageIds: string[]; copiedIds: Set<string> }> {
     const originals = ids.flatMap((id) => {
       const value = this.values.get(id);
       return value?.kind === "image" && value.state === "in-flight"
@@ -760,12 +721,10 @@ export class AttachmentStore {
       ...copied.map((item) => this.values.get(item.id)!),
     ])
       value.state = "pending";
+    const copiedIds = new Set(copied.map(({ id }) => id));
     return {
-      attachments: [
-        ...originals.map((value) => this.publicValue(value)),
-        ...copied,
-      ],
-      copiedIds: copied.map((value) => value.id),
+      imageIds: [...originals.map(({ id }) => id), ...copiedIds],
+      copiedIds,
     };
   }
 
@@ -835,6 +794,10 @@ export class AttachmentStore {
       (value.state !== "staged" && value.state !== "pending")
     )
       throw requestError("That image is no longer available", 404);
+    return this.readImage(value);
+  }
+
+  private async readImage(value: StoredAttachment) {
     const file = await open(
       value.path,
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
@@ -921,10 +884,12 @@ export class AttachmentStore {
 
   /** A prompt that failed before delivery hands its leased files back:
    * they become withdrawable (and resendable) again. */
-  restage(ids: string[] = []): void {
+  restage(ids: readonly string[], retainFiles = false): void {
     for (const id of ids) {
       const value = this.values.get(id);
-      if (value?.state === "in-flight") value.state = "staged";
+      if (value?.state !== "in-flight") continue;
+      if (retainFiles && value.kind === "file") value.retainOnWithdraw = true;
+      value.state = "staged";
     }
   }
 
@@ -937,8 +902,8 @@ export class AttachmentStore {
         const value = this.values.get(id);
         if (!value) return;
         if (value.kind !== "image") {
+          // resolveForPrompt durably protected this file before Pi could see it.
           value.state = "consumed";
-          await this.protectDelivery(value);
           return;
         }
         // Worker artifact ownership outlives queue acceptance. Runtime excludes

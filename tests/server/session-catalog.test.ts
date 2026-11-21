@@ -3,6 +3,7 @@ import {
   mkdtemp,
   open,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -386,11 +387,11 @@ describe("catalog retained-content search", () => {
         }
       })();
       try {
-        expect(
-          (
-            await searchSessionRecords([growing], '"complete-prefix-target"')
-          ).map((row) => row.id),
-        ).toEqual(["growing"]);
+        const result = await searchSessionRecords(
+          [growing],
+          '"complete-prefix-target"',
+        );
+        expect([...result.hits.keys()]).toEqual(["growing"]);
         expect(appended).toBeGreaterThan(1);
       } finally {
         writing = false;
@@ -409,28 +410,32 @@ describe("catalog retained-content search", () => {
         }
       })();
       try {
-        await expect(
-          searchSessionRecords([growing], '"complete-prefix-target"'),
-        ).rejects.toThrow(/source changed/i);
+        const result = await searchSessionRecords(
+          [growing],
+          '"complete-prefix-target"',
+        );
+        expect(result.hits.size).toBe(0);
       } finally {
         rewriting = false;
         await rewriter;
         await handle.close();
       }
       const owner = records.find((row) => row.id === "search-owner")!;
-      await rm(owner.path);
+      const original = owner.path + ".original";
+      await rename(owner.path, original);
       await writeFile(
         owner.path,
         `${JSON.stringify({ type: "session", version: 3, id: "replacement", cwd: owner.cwd })}\n`,
       );
-      await expect(
-        searchSessionRecords([owner], "replacement"),
-      ).rejects.toThrow(/source changed/i);
-      const result = await catalog.list({ query: "cobalt" });
-      expect(result.sessions.map((row) => row.id)).toEqual(["search-newer"]);
-      expect(result.issues).toEqual([
-        expect.objectContaining({ path: owner.path }),
-      ]);
+      const search = () =>
+        catalog
+          .list({ query: "cobalt" })
+          .then((page) => page.sessions.map((row) => row.id));
+      expect(await search()).toEqual(["search-newer"]);
+      await rm(owner.path);
+      await rename(original, owner.path);
+      await appendFile(owner.path, JSON.stringify({ type: "custom" }) + "\n");
+      expect(await search()).toEqual(["search-newer", "search-owner"]);
     });
   });
 });

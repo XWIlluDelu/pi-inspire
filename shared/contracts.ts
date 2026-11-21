@@ -12,25 +12,6 @@ type Body<K extends keyof typeof hostEndpoints> =
     ? Input
     : never;
 
-export const VISIBILITY_PREFERENCES = [
-  "dynamic",
-  "expanded",
-  "collapsed",
-  "hidden",
-] as const;
-export const TOOL_VISIBILITY_PREFERENCES = [
-  "dynamic",
-  "expanded",
-  "compact",
-  "collapsed",
-  "hidden",
-] as const;
-export const ACTIVITY_FOLD_VISIBILITIES = [
-  "dynamic",
-  "expanded",
-  "compact",
-  "collapsed",
-] as const;
 export const CONTENT_TEXT_SIZES = ["compact", "comfortable", "large"] as const;
 export const READING_WIDTHS = ["narrow", "comfortable", "wide"] as const;
 export const DESKTOP_SEND_KEYS = ["enter", "mod-enter"] as const;
@@ -48,9 +29,6 @@ export const MAX_ATTACHMENT_FILE_BYTES = 16 * 1024 * 1024;
 export const MAX_ATTACHMENT_UPLOAD_BYTES = 32 * 1024 * 1024;
 /** Keeps persisted base64 image messages and their RPC envelope below the 32 MiB line budget. */
 export const MAX_PROMPT_IMAGE_BYTES = 20 * 1024 * 1024;
-/** Worst-case sum of separately padded base64 images at the raw-image cap. */
-export const MAX_PROMPT_IMAGE_ENCODED_BYTES =
-  Math.ceil(MAX_PROMPT_IMAGE_BYTES / 3) * 4 + MAX_ATTACHMENTS * 4;
 export const MAX_RPC_OUTBOUND_LINE_BYTES = 32 * 1024 * 1024;
 /** Bounded text-only projection of public Pi queue_update events. */
 export const MAX_PENDING_MESSAGES = 1_000;
@@ -70,11 +48,6 @@ export const MAX_SESSION_ID_HYDRATION_IDS = 600;
 export const MAX_SESSION_CWD_HYDRATION_CWDS = 100;
 export const MAX_CURATED_SESSION_RESULTS = 10_000;
 
-export type VisibilityPreference = (typeof VISIBILITY_PREFERENCES)[number];
-export type ToolVisibilityPreference =
-  (typeof TOOL_VISIBILITY_PREFERENCES)[number];
-export type ActivityFoldVisibilityPreference =
-  (typeof ACTIVITY_FOLD_VISIBILITIES)[number];
 export type ContentTextSizePreference = (typeof CONTENT_TEXT_SIZES)[number];
 export type ReadingWidthPreference = (typeof READING_WIDTHS)[number];
 export type DesktopSendKeyPreference = (typeof DESKTOP_SEND_KEYS)[number];
@@ -113,7 +86,29 @@ export interface ModelSelectionResponse {
   thinkingLevel: string;
 }
 
-export type NewSessionOptions = Omit<Body<"newSession">, "cwd">;
+export const TOOL_LOADOUT_EXPOSURES = [
+  "direct",
+  "model-only",
+  "codemode",
+  "deferred",
+  "hidden",
+] as const;
+
+export interface ToolLoadoutEntry {
+  name: string;
+  description: string;
+  source: string;
+  exposure: (typeof TOOL_LOADOUT_EXPOSURES)[number];
+  active: boolean;
+}
+
+export interface ToolLoadoutSnapshot {
+  workerId: string;
+  tools: ToolLoadoutEntry[];
+  truncated: boolean;
+}
+
+export type NewSessionOptions = Omit<Body<"newSession">, "cwd" | "receipt">;
 
 /** Pi's resolved startup choice for a new session in one canonical workspace.
  * This is a preflight projection; the creating worker remains authoritative. */
@@ -236,6 +231,7 @@ export const SESSION_ACTION_IDS = [
   "clone",
   "switch-branch",
   "export",
+  "tool-loadout",
 ] as const;
 export type SessionActionId = (typeof SESSION_ACTION_IDS)[number];
 
@@ -255,11 +251,6 @@ export interface InspirePreferences {
   launch: LaunchPreference;
   /** Desktop-only submit chord; touch-first Return always inserts a line break. */
   desktopSendKey: DesktopSendKeyPreference;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
-  /** Presentation of complete non-response activity runs between visible
-   * assistant response passages. The cards inside keep their own preferences. */
-  activityFoldVisibility: ActivityFoldVisibilityPreference;
   /** How the topbar shows the session's project location. */
   projectDisplay: ProjectDisplayPreference;
   /** Session title menu order, including actions revealed by More actions. */
@@ -296,9 +287,6 @@ export const defaultInterfaceSettings = {
   readingWidth: "comfortable",
   launch: "welcome",
   desktopSendKey: "enter",
-  thinkingVisibility: "dynamic",
-  toolVisibility: "dynamic",
-  activityFoldVisibility: "dynamic",
   projectDisplay: "folder",
   sessionActionOrder: [...SESSION_ACTION_IDS],
 } satisfies Pick<
@@ -311,9 +299,6 @@ export const defaultInterfaceSettings = {
   | "readingWidth"
   | "launch"
   | "desktopSendKey"
-  | "thinkingVisibility"
-  | "toolVisibility"
-  | "activityFoldVisibility"
   | "projectDisplay"
   | "sessionActionOrder"
 >;
@@ -353,16 +338,7 @@ export interface SessionSummary {
   matchSnippet?: string;
 }
 
-export interface SessionCatalogIssue {
-  /** Directory or file whose contents could not be observed. */
-  path: string;
-  message: string;
-}
-
 export interface SessionListResponse {
-  /** Incomplete totals count known summaries/matches, not the complete catalog.
-   * Diagnostics are bounded to the first 20 unavailable sources. */
-  issues?: SessionCatalogIssue[];
   sessions: SessionSummary[];
   total: number;
   offset: number;
@@ -447,17 +423,26 @@ export type GitHead =
   | { kind: "unborn"; name: string }
   | { kind: "detached"; oid: string };
 
-export type GitStatusResponse =
-  | { kind: "not-repository" }
-  | {
-      kind: "repository";
-      head: GitHead;
+type GitNotRepository = { kind: "not-repository" };
+
+interface GitRepositorySummary {
+  kind: "repository";
+  head: GitHead;
+  /** Worktree change and conflict counts before projecting the bounded file list. */
+  total: number;
+  conflicts: number;
+}
+
+export type GitStatusSummary = GitNotRepository | GitRepositorySummary;
+
+export type GitStatusDetail =
+  | GitNotRepository
+  | (GitRepositorySummary & {
       files: GitFileChange[];
-      /** Total changed identities parsed before bounded projection. */
-      total: number;
-      /** True when `files` is only the first bounded projection. */
       truncated: boolean;
-    };
+    });
+
+export type GitStatusResponse = GitStatusSummary | GitStatusDetail;
 
 export interface GitDiffLine {
   kind: "meta" | "hunk" | "context" | "add" | "delete";
@@ -991,7 +976,6 @@ export interface BranchTreeResponse {
   incarnation: string;
   durableLeafId: string | null;
   effectiveLeafId: string | null;
-  activePath: string[];
   nodes: BranchTreeNode[];
   /** The containing input when this route page begins inside a long turn. */
   leadingPrompt?: BranchTreeNode;
@@ -1092,6 +1076,7 @@ export interface BranchNavigateResponse {
 export type BranchForkRequest = Body<"forkBranch">;
 
 export type BranchCloneRequest = Body<"cloneBranch">;
+export type WorkspaceForkRequest = Body<"recoverWorkspaceFork">;
 
 export interface BranchForkResponse {
   sessionId: string;
@@ -1300,26 +1285,11 @@ export interface UploadedAttachment {
   kind: "image" | "file";
 }
 
-export interface ComposerHistoryArtifactsRequest {
-  viewId: string;
-  incarnation: string | null;
-  effectiveLeafId: string | null;
-  imageReferences: string[];
-  fileReferences: string[];
-}
-
-export interface PromptRequest {
-  /** Target session: writes never fall back to the host's current selection,
-   * so a concurrent navigation cannot redirect a prompt. */
-  sessionId: string;
-  /** Branch view observed by the sending browser. */
-  expectedViewId?: string;
-  message: string;
-  attachmentIds?: string[];
-  historyArtifacts?: ComposerHistoryArtifactsRequest;
-  projectFiles?: string[];
-  behavior?: "steer" | "followUp";
-}
+/** Runtime receives the addressed input after HTTP has admitted its receipt identity. */
+export type PromptRequest = Omit<
+  PromptDeliveryRequest,
+  "operationId" | "authorityId"
+>;
 
 export interface SessionExportResponse {
   downloadId: string;

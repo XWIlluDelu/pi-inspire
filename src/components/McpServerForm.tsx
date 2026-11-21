@@ -1,10 +1,6 @@
 import { Plus, Trash2, Undo2 } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
-import {
-  type ConfigurationControl,
-  type SecretEdit,
-  secretValue,
-} from "../../shared/configuration-fields";
+import type { ConfigurationControl } from "../../shared/configuration-fields";
 import {
   MCP_EXPOSURES,
   MCP_SERVER_NAME,
@@ -16,7 +12,6 @@ import {
   type McpConnectionValues,
   mcpOAuthError,
   mcpOAuthFields,
-  mcpSecretMaps,
   mcpServerFields,
 } from "../../shared/mcp";
 import {
@@ -28,7 +23,7 @@ import {
   useConfigurationFields,
 } from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
-import { SettingsSwitch } from "./SettingsControls";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 const exposureOptions = MCP_EXPOSURES.map((value) => ({
   value,
@@ -49,10 +44,9 @@ function mapRows<Value>(entries: Record<string, Value>): FieldRow<Value>[] {
   }));
 }
 
-type SecretRow = FieldRow<SecretEdit>;
-const keepSecret = { kind: "keep" } as const;
+type SecretRow = FieldRow<string | null>;
 function storedSecrets(keys: string[]): SecretRow[] {
-  return keys.map((key, id) => ({ id, key, value: keepSecret, stored: true }));
+  return keys.map((key, id) => ({ id, key, value: "", stored: true }));
 }
 
 function CollectionFields<Value>({
@@ -184,24 +178,20 @@ function SecretMap({
   busy: boolean;
 }) {
   return (
-    <CollectionFields<SecretEdit>
+    <CollectionFields<string | null>
       label={label}
       keyLabel={`${label} name`}
       addLabel={`Add ${label.toLowerCase()}`}
       rows={rows}
       onChange={onChange}
-      initialValue={keepSecret}
+      initialValue=""
       busy={busy}
       remove={(row) => {
-        const restore = row.value.kind === "remove";
+        const restore = row.value === null;
         return {
           label: `${restore ? "Keep" : "Remove"} ${label.toLowerCase()} ${row.key || "entry"}`,
           restore,
-          value: row.stored
-            ? restore
-              ? keepSecret
-              : { kind: "remove" }
-            : undefined,
+          value: row.stored ? (restore ? "" : null) : undefined,
         };
       }}
       valueInput={(row, change) => (
@@ -210,22 +200,16 @@ function SecretMap({
           aria-label={`${label} value for ${row.key || "new entry"}`}
           type="password"
           autoComplete="new-password"
-          value={secretValue(row.value) ?? ""}
-          disabled={busy || row.value.kind === "remove"}
+          value={row.value ?? ""}
+          disabled={busy || row.value === null}
           placeholder={
-            row.value.kind === "remove"
+            row.value === null
               ? "Will be removed"
               : row.stored
                 ? "Stored · leave blank to keep"
                 : "${ENV_VAR} or a value"
           }
-          onChange={(event) =>
-            change(
-              event.target.value
-                ? { kind: "replace", value: event.target.value }
-                : keepSecret,
-            )
-          }
+          onChange={(event) => change(event.target.value)}
         />
       )}
     />
@@ -375,7 +359,6 @@ export function McpServerForm({
     clientRegistration: registration,
   };
   const secretKey = transport === "http" ? "headers" : "env";
-  const secretMap = mcpSecretMaps[secretKey];
   for (const key of ["clientId", "clientName"] as const)
     if (patch.oauth?.[key] === undefined && entry?.oauthFields.includes(key))
       oauth[key] = "stored";
@@ -400,12 +383,9 @@ export function McpServerForm({
     const values = { ...fields.patch(), ...patch };
     if (toolExposureChanged) values.toolExposure = toolExposure;
     const editedSecrets = Object.fromEntries(
-      secrets[secretKey].flatMap(({ key, value, stored }) => {
-        const change = secretValue(value);
-        return key && (change !== undefined || !stored)
-          ? [[key, change === undefined ? "" : change]]
-          : [];
-      }),
+      secrets[secretKey]
+        .filter(({ key, value, stored }) => key && (!stored || value !== ""))
+        .map(({ key, value }) => [key, value]),
     );
     if (Object.keys(editedSecrets).length) values[secretKey] = editedSecrets;
     if (!entry) {
@@ -628,7 +608,7 @@ export function McpServerForm({
           ) : (
             <div className="models-form__field">
               <span>Enabled in file</span>
-              <SettingsSwitch
+              <ToggleSwitch
                 label="Enabled in file"
                 checked={enabled ?? true}
                 disabled={busy}
@@ -642,7 +622,7 @@ export function McpServerForm({
         </div>
         {!policyOnly && (
           <SecretMap
-            label={secretMap.label}
+            label={secretKey === "headers" ? "Header" : "Environment variable"}
             rows={secrets[secretKey]}
             onChange={(rows) =>
               setSecrets((current) => ({ ...current, [secretKey]: rows }))
@@ -693,7 +673,8 @@ export function McpServerForm({
                     onChange={(edit) =>
                       change("oauth", {
                         ...patch.oauth,
-                        [key]: secretValue(edit),
+                        [key]:
+                          control.type === "number" && edit ? Number(edit) : edit,
                       })
                     }
                   />
@@ -726,11 +707,6 @@ export function McpServerForm({
       {scope === "project" ? (
         <p className="models-status">
           Pi uses project configuration only when the project is trusted.
-        </p>
-      ) : null}
-      {entry?.extraFieldCount ? (
-        <p className="models-status">
-          {entry.extraFieldCount} additional fields will be preserved.
         </p>
       ) : null}
     </ConfigurationForm>

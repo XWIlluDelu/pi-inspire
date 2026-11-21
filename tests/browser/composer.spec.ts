@@ -54,7 +54,7 @@ test.describe("touch recovery", () => {
     await input.fill("Keep this newer draft");
     release();
     const restore = page.getByRole("button", {
-      name: "Restore",
+      name: "Restore draft",
       exact: true,
     });
     await expect(restore).toBeDisabled();
@@ -102,13 +102,11 @@ test("a delayed model refusal leaves focus on the closed picker trigger", async 
   } finally {
     release();
   }
-  await expect(page.getByText(error)).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: error })).toBeVisible();
   await expect(picker).toBeFocused();
 });
 
-test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", async ({ page }) => {
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
@@ -158,14 +156,11 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.fill(historyDraft);
   await input.press("ArrowUp");
   await expect(input).toHaveValue(historyDraft);
-  await input.evaluate((element: HTMLTextAreaElement) =>
-    element.setSelectionRange(0, 0),
-  );
+  await input.evaluate((element: HTMLTextAreaElement) => {
+    element.setSelectionRange(0, 0);
+  });
   await input.press("ArrowUp");
   await expect(input).toHaveValue(repeated);
-  await input.evaluate((element: HTMLTextAreaElement) =>
-    element.setSelectionRange(element.value.length, element.value.length),
-  );
   await input.press("ArrowDown");
   await expect(input).toHaveValue(historyDraft);
   await expect(input).toBeFocused();

@@ -3,10 +3,10 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   CHECKPOINT_CHUNK_CHARS,
   CHECKPOINT_MAX_CHARS,
-  CHECKPOINT_MAX_ENTRIES,
   CHECKPOINT_SUFFIX,
   NATIVE_START_SUFFIX,
   type WorkerCheckpoint,
+  workerCheckpoint,
 } from "../shared/worker-checkpoint.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import type { RuntimeSlot, WorkerView } from "./runtime-slot.js";
@@ -23,10 +23,11 @@ export function createWorkerView(
     fileNameForPath,
   );
   index.appendWorkerEntries(entries, leaf);
+  for (const row of slot.overlay) delete row.evidence;
   return {
     index,
+    navigationLeased: false,
     contextGeneration: 1,
-    finishedMessages: new Map(),
     sealedCursor: entries.at(-1)?.id ?? null,
     nativeLeafId: leaf,
     entryTurns: new Map(),
@@ -35,28 +36,14 @@ export function createWorkerView(
 
 function parseMarker(raw: string, slot: RuntimeSlot): WorkerCheckpoint {
   if (raw.length > 8_192) throw new Error("Native checkpoint marker too large");
-  const marker: WorkerCheckpoint = JSON.parse(raw);
-  const id = (value: unknown) =>
-    value === null ||
-    (typeof value === "string" && value.length > 0 && value.length <= 200);
+  const marker = workerCheckpoint.safeParse(JSON.parse(raw)).data;
   if (
     !marker ||
     marker.workerId !== slot.bridge?.workerId ||
     marker.sessionId !== slot.id ||
-    typeof marker.sessionFile !== "string" ||
+    marker.sessionFile === null ||
     !slot.sessionPath ||
-    resolve(slot.cwd, marker.sessionFile) !== resolve(slot.sessionPath) ||
-    !Number.isSafeInteger(marker.contextGeneration) ||
-    marker.contextGeneration < 1 ||
-    !Number.isSafeInteger(marker.run) ||
-    marker.run < 0 ||
-    !id(marker.from) ||
-    !id(marker.tail) ||
-    !id(marker.leaf) ||
-    !Number.isSafeInteger(marker.entries) ||
-    marker.entries < 0 ||
-    marker.entries > CHECKPOINT_MAX_ENTRIES ||
-    ![null, "turn", "settled", "idle"].includes(marker.sealed)
+    resolve(slot.cwd, marker.sessionFile) !== resolve(slot.sessionPath)
   )
     throw new Error("Invalid Pi native checkpoint");
   return marker;
@@ -85,12 +72,14 @@ export class WorkerCheckpointReader {
     rpc: PiRpcProcess,
     record: Record<string, unknown>,
   ): boolean {
+    const { bridge } = slot;
     if (
-      slot.bridge &&
-      record.type === "extension_ui_request" &&
-      record.method === "setStatus" &&
-      record.statusKey === `${slot.bridge.statusKey}${NATIVE_START_SUFFIX}`
-    ) {
+      !bridge ||
+      record.type !== "extension_ui_request" ||
+      record.method !== "setStatus"
+    )
+      return false;
+    if (record.statusKey === `${bridge.statusKey}${NATIVE_START_SUFFIX}`) {
       if (
         slot.startupPhase === "starting" &&
         typeof record.statusText === "string" &&
@@ -104,13 +93,7 @@ export class WorkerCheckpointReader {
       }
       return true;
     }
-    if (
-      !slot.bridge ||
-      record.type !== "extension_ui_request" ||
-      record.method !== "setStatus" ||
-      record.statusKey !== `${slot.bridge.statusKey}${CHECKPOINT_SUFFIX}`
-    )
-      return false;
+    if (record.statusKey !== `${bridge.statusKey}${CHECKPOINT_SUFFIX}`) return false;
     if (!slot.workerView) return true;
     try {
       const raw = record.statusText;

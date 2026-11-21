@@ -33,7 +33,7 @@ import { McpConfigService } from "../../server/mcp-config.js";
 import { listProjectDirectory } from "../../server/project-files.js";
 import { ResourceStore } from "../../server/resources.js";
 import { resolveComposerHistoryArtifacts } from "../../server/runtime-composer-artifacts.js";
-import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import { RuntimeSlot } from "../../server/runtime-slot.js";
 
 const root = "C:\\audit\\Project";
 const sibling = "C:\\audit\\project";
@@ -43,7 +43,8 @@ const context = {
   viewId: "v1",
   revision: 1,
   cwd: root,
-  messages: [],
+  loadHistoryImage: async () => null,
+  loadMessages: async () => [],
 };
 const resources = new ResourceStore();
 const destinations = new Map<string, string>();
@@ -108,22 +109,13 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
   });
 
   it("does not recall a foreign file merely because a persisted path folds into cwd", async () => {
-    const slot = {
-      cwd: root,
-      viewId: "v1",
-      navigationLease: null,
-      projection: {
-        incarnation: "incarnation",
-        leafId: null,
-        composerHistoryMessages: () => [
-          {
-            role: "user",
-            content: addAttachmentContext("Use", [], [outside]),
-            __inspireHistoryEntryId: "entry-0",
-          },
-        ],
-      },
-    } as unknown as RuntimeSlot;
+    const slot = new RuntimeSlot("s1", root);
+    slot.viewId = "v1";
+    slot.projection = {
+      incarnation: "incarnation",
+      leafId: null,
+      historyUserContent: () => addAttachmentContext("Use", [], [outside]),
+    } as unknown as NonNullable<RuntimeSlot["projection"]>;
     await expect(
       resolveComposerHistoryArtifacts(
         slot,

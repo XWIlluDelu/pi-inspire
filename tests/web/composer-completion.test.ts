@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { PI_NATIVE_COMMANDS } from "../../shared/commands";
 import {
   commandArgumentCandidates,
   commandUsageHint,
@@ -204,29 +203,21 @@ describe("composer caret completion", () => {
   });
 });
 
-describe("Pi interactive command ownership", () => {
-  it("reserves Pi built-ins ahead of colliding runtime commands", () => {
-    const names = new Set<string>(PI_NATIVE_COMMANDS.map(({ name }) => name));
-    const builtins = PI_NATIVE_COMMANDS.map(({ name, execution }) =>
-      expect.objectContaining({ name, source: "builtin", execution }),
-    );
-    for (const source of ["extension", "prompt", "skill"]) {
-      const resolved = resolveCommandInventory(
-        PI_NATIVE_COMMANDS.map(({ name }) => ({ name, source })),
-      ).filter(({ name }) => names.has(name));
-      expect(resolved).toHaveLength(builtins.length);
-      expect(resolved).toEqual(expect.arrayContaining(builtins));
-    }
-  });
-  it("does not offer unavailable built-in collisions in a first-message composer", () => {
-    const commands = [
-      { name: "model", source: "extension" },
-      { name: "export", source: "prompt" },
-      { name: "plugin:model", source: "extension" },
-      { name: "skill:docs", source: "skill" },
-    ];
-    expect(
-      resolveCommandInventory(commands, false).map((command) => command.name),
-    ).toEqual(["plugin:model", "skill:docs", "compact"]);
-  });
+it("reserves built-ins and keeps the first runtime owner in both composers", () => {
+  const commands = [
+    { name: "model", source: "extension" },
+    { name: "compact", source: "prompt" },
+    { name: "plugin:model", source: "extension" },
+    { name: "plugin:model", source: "prompt" },
+  ];
+  const first = resolveCommandInventory(commands, false);
+  expect(first.map(({ name, source }) => [name, source])).toEqual([
+    ["compact", "builtin"],
+    ["plugin:model", "extension"],
+  ]);
+  const active = resolveCommandInventory(commands);
+  expect(active.find(({ name }) => name === "model")?.source).toBe("builtin");
+  expect(active.filter(({ name }) => name === "plugin:model")).toEqual([
+    commands[2],
+  ]);
 });

@@ -7,6 +7,7 @@ import type {
   ToolPresentationValueDeclaration,
 } from "../../shared/tool-presentation-config";
 import { stripTerminalSequences } from "../ansi";
+import { parseUnifiedDiff } from "../diff";
 import { toolResultText } from "../events";
 import type {
   ToolListItem,
@@ -38,10 +39,6 @@ const MAX_STRUCTURED_ITEMS = 1_000;
 type SelectedValue =
   | { state: "value"; raw: unknown; text: string }
   | { state: "missing" | "deferred" };
-
-type CompiledBlock =
-  | { state: "ok"; blocks: ToolPresentationBlock[] }
-  | { state: "incompatible" };
 
 function property(source: unknown, key: string): unknown {
   if (Array.isArray(source) && /^\d+$/.test(key)) return source[Number(key)];
@@ -260,13 +257,6 @@ function truncationNotice(label: string): ToolPresentationBlock {
   };
 }
 
-function missingOrDeferred(
-  value: SelectedValue,
-  optional: boolean | undefined,
-): "skip" | "incompatible" {
-  return value.state === "deferred" || optional ? "skip" : "incompatible";
-}
-
 function resolveMetadata(
   declaration: ToolPresentationValueDeclaration | undefined,
   input: DeclarativePresentationInput,
@@ -317,7 +307,6 @@ function listBlocks(
   const empty = (declaration.emptyValues ?? []).includes(rawText);
   const notices: string[] = [];
   const items: ToolListItem[] = [];
-  let capped = false;
   let truncated = false;
   const sourceLines = Array.isArray(selected.raw)
     ? selected.raw.map((item) => textValue(item))
@@ -331,7 +320,7 @@ function listBlocks(
         notices.push(notice);
         continue;
       }
-      if (capped) {
+      if (items.length >= MAX_STRUCTURED_ITEMS) {
         truncated = true;
         continue;
       }
@@ -349,7 +338,6 @@ function listBlocks(
           ? { kind: "directory" as const }
           : { kind: "file" as const }),
       });
-      capped = items.length >= MAX_STRUCTURED_ITEMS;
     }
   }
   const blocks: ToolPresentationBlock[] = [
@@ -380,7 +368,6 @@ function searchBlocks(
   const notices: string[] = [];
   let current: ToolSearchGroup | null = null;
   let matchCount = 0;
-  let capped = false;
   let truncated = false;
   if (!empty) {
     for (const line of selected.text.split(/\r?\n/)) {
@@ -390,7 +377,7 @@ function searchBlocks(
         notices.push(notice);
         continue;
       }
-      if (capped) {
+      if (matchCount >= MAX_STRUCTURED_ITEMS) {
         truncated = true;
         continue;
       }
@@ -405,7 +392,6 @@ function searchBlocks(
           match: row[2] === ":",
         });
         matchCount += 1;
-        capped = matchCount >= MAX_STRUCTURED_ITEMS;
         continue;
       }
       if (/^\s/.test(line)) return null;
@@ -436,20 +422,20 @@ function searchBlocks(
 function compileBlock(
   declaration: ToolPresentationBlockDeclaration,
   input: DeclarativePresentationInput,
-): CompiledBlock {
+): ToolPresentationBlock[] | null {
   if (declaration.type === "properties") {
     const items = [];
     let truncated = false;
     for (const item of declaration.items) {
       const value = resolveValue(item.value, input);
       if (value.state !== "value") {
-        if (missingOrDeferred(value, item.optional) === "skip") continue;
-        return { state: "incompatible" };
+        if (value.state === "deferred" || item.optional) continue;
+        return null;
       }
       const resource = resolveMetadata(item.resource, input);
       if (resource === null) {
         if (item.optional) continue;
-        return { state: "incompatible" };
+        return null;
       }
       const bounded = boundedPropertyValue(value.text);
       truncated ||= bounded.truncated;
@@ -467,24 +453,21 @@ function compileBlock(
         text: `Property previews are limited to ${MAX_PROPERTY_VALUE_CHARS.toLocaleString()} characters; Copy still includes the complete tool call and result.`,
         tone: "warning",
       });
-    return { state: "ok", blocks };
+    return blocks;
   }
 
   if (declaration.type === "replacement") {
     const oldText = resolveValue(declaration.oldText, input);
     const newText = resolveValue(declaration.newText, input);
     if (oldText.state !== "value" || newText.state !== "value") {
-      const state =
-        oldText.state === "deferred" ||
+      return oldText.state === "deferred" ||
         newText.state === "deferred" ||
         declaration.optional
-          ? "ok"
-          : "incompatible";
-      return state === "ok" ? { state, blocks: [] } : { state };
+        ? []
+        : null;
     }
     const path = resolveMetadata(declaration.path, input);
-    if (path === null && !declaration.optional)
-      return { state: "incompatible" };
+    if (path === null && !declaration.optional) return null;
     const boundedOld = boundedText(oldText.text);
     const boundedNew = boundedText(newText.text);
     const block: ToolPresentationBlock = {
@@ -494,13 +477,9 @@ function compileBlock(
       oldText: boundedOld.text,
       newText: boundedNew.text,
     };
-    return {
-      state: "ok",
-      blocks:
-        boundedOld.truncated || boundedNew.truncated
-          ? [block, truncationNotice(declaration.label)]
-          : [block],
-    };
+    return boundedOld.truncated || boundedNew.truncated
+      ? [block, truncationNotice(declaration.label)]
+      : [block];
   }
 
   if (declaration.type === "image") {
@@ -516,55 +495,41 @@ function compileBlock(
         data.state === "deferred" ||
         mimeType.state === "deferred" ||
         alt.state === "deferred";
-      return deferred || declaration.optional
-        ? { state: "ok", blocks: [] }
-        : { state: "incompatible" };
+      return deferred || declaration.optional ? [] : null;
     }
-    if (!isToolImageMimeType(mimeType.text)) return { state: "incompatible" };
-    return {
-      state: "ok",
-      blocks: [
-        {
-          type: "image",
-          ...(declaration.label ? { label: declaration.label } : {}),
-          data: data.text,
-          mimeType: mimeType.text,
-          alt: alt.text,
-        },
-      ],
-    };
+    if (!isToolImageMimeType(mimeType.text)) return null;
+    return [
+      {
+        type: "image",
+        label: declaration.label,
+        data: data.text,
+        mimeType: mimeType.text,
+        alt: alt.text,
+      },
+    ];
   }
 
   const source = resolveValue(declaration.source, input);
-  if (source.state !== "value") {
-    return missingOrDeferred(source, declaration.optional) === "skip"
-      ? { state: "ok", blocks: [] }
-      : { state: "incompatible" };
-  }
+  if (source.state !== "value")
+    return source.state === "deferred" || declaration.optional ? [] : null;
 
-  if (declaration.type === "list") {
-    const blocks = listBlocks(declaration, source, input);
-    return blocks ? { state: "ok", blocks } : { state: "incompatible" };
-  }
-  if (declaration.type === "search") {
-    const blocks = searchBlocks(declaration, source);
-    return blocks ? { state: "ok", blocks } : { state: "incompatible" };
-  }
+  if (declaration.type === "list")
+    return listBlocks(declaration, source, input);
+  if (declaration.type === "search") return searchBlocks(declaration, source);
   if (declaration.type === "diff") {
     const path = resolveMetadata(declaration.path, input);
-    if (path === null && !declaration.optional)
-      return { state: "incompatible" };
-    return {
-      state: "ok",
-      blocks: [
-        {
-          type: "diff",
-          ...(declaration.label ? { label: declaration.label } : {}),
-          ...(path ? { path } : {}),
-          text: source.text,
-        },
-      ],
-    };
+    if (path === null && !declaration.optional) return null;
+    const lines = parseUnifiedDiff(source.text);
+    return lines
+      ? [
+          {
+            type: "diff",
+            label: declaration.label,
+            path: path ?? undefined,
+            lines,
+          },
+        ]
+      : null;
   }
   if (declaration.type === "notice") {
     const bounded = boundedText(source.text);
@@ -573,10 +538,7 @@ function compileBlock(
       text: bounded.text,
       ...(declaration.tone ? { tone: declaration.tone } : {}),
     };
-    return {
-      state: "ok",
-      blocks: bounded.truncated ? [block, truncationNotice("Notice")] : [block],
-    };
+    return bounded.truncated ? [block, truncationNotice("Notice")] : [block];
   }
 
   const bounded = boundedText(
@@ -607,12 +569,9 @@ function compileBlock(
       text: bounded.text,
       ...(resultError(declaration.source, input) ? { error: true } : {}),
     };
-  return {
-    state: "ok",
-    blocks: bounded.truncated
-      ? [block, truncationNotice(declaration.label ?? "Content")]
-      : [block],
-  };
+  return bounded.truncated
+    ? [block, truncationNotice(declaration.label ?? "Content")]
+    : [block];
 }
 
 function compileBlocks(
@@ -622,8 +581,8 @@ function compileBlocks(
   const blocks: ToolPresentationBlock[] = [];
   for (const block of declaration.blocks) {
     const compiled = compileBlock(block, input);
-    if (compiled.state === "incompatible") return null;
-    blocks.push(...compiled.blocks);
+    if (!compiled) return null;
+    blocks.push(...compiled);
   }
   return blocks;
 }
@@ -640,25 +599,16 @@ function presentDeclaration(
   };
 }
 
-function compileRule(
-  id: string,
-  declaration: ToolPresentationRuleDeclaration,
-): ToolPresentationRule {
-  return {
-    id,
-    present: (input) => presentDeclaration(declaration, input),
-  };
-}
-
 /** Compile validated, data-only declarations into the same presentation
  * protocol used by shipped rules. No declaration can execute JavaScript,
  * React, HTML, filesystem access, or network access. */
 export function compileToolPresentationRules(
   configuration: ToolPresentationConfiguration,
 ): ToolPresentationRule[] {
-  return Object.entries(configuration.rules).map(([id, declaration]) =>
-    compileRule(id, declaration),
-  );
+  return Object.entries(configuration.rules).map(([id, declaration]) => ({
+    id,
+    present: (input) => presentDeclaration(declaration, input),
+  }));
 }
 
 /** Compile the singleton Thinking declaration against display-cleaned text.

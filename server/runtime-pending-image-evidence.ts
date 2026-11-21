@@ -1,6 +1,4 @@
 import {
-  BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-  BRANCH_BRIDGE_MAX_RESULT_BYTES,
   BRANCH_BRIDGE_VERSION,
   PENDING_IMAGE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
@@ -34,8 +32,6 @@ export async function readPendingImageEvidence(
         v: BRANCH_BRIDGE_VERSION,
         ...(since === undefined ? {} : { since }),
       },
-      maxArgumentBytes: BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      maxResultBytes: BRANCH_BRIDGE_MAX_RESULT_BYTES,
       malformedError: new Error("Malformed pending image evidence"),
     },
     (value) => {

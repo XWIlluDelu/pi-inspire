@@ -70,9 +70,7 @@ export const ExtensionStatus = memo(function ExtensionStatus() {
       const text = stripTerminalSequences(status);
       return text.trim() ? [text] : [];
     });
-  return visible.length ? (
-    <ExtensionStatusReader key={sessionId} values={visible} />
-  ) : null;
+  return visible.length ? <ExtensionStatusReader key={sessionId} values={visible} /> : null;
 });
 
 function ExtensionStatusReader({ values }: { values: string[] }) {
@@ -93,7 +91,13 @@ function ExtensionStatusReader({ values }: { values: string[] }) {
         title={text}
         onClick={() => setOpen(!open)}
       >
+        <Puzzle size={12} className="topbar__extension-icon" aria-hidden />
         <span className="topbar__extension-text">{text}</span>
+        {values.length > 1 ? (
+          <span className="topbar__extension-count" aria-hidden>
+            {values.length}
+          </span>
+        ) : null}
       </button>
       <AnchoredPanel
         id={panelId}

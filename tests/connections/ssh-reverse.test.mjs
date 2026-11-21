@@ -53,7 +53,7 @@ describe("ssh-reverse connection module", () => {
     async () => {
       const fixture = await mkdtemp(join(tmpdir(), "inspire-ssh-package-"));
       temporary.push(fixture);
-      const root = join(fixture, "INSΠRE review");
+      const root = join(fixture, "INSΠRE %h @NODE@ review");
       const alias = join(fixture, "package-link");
       const configHome = join(fixture, "config");
       const unitPath = join(
@@ -91,43 +91,36 @@ describe("ssh-reverse connection module", () => {
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         SYSTEMCTL_LOG: log,
       };
-      const dispatch = (
-        action,
-        path = root,
-        overrides = {},
-        name = "ssh-reverse",
-      ) =>
-        spawnSync(
-          process.execPath,
-          path === root
-            ? [join(root, "inspire.mjs"), "connection", name, action]
-            : [
-                join(root, "connections", "dispatch.mjs"),
-                "--root",
-                path,
-                name,
-                action,
-              ],
-          {
-            encoding: "utf8",
-            timeout: 5_000,
-            env: { ...environment, ...overrides },
-          },
-        );
+      const cli = (entry, args, overrides = {}) =>
+        spawnSync(process.execPath, [entry, ...args], {
+          encoding: "utf8",
+          timeout: 5_000,
+          env: { ...environment, ...overrides },
+        });
+      const connection = (...args) =>
+        cli(join(root, "inspire.mjs"), ["connection", ...args]);
+      const dispatch = (action) => connection("ssh-reverse", action);
 
-      const invalid = dispatch("init", root, {}, "../ssh-reverse");
+      const listed = connection("list");
+      expect(listed.status, listed.stderr).toBe(0);
+      expect(listed.stdout.trim()).toBe("ssh-reverse");
+      expect(connection("list", "start").status).toBe(64);
+      const invalid = connection("../ssh-reverse", "init");
       expect(invalid.status).toBe(1);
       expect(invalid.stderr).toContain("Connection name is not valid");
       const aliasConfig = join(fixture, "alias.env");
-      for (const [path, target] of [
-        [root, config],
-        [alias, aliasConfig],
+      const direct = dispatch("init");
+      const aliased = cli(
+        join(alias, "connections", "ssh-reverse", "runner.mjs"),
+        ["--root", alias, "init"],
+        { INSPIRE_SSH_REVERSE_CONFIG: aliasConfig },
+      );
+      for (const [result, path] of [
+        [direct, config],
+        [aliased, aliasConfig],
       ]) {
-        const result = dispatch("init", path, {
-          INSPIRE_SSH_REVERSE_CONFIG: target,
-        });
         expect(result.status, result.stderr).toBe(0);
-        expect(await readFile(target, "utf8")).toContain(
+        expect(await readFile(path, "utf8")).toContain(
           "INSPIRE_SSH_REMOTE_PORT=14587",
         );
       }
@@ -151,7 +144,7 @@ describe("ssh-reverse connection module", () => {
         /^--user (?:start|stop|restart|enable|disable|daemon-reload)\b/mu,
       );
 
-      const workingDirectory = `WorkingDirectory=${join(fixture, "INS\\xce\\xa0RE\\x20review")}`;
+      const workingDirectory = `WorkingDirectory=${root.replaceAll("%", "%%")}`;
       await writeFile(
         unitPath,
         `[Service]\n${workingDirectory}\nExecStart=/old/runner\n`,

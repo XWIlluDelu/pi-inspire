@@ -1,19 +1,15 @@
-import { dirname, resolve } from "node:path";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 // Shared by the test Host and browser assertions; never the installed checkout.
-export const browserWorkspace = resolve(
+export const browserFixtureOutput = resolve(
   process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
-  "workspace",
 );
+export const browserWorkspace = join(browserFixtureOutput, "workspace");
+export const browserFixtureHome = join(browserFixtureOutput, "fixture-home");
 
-export const browserFixtureHome = resolve(
-  dirname(browserWorkspace),
-  "fixture-home",
-);
-
-// A fixture project may remain the working directory of an idle Pi until the
-// fixture Host exits. Keep these directories under that Host's lifetime.
-export const browserFixtureProjects = resolve(
-  dirname(browserWorkspace),
-  "fixture-projects",
-);
+export async function createBrowserProject(prefix) {
+  const projects = join(browserFixtureHome, "projects");
+  await mkdir(projects, { recursive: true });
+  return mkdtemp(join(projects, prefix));
+}

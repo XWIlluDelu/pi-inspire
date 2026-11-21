@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import type { PendingAttachment } from "./controllers/composer-controller";
+import { sessionValue, setSessionValue } from "./session-storage";
 
 export interface SessionDraft {
   revision: number;
@@ -7,7 +8,6 @@ export interface SessionDraft {
   attachments: PendingAttachment[];
   projectFiles: string[];
   workspaceCwd?: string;
-  intentId?: string;
 }
 
 export function hasDraftInput(draft: SessionDraft): boolean {
@@ -46,12 +46,7 @@ export class SessionDrafts {
   get(sessionId: DraftKey): SessionDraft {
     const current = this.drafts.get(sessionId);
     if (current) return current;
-    let text = "";
-    try {
-      text = window.sessionStorage.getItem(storageKey(sessionId)) ?? "";
-    } catch {
-      // Unavailable storage leaves the same tab-local editing behavior.
-    }
+    const text = sessionValue(storageKey(sessionId)) ?? "";
     const draft = { ...EMPTY_DRAFT, text };
     this.drafts.set(sessionId, draft);
     return draft;
@@ -68,15 +63,8 @@ export class SessionDrafts {
       ...patch,
       revision: material ? ++this.revision : current.revision,
     };
-    if (draft.text !== current.text) {
-      try {
-        const key = storageKey(sessionId);
-        if (draft.text) window.sessionStorage.setItem(key, draft.text);
-        else window.sessionStorage.removeItem(key);
-      } catch {
-        // A quota or policy restriction must not interrupt editing.
-      }
-    }
+    if (draft.text !== current.text)
+      setSessionValue(storageKey(sessionId), draft.text || null);
     this.drafts.set(sessionId, draft);
     for (const publish of this.listeners) publish();
     return draft;
@@ -92,7 +80,6 @@ export class SessionDrafts {
       attachments: [],
       projectFiles: [],
       workspaceCwd: undefined,
-      intentId: undefined,
     });
   }
 

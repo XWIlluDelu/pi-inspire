@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type {
   GitDiffResponse,
   GitFileChange,
+  GitStatusDetail,
   GitStatusResponse,
 } from "../../shared/contracts";
 import type { Api } from "../../src/api";
@@ -19,11 +20,12 @@ const changed = (path: GitFileChange["path"]): GitFileChange => ({
   worktree: { kind: "modified" },
   untracked: false,
 });
-const status = (files = [changed(path)]): GitStatusResponse => ({
+const status = (files = [changed(path)]): GitStatusDetail => ({
   kind: "repository",
   head: { kind: "branch", name: "main", oid: "abc" },
   files,
   total: files.length,
+  conflicts: files.filter((file) => file.conflict).length,
   truncated: false,
 });
 const diff = (text: string, selected = path): GitDiffResponse => ({
@@ -61,7 +63,6 @@ function fixture(files = [changed(path)], visible = true) {
   }
   let state: GitControllerState = {
     sessionId: "s1",
-    selectionGeneration: 1,
     resourcesOpen: false,
     contextMode: "files",
     fileInspection: { kind: "browse" },
@@ -78,23 +79,25 @@ function fixture(files = [changed(path)], visible = true) {
         }
       : {}),
   };
+  type StatusQuery = { query: { sessionId: string; view?: "summary" } };
+  type DiffQuery = { body: { pathId: string } };
   const gitStatus = vi
-    .fn<() => Promise<GitStatusResponse>>()
+    .fn<
+      (input: StatusQuery, signal: AbortSignal) => Promise<GitStatusResponse>
+    >()
     .mockResolvedValue(status(files));
   const gitDiff = vi
-    .fn<
-      (
-        input: { body: { pathId: string } },
-        signal: AbortSignal,
-      ) => Promise<GitDiffResponse>
-    >()
+    .fn<(input: DiffQuery, signal: AbortSignal) => Promise<GitDiffResponse>>()
     .mockResolvedValue(before);
   const api = {
     json: (
       name: "gitStatus" | "gitDiff",
-      input: { body: { pathId: string } },
+      input: StatusQuery | DiffQuery,
       signal: AbortSignal,
-    ) => ({ gitStatus, gitDiff })[name](input, signal),
+    ) =>
+      name === "gitStatus"
+        ? gitStatus(input as StatusQuery, signal)
+        : gitDiff(input as DiffQuery, signal),
   } as unknown as Api;
   const patch = (next: Partial<GitControllerState>) => {
     state = { ...state, ...next };
@@ -105,6 +108,7 @@ function fixture(files = [changed(path)], visible = true) {
   });
   const controller = new GitController({
     state: () => state,
+    selectionGeneration: () => 1,
     patch,
     api: () => api,
     handleAuthFailure: vi.fn(),
@@ -126,12 +130,6 @@ const advance = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 afterEach(() => vi.useRealTimers());
 
 it("starts net Changes without waiting for the file and cancels an obsolete comparison", async () => {
-  const squashed: GitFileChange = {
-    path,
-    staged: { kind: "modified" },
-    unstaged: { kind: "modified" },
-    untracked: false,
-  };
   const added: GitFileChange = {
     path: other,
     worktree: { kind: "added" },
@@ -139,13 +137,11 @@ it("starts net Changes without waiting for the file and cancels an obsolete comp
   };
   const conflict: GitFileChange = {
     path: { id: "conflict", display: "conflict.txt" },
+    worktree: { kind: "unmerged" },
     conflict: { code: "UU" },
     untracked: false,
   };
-  const f = fixture([squashed, added, conflict], false);
-  await f.controller.openChange(squashed.path.id);
-  expect(f.openResource).not.toHaveBeenCalled();
-  expect(f.gitDiff).not.toHaveBeenCalled();
+  const f = fixture([added, conflict], false);
   const fileRead = deferred<void>();
   const answer = f.openResource.getMockImplementation()!;
   f.openResource.mockImplementation((change) => {
@@ -257,7 +253,7 @@ it.each(["changed diff", "diff error", "page visibility"] as const)(
   },
 );
 
-it("reads only summary while hidden and never lets a slow comparison schedule or replace a new one", async () => {
+it("upgrades a pending summary on open and retires obsolete comparison reads", async () => {
   vi.useFakeTimers();
   const f = fixture([changed(path), changed(other)]);
   f.controller.setSurfaceVisible("detail", true);
@@ -265,17 +261,28 @@ it("reads only summary while hidden and never lets a slow comparison schedule or
   try {
     await advance();
     expect(f.gitDiff).toHaveBeenCalledOnce();
-    f.patch({ contextMode: "changes" });
+    f.patch({ resourcesOpen: false });
     f.controller.setSurfaceVisible("detail", false);
+    const summary = deferred<GitStatusResponse>();
+    f.gitStatus.mockReturnValueOnce(summary.promise);
     await advance(19_999);
     expect(f.gitStatus).toHaveBeenCalledOnce();
     await advance(1);
     expect(f.gitStatus).toHaveBeenCalledTimes(2);
+    const [query, summarySignal] = f.gitStatus.mock.calls[1]!;
+    expect(query.query.view).toBe("summary");
     expect(f.gitDiff).toHaveBeenCalledOnce();
 
-    f.patch({ contextMode: "files" });
+    f.patch({ resourcesOpen: true });
+    const opening = f.controller.refreshStatus();
     f.controller.setSurfaceVisible("detail", true);
     await advance();
+    await opening;
+    expect(summarySignal.aborted).toBe(true);
+    expect(f.gitStatus.mock.calls[2]![0].query.view).toBeUndefined();
+    summary.resolve({ kind: "not-repository" });
+    await advance();
+    expect(f.state.gitStatus).toEqual(status([changed(path), changed(other)]));
     expect(f.gitDiff).toHaveBeenCalledTimes(2);
     const late = deferred<GitDiffResponse>();
     f.gitDiff.mockReturnValueOnce(late.promise);

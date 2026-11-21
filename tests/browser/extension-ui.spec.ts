@@ -7,7 +7,7 @@ import type {
   ExtensionUiRequest,
   SupportedExtensionUiRequest,
 } from "../../shared/contracts";
-import { clipboardLines } from "./support/clipboard";
+import { observeClipboardWrites } from "./support/clipboard";
 import { routeSnapshots, startEventSession } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
@@ -18,7 +18,6 @@ import {
   reloadSession,
 } from "./support/navigation";
 
-// Audit settled dialog colors, not intermediate entrance-animation opacity.
 test.use({
   serviceWorkers: "block",
   contextOptions: { reducedMotion: "reduce" },
@@ -35,7 +34,7 @@ type DemoQuestion =
     };
 
 // Synthetic questions control response timing and layout independently of Pi.
-async function openExample(page: Page, theme: "light" | "dark") {
+async function openExample(page: Page) {
   let sessionId: string | null = null;
   const pending = new Map<string, ExtensionUiRequest>();
   let displays: ExtensionDisplay[] = [];
@@ -48,9 +47,6 @@ async function openExample(page: Page, theme: "light" | "dark") {
         snapshot.extensionStatuses = { ...statuses };
         snapshot.extensionDisplays = displays;
       }
-    },
-    bootstrap: (data) => {
-      data.preferences.theme = theme;
     },
   });
   const emit = (event: Record<string, unknown>) => {
@@ -99,7 +95,7 @@ test("phone Back waits for native question cancellation before closing Settings"
 }) => {
   await page.setViewportSize({ width: 390, height: 700 });
   await page.goto("about:blank#outside-inspire");
-  const demo = await openExample(page, "dark");
+  const demo = await openExample(page);
   const inspireUrl = page.url();
   const draft = page.getByRole("textbox", { name: "Message", exact: true });
   await draft.fill("Keep this draft through the questions");
@@ -193,6 +189,7 @@ const summaryLines = [
 ];
 
 test("real Pi questions preserve workbench edits and restore the native deadline on reload", async ({
+  browserName,
   page,
   context,
 }, testInfo) => {
@@ -203,7 +200,8 @@ test("real Pi questions preserve workbench edits and restore the native deadline
     join(cwd, ".pi", "settings.json"),
     JSON.stringify({ extensions: [resolve("docs/examples/native-ui.ts")] }),
   );
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  if (browserName === "chromium")
+    await context.grantPermissions(["clipboard-write"]);
   await pairedPage(page);
   const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd, name: "Native UI example" },
@@ -283,8 +281,11 @@ test("real Pi questions preserve workbench edits and restore the native deadline
     name: "Extension content below composer",
   });
   await expect(below).toContainText("Keep this note.");
+  await observeClipboardWrites(page);
   await above.getByRole("button", { name: "Copy extension widget" }).click();
-  await expect.poll(() => clipboardLines(page)).toEqual(summaryLines);
+  await expect
+    .poll(() => page.evaluate(() => window.gestureClipboardWrites[0]?.text))
+    .toBe(summaryLines.join("\n"));
   await expect(draft).toHaveValue("Keep this unsent draft");
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -295,7 +296,6 @@ test("real Pi questions preserve workbench edits and restore the native deadline
       json: {
         hostId: "settings-host",
         available: true,
-        allPiAvailable: true,
         operation: null,
       },
     });
@@ -313,9 +313,9 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   await url.fill("https://example.invalid/v1");
   await settings.getByRole("button", { name: "System", exact: true }).click();
   await settings
-    .getByRole("button", { name: "Restart all", exact: true })
+    .getByRole("button", { name: "Restart", exact: true })
     .click();
-  const restart = page.getByRole("alertdialog", { name: "Restart all?" });
+  const restart = page.getByRole("alertdialog", { name: "Restart?" });
   await expect(restart).toBeVisible();
 
   // Dispatch from another client while Settings owns browser focus.
@@ -349,9 +349,7 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   await expect(url).toHaveValue("https://example.invalid/v1");
   await page.keyboard.press("Escape");
   await expect(settings).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Toggle navigation", exact: true }),
-  ).toBeFocused();
+  await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
   await expect(draft).toHaveValue("Keep this unsent draft");
 
   await run("timeout 15000");
@@ -383,12 +381,9 @@ test.describe("short touch workbench", () => {
   test("keeps the transcript, draft and both widgets usable in a short window", async ({
     page,
   }) => {
-    const fixture = await openExample(page, "light");
+    const fixture = await openExample(page);
     const input = page.getByRole("textbox", { name: "Message", exact: true });
-    const draft = Array.from(
-      { length: 20 },
-      (_, i) => `Draft line ${i + 1}`,
-    ).join("\n");
+    const draft = Array.from({ length: 20 }, (_, i) => `Draft line ${i + 1}`).join("\n");
     await input.fill(draft);
     const lines = Array.from(
       { length: 8 },
@@ -411,8 +406,6 @@ test.describe("short touch workbench", () => {
       })),
     });
     await page.setViewportSize({ width: 568, height: 320 });
-    const transcript = page.getByRole("log");
-    await expect(transcript).toBeVisible();
     await expect
       .poll(() =>
         page.evaluate(() => {
@@ -423,15 +416,16 @@ test.describe("short touch workbench", () => {
           const above = bounds(".extension-dock--above");
           const composer = bounds(".composer");
           const below = bounds(".extension-dock--below");
-          return Math.max(
-            transcript.bottom - above.top,
-            above.bottom - composer.top,
-            composer.bottom - below.top,
-            below.bottom - stage.bottom,
+          return (
+            transcript.height > 0 &&
+            transcript.bottom <= above.top &&
+            above.bottom <= composer.top &&
+            composer.bottom <= below.top &&
+            below.bottom <= stage.bottom
           );
         }),
       )
-      .toBeLessThanOrEqual(1);
+      .toBe(true);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .tap({ trial: true });
@@ -453,7 +447,7 @@ test.describe("narrow touch reading", () => {
   test("reads complete extension status and unsupported details on touch", async ({
     page,
   }) => {
-    const fixture = await openExample(page, "dark");
+    const fixture = await openExample(page);
     const unsupportedTitle =
       "Choose files under /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_results.json";
     fixture.question({

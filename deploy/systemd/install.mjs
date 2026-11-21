@@ -1,99 +1,84 @@
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { runSystemctl } from "./control.mjs";
+import { hostServicePath, runSystemctl } from "./control.mjs";
 
-export function systemdEscape(value) {
-  return value.replace(/[^A-Za-z0-9_@%+=:,./-]/gu, (character) =>
+export function unitWorkingDirectory(root) {
+  if (/[\r\n]/u.test(root))
+    throw new Error("The systemd working directory must fit on one line");
+  // WorkingDirectory takes a literal path. Protect a trailing space or continuation.
+  const path = /[\s\\]$/u.test(root) ? root + "/." : root;
+  return "WorkingDirectory=" + path.replaceAll("%", "%%");
+}
+
+function unitWord(value) {
+  return value.replaceAll("%", "%%").replace(/[^A-Za-z0-9_@%+=:,./-]/gu, (character) =>
     [...Buffer.from(character)]
       .map((byte) => `\\x${byte.toString(16).padStart(2, "0")}`)
       .join(""),
   );
 }
 
-async function writeUnit(path, content) {
+export function renderUnit(template, paths) {
+  return template.replace(/^.*@[A-Z_]+@.*$/gm, (line) => {
+    if (line === "WorkingDirectory=@ROOT@")
+      return unitWorkingDirectory(paths.ROOT);
+    const rendered = line.replace(/@([A-Z_]+)@/gu, (_, key) => unitWord(paths[key]));
+    // A literal dollar in an Exec argument needs systemd's no-expansion prefix.
+    return rendered.startsWith("Exec") && rendered.includes("\\x24")
+      ? rendered.replace("=", "=:")
+      : rendered;
+  });
+}
+
+export async function writeUnit(path, content) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await chmod(dirname(path), 0o700);
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${path}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, content, { mode: 0o644 });
+    await writeFile(temporary, content, { mode: 0o644, flag: "wx" });
     await rename(temporary, path);
   } finally {
     await rm(temporary, { force: true });
   }
 }
 
-function usage() {
-  console.error("Use: ./inspire service install-host");
-}
-
 async function main() {
   const [flag, rootValue, action] = process.argv.slice(2);
   if (flag !== "--root" || !rootValue || action !== "install-host") {
-    usage();
+    console.error("Use: ./inspire service install-host");
     process.exitCode = 64;
     return;
   }
   const root = resolve(rootValue);
-  const templateDirectory = dirname(fileURLToPath(import.meta.url));
-  const replace = (template) =>
-    template
-      .replaceAll("@ROOT@", systemdEscape(root))
-      .replaceAll("@NODE_BIN@", systemdEscape(dirname(process.execPath)))
-      .replaceAll("@LAUNCHER@", systemdEscape(join(root, "inspire")));
-  const [hostTemplate, terminalTemplate, maintenanceTemplate, timerTemplate] =
-    await Promise.all([
-      readFile(join(templateDirectory, "inspire-host.service.in"), "utf8"),
-      readFile(join(templateDirectory, "inspire-terminal.service.in"), "utf8"),
-      readFile(
-        join(templateDirectory, "inspire-idle-maintenance-restart.service.in"),
-        "utf8",
-      ),
-      readFile(
-        join(templateDirectory, "inspire-idle-maintenance-restart.timer.in"),
-        "utf8",
-      ),
-    ]);
-  const configHome =
-    process.env.XDG_CONFIG_HOME ||
-    join(process.env.HOME || homedir(), ".config");
-  const unitDirectory = join(configHome, "systemd", "user");
+  const unitDirectory = dirname(hostServicePath());
+  const units = [
+    "inspire-host.service",
+    "inspire-idle-maintenance-restart.service",
+    "inspire-idle-maintenance-restart.timer",
+  ];
   const paths = {
-    host: join(unitDirectory, "inspire-host.service"),
-    terminal: join(unitDirectory, "inspire-terminal.service"),
-    maintenance: join(
-      unitDirectory,
-      "inspire-idle-maintenance-restart.service",
-    ),
-    timer: join(unitDirectory, "inspire-idle-maintenance-restart.timer"),
+    ROOT: root,
+    NODE_BIN: dirname(process.execPath),
+    LAUNCHER: join(root, "inspire"),
   };
-  await Promise.all([
-    writeUnit(paths.host, replace(hostTemplate)),
-    writeUnit(paths.terminal, replace(terminalTemplate)),
-    writeUnit(paths.maintenance, replace(maintenanceTemplate)),
-    writeUnit(paths.timer, replace(timerTemplate)),
-  ]);
+  await Promise.all(
+    units.map(async (name) => {
+      const template = await readFile(new URL(name + ".in", import.meta.url), "utf8");
+      await writeUnit(join(unitDirectory, name), renderUnit(template, paths));
+    }),
+  );
   const reloaded = await runSystemctl(["--user", "daemon-reload"]);
   if (reloaded.code !== 0)
     throw new Error(
       `Installed user units, but systemd could not reload (${reloaded.stderr.trim()})`,
     );
-  console.log(`Installed ${paths.host} and ${paths.terminal}.`);
-  console.log(`Installed ${paths.maintenance} and ${paths.timer}.`);
+  console.log(`Installed ${units.join(", ")} in ${unitDirectory}.`);
   console.log(
     "Enable the host with: ./inspire service enable-host. Scheduled maintenance requires separate opt-in.",
   );
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   await main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

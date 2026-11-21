@@ -95,9 +95,7 @@ test.describe("narrow terminal settings", () => {
       name: "Terminal output retention",
     });
     await retention.click();
-    await settings
-      .getByRole("option", { name: "90 days", exact: true })
-      .click();
+    await settings.getByRole("option", { name: "90 days", exact: true }).click();
     await expect(retention).toHaveText("90 days");
     await expect(retention).toBeEnabled();
     page.once("dialog", (dialog) => dialog.accept());
@@ -122,9 +120,7 @@ test.describe("narrow terminal settings", () => {
     };
     try {
       await requestClear();
-      await expect(
-        settings.getByRole("button", { name: "Clearing…" }),
-      ).toBeDisabled();
+      await expect(settings.getByRole("button", { name: "Clearing…" })).toBeDisabled();
       await category("Appearance").click();
       failedClear.resolve();
       await expect(settings.getByRole("alert")).toHaveText(
@@ -138,8 +134,6 @@ test.describe("narrow terminal settings", () => {
     await expect(clear).toBeEnabled();
     expect(clears).toBe(2);
     await close.click();
-    await expect(
-      page.getByRole("dialog", { name: "Context panel" }),
-    ).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Context panel" })).toBeVisible();
   });
 });

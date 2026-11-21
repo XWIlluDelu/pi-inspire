@@ -1,3 +1,4 @@
+import { stageUpload } from "./fixtures/runtime.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,7 +46,7 @@ async function enqueue(
   };
   const upload = history
     ? null
-    : await store.add({
+    : await stageUpload(store, {
         originalname: "queued.png",
         mimetype: image.mimeType,
         size: buffer.length,
@@ -67,7 +68,7 @@ async function enqueue(
   return {
     delivery,
     image,
-    attachment: delivery.attachments[0]!,
+    attachment: store.pendingImageAttachments(delivery.imageIds)[0]!,
     message: {
       role: "user",
       content: [{ type: "text", text }, image],
@@ -88,7 +89,7 @@ function boundary() {
 describe("worker-bound pending image ownership", () => {
   it("returns unwritten preparations to their existing owner and never deletes a restaged original on retirement", async () => {
     const buffer = Buffer.from("original bytes");
-    const image = await store.add({
+    const image = await stageUpload(store, {
       originalname: "queued.png",
       mimetype: "image/png",
       size: buffer.length,

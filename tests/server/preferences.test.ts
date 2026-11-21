@@ -25,7 +25,7 @@ it("repairs only addressed fields while keeping older settings and their unknown
     theme: "dark",
     launch: "continue",
     palette: "teal",
-    toolVisibility: "impossible",
+    desktopSendKey: "impossible",
     sessionActionOrder: ["terminal"],
     futurePreference: { retained: true },
     pinnedSessionIds: ["session-a"],
@@ -33,7 +33,7 @@ it("repairs only addressed fields while keeping older settings and their unknown
   await write(saved);
   const before = await store.inspect();
   expect(before.warning).toMatch(
-    /palette.*toolVisibility.*sessionActionOrder/u,
+    /palette.*desktopSendKey.*sessionActionOrder/u,
   );
   expect(before.preferences).toEqual({
     ...defaultPreferences,
@@ -69,7 +69,7 @@ it("repairs only addressed fields while keeping older settings and their unknown
   const identity = { provider: "fixture", id: "model" };
   const repaired = await store.patch({
     palette: "wisteria",
-    toolVisibility: "compact",
+    desktopSendKey: "mod-enter",
     herdrEnabled: true,
     sessionActionOrder: ["export", "rename", "clone", "switch-branch"],
     recentModelIds: [{ ...identity, name: "Display name", reasoning: true }],
@@ -80,7 +80,7 @@ it("repairs only addressed fields while keeping older settings and their unknown
   expect(JSON.parse(await read())).toEqual({
     ...next,
     palette: "wisteria",
-    toolVisibility: "compact",
+    desktopSendKey: "mod-enter",
     herdrEnabled: true,
     sessionActionOrder: [
       "export",
@@ -88,6 +88,7 @@ it("repairs only addressed fields while keeping older settings and their unknown
       "clone",
       "switch-branch",
       "copy-id",
+      "tool-loadout",
     ],
     recentModelIds: [identity],
   });

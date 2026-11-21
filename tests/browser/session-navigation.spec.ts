@@ -247,7 +247,6 @@ test("catalog search follows curation and reviews the exact Hidden selection", a
   await expect(action("Unpin")).toBeVisible();
   await search.focus();
   await expect(selected).toHaveText("Reports session");
-  await row.hover();
   await action("Hide").click();
   await expect(action("Restore")).toBeVisible();
   await search.focus();
@@ -422,11 +421,9 @@ test("live attention filters and counts the relevant sessions through rail, draw
   });
   await collapse.click();
   const check = async (toggle: Locator, count: string) => {
-    const badge = toggle.locator(
-      ".navigation-toggle__attention > [aria-hidden]",
-    );
-    await expect(badge).toHaveText(count);
-    await expect(badge).toBeInViewport({ ratio: 0.9 });
+    const badge = toggle.locator(".navigation-toggle__attention");
+    await expect(badge.locator(":scope > [aria-hidden]")).toHaveText(count);
+    await expect(badge).toBeInViewport({ ratio: 1 });
   };
   await check(rail, "1");
   await expect(rail).toHaveAccessibleDescription(

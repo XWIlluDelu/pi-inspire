@@ -1,7 +1,5 @@
-import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import type {
   TerminalAttachRequest,
-  TerminalDescriptor,
   TerminalServerControlMessage,
   TerminalServerDataFrame,
 } from "../shared/terminal-contracts";
@@ -11,7 +9,8 @@ import {
   MAX_TERMINAL_INPUT_BYTES,
 } from "../shared/terminal-contracts";
 import { type Api, terminalUrl } from "./api";
-import { BrowserUpgradeRequired, socketTicket } from "./browser-auth";
+import { socketTicket } from "./browser-auth";
+import { sessionValue, setSessionValue } from "./session-storage";
 
 export type TerminalTransportStatus =
   | "connecting"
@@ -43,24 +42,6 @@ const REPLAY_TIMEOUT_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const INACTIVITY_TIMEOUT_MS = 30_000;
 
-function sessionValue(key: string): string | null {
-  try {
-    return window.sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function setSessionValue(key: string, value: string | null): void {
-  try {
-    if (value === null) window.sessionStorage.removeItem(key);
-    else window.sessionStorage.setItem(key, value);
-  } catch {
-    // A privacy-restricted browser may not expose session storage. The live
-    // socket remains fully functional; only seamless writer reclaim is lost.
-  }
-}
-
 function terminalClientId(): string {
   const existing = sessionValue(CLIENT_ID_KEY);
   if (existing) return existing;
@@ -89,10 +70,9 @@ export class TerminalConnection {
   private heartbeatTimer: number | null = null;
   private ticketRequest: AbortController | null = null;
   private lastReceivedAt = 0;
-  private snapshotInProgress = false;
+  private replay: "snapshot" | "delta" | "complete" | null = null;
   private resume: TerminalResumeState = {};
-  private descriptor: TerminalDescriptor | null = null;
-  private replayComplete = false;
+  private outputEpoch: string | null = null;
   private writable = false;
   private nextInputSequence = 1;
   private inputOwnerToken: string | undefined;
@@ -132,7 +112,7 @@ export class TerminalConnection {
   }
 
   sendInput(value: string): boolean {
-    if (!this.writable || !this.replayComplete || !this.isSocketOpen())
+    if (!this.writable || this.replay !== "complete" || !this.isSocketOpen())
       return false;
     const encoded = new TextEncoder().encode(value);
     if (this.pendingInputBytes + encoded.byteLength > MAX_PENDING_INPUT_BYTES) {
@@ -157,12 +137,12 @@ export class TerminalConnection {
   }
 
   resize(cols: number, rows: number): void {
-    if (!this.writable || !this.replayComplete) return;
+    if (!this.writable || this.replay !== "complete") return;
     this.sendControl({ type: "resize", cols, rows });
   }
 
   takeControl(cols: number, rows: number): void {
-    if (!this.replayComplete) return;
+    if (this.replay !== "complete") return;
     this.sendControl({ type: "take_control", cols, rows });
   }
 
@@ -176,16 +156,17 @@ export class TerminalConnection {
       const request = new AbortController();
       this.ticketRequest = request;
       this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal ticket request timed out");
-      const { ticket } = await this.api.json(
-        "terminalAttachTicket",
-        { params: { id: this.terminalId } },
-        request.signal,
-      );
+      const [{ ticket }, admission] = await Promise.all([
+        this.api.json(
+          "terminalAttachTicket",
+          { params: { id: this.terminalId } },
+          request.signal,
+        ),
+        socketTicket("terminal", request.signal),
+      ]);
       if (this.stopped || generation !== this.generation) return;
       this.ticketRequest = null;
       this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal connection timed out");
-      const admission = await socketTicket("terminal");
-      if (this.stopped || generation !== this.generation) return;
       const socket = new WebSocket(terminalUrl(admission));
       socket.binaryType = "arraybuffer";
       this.socket = socket;
@@ -212,9 +193,7 @@ export class TerminalConnection {
         this.lastReceivedAt = Date.now();
         try {
           const data =
-            event.data instanceof Blob
-              ? await event.data.arrayBuffer()
-              : event.data;
+            event.data instanceof Blob ? await event.data.arrayBuffer() : event.data;
           if (!current()) return;
           if (data instanceof ArrayBuffer) {
             this.receiveData(decodeTerminalServerDataFrame(data));
@@ -233,22 +212,12 @@ export class TerminalConnection {
           this.reconnect();
         }
       });
-      socket.addEventListener("close", (event) => {
+      socket.addEventListener("close", () => {
         if (this.stopped || generation !== this.generation) return;
-        if (event.code === BROWSER_UPGRADE_CLOSE) {
-          this.stop();
-          window.dispatchEvent(new Event("inspire-browser-upgrade"));
-        } else this.reconnect();
-      });
-      socket.addEventListener("error", () => {
-        // The close event owns retry and user-visible status.
+        this.reconnect();
       });
     } catch (error) {
       if (this.stopped || generation !== this.generation) return;
-      if (error instanceof BrowserUpgradeRequired) {
-        this.stop();
-        return;
-      }
       this.callbacks.error(
         error instanceof Error ? error.message : "Terminal connection failed",
       );
@@ -257,11 +226,11 @@ export class TerminalConnection {
   }
 
   private receiveData(frame: TerminalServerDataFrame): void {
-    if (!this.descriptor)
+    if (this.outputEpoch === null)
       throw new Error("Terminal output arrived before attachment");
     if (frame.kind === "snapshot") {
       this.resume = {
-        outputEpoch: this.descriptor.outputEpoch,
+        outputEpoch: this.outputEpoch,
         nextOutputOffset: frame.offset,
         resizeRevision: frame.resizeRevision,
       };
@@ -287,15 +256,13 @@ export class TerminalConnection {
   private receiveControl(message: TerminalServerControlMessage): void {
     if (message.type === "attached") {
       if (
-        this.descriptor &&
-        this.descriptor.outputEpoch !== message.terminal.outputEpoch
+        this.outputEpoch !== null &&
+        this.outputEpoch !== message.terminal.outputEpoch
       )
         this.clearPendingInput();
-      this.descriptor = message.terminal;
-      this.writable = message.writable;
-      this.replayComplete = false;
-      this.snapshotInProgress = message.replay === "snapshot";
-      if (this.snapshotInProgress) this.resume = {};
+      this.outputEpoch = message.terminal.outputEpoch;
+      this.replay = message.replay;
+      if (this.replay === "snapshot") this.resume = {};
       else {
         this.resume.outputEpoch = message.terminal.outputEpoch;
         this.resume.resizeRevision = message.terminal.resizeRevision;
@@ -314,8 +281,7 @@ export class TerminalConnection {
         this.resume = {};
         throw new Error("Terminal replay did not reach the live edge");
       }
-      this.replayComplete = true;
-      this.snapshotInProgress = false;
+      this.replay = "complete";
       if (this.deadlineTimer !== null) window.clearTimeout(this.deadlineTimer);
       this.deadlineTimer = null;
       this.reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
@@ -329,7 +295,6 @@ export class TerminalConnection {
     } else if (message.type === "input_ack") {
       this.acknowledgeInput(message.sequence);
     } else if (message.type === "ownership") {
-      this.writable = message.writable;
       this.acceptOwnerState(
         message.writable,
         message.ownerToken,
@@ -337,11 +302,9 @@ export class TerminalConnection {
       );
     } else if (message.type === "resized") {
       this.resume.resizeRevision = message.resizeRevision;
-    } else if (message.type === "descriptor") {
-      this.descriptor = message.terminal;
-    } else if (message.type === "exit") {
-      this.descriptor = message.terminal;
-      this.writable = false;
+    } else if (message.type === "descriptor" || message.type === "exit") {
+      this.outputEpoch = message.terminal.outputEpoch;
+      if (message.type === "exit") this.writable = false;
     } else if (message.type === "error" && message.fatal) {
       this.callbacks.error(message.message);
     }
@@ -353,6 +316,7 @@ export class TerminalConnection {
     token: string | undefined,
     nextSequence: number | undefined,
   ): void {
+    this.writable = writable;
     if (!writable) {
       this.inputOwnerToken = undefined;
       this.clearPendingInput();
@@ -409,7 +373,7 @@ export class TerminalConnection {
   private readonly checkLiveness = (): void => {
     if (
       !this.stopped &&
-      this.replayComplete &&
+      this.replay === "complete" &&
       Date.now() - this.lastReceivedAt >= INACTIVITY_TIMEOUT_MS
     ) {
       this.callbacks.error("Terminal connection stopped responding");
@@ -434,10 +398,9 @@ export class TerminalConnection {
     this.heartbeatTimer = null;
     this.ticketRequest?.abort();
     this.ticketRequest = null;
-    if (this.snapshotInProgress) this.resume = {};
-    this.snapshotInProgress = false;
+    if (this.replay === "snapshot") this.resume = {};
+    this.replay = null;
     this.writable = false;
-    this.replayComplete = false;
     const socket = this.socket;
     this.socket = null;
     if (socket && socket.readyState < WebSocket.CLOSING)

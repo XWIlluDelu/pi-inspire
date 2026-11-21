@@ -77,8 +77,8 @@ it("publishes ordered field changes and retires only the refused intent through 
   );
 
   for (const theme of ["dark", "light", "dark"] as const)
-    store.setPreference("theme", theme);
-  store.setPreference("sessionActionOrder", [...order]);
+    store.preferences.set("theme", theme);
+  store.preferences.set("sessionActionOrder", [...order]);
   await vi.waitFor(() =>
     expect(saves).toHaveBeenCalledExactlyOnceWith({ theme: "dark" }),
   );
@@ -146,17 +146,23 @@ it("keeps an unsuccessfully hidden session outside destructive review", async ()
   await store.init();
   await vi.waitFor(() => expect(store.getState().sessions).toEqual([previous]));
 
-  store.toggleSessionHidden(previous.id);
+  store.preferences.toggleSessionHidden(previous.id);
   expect(store.getState()).toMatchObject({
     curationPending: true,
     prefs: { hiddenSessionIds: [] },
   });
-  await expect(store.deleteSession(previous.id)).resolves.toBeNull();
+  await expect(
+    store.sessionManagement.deleteSession(previous.id),
+  ).resolves.toBeNull();
   save.resolve({ status: 409, body: { error: "Hide refused" } });
   await vi.waitFor(() => expect(store.getState().curationPending).toBe(false));
   expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
-  await expect(store.deleteSession(previous.id)).resolves.toBeNull();
-  await expect(store.clearHiddenSessions([previous.id])).resolves.toBeNull();
+  await expect(
+    store.sessionManagement.deleteSession(previous.id),
+  ).resolves.toBeNull();
+  await expect(
+    store.sessionManagement.clearHiddenSessions([previous.id]),
+  ).resolves.toBeNull();
   expect(remove).not.toHaveBeenCalled();
 });
 
@@ -194,7 +200,9 @@ it.each(["welcome", "continued", "new-intent"] as const)(
     await store.init();
     FakeWebSocket.instances.at(-1)!.join();
     const creating =
-      caseName === "new-intent" ? store.newSession("/work/new") : undefined;
+      caseName === "new-intent"
+        ? store.selection.create("/work/new")
+        : undefined;
     catalog.resolve();
     await vi.waitFor(() =>
       expect(store.getState()).toMatchObject({

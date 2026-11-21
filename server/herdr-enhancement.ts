@@ -1,22 +1,21 @@
 import { join } from "node:path";
+import {
+  isBusyRunState,
+  type SessionRuntimeStatus,
+} from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
-import { HerdrClient } from "./herdr-client.js";
+import { HerdrClient, type HerdrWorkerState } from "./herdr-client.js";
 import {
   assertHerdrWorkerScopesAvailable,
   herdrProcessIsLive,
   stopHerdrProcessGroup,
 } from "./herdr-process-group.js";
 import { HerdrRpcTransport } from "./herdr-rpc-transport.js";
-import {
-  HerdrWorkerObserver,
-  type HerdrWorkerProjection,
-} from "./herdr-worker-observer.js";
 import { HerdrWorkerRegistry } from "./herdr-worker-registry.js";
 import { type PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
 import { inspireStateDirectory, installationKey } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
-import type { RuntimeWorkerStatus } from "./runtime.js";
 
 interface HerdrEnhancementOptions {
   enabled: boolean;
@@ -42,11 +41,6 @@ export function defaultHerdrWorkerDirectory(
  */
 export class HerdrEnhancement {
   private clientInstance: HerdrClient | null;
-  private observerInstance: HerdrWorkerObserver | null = null;
-  private readonly projections = new WeakMap<
-    PiRpcProcess,
-    HerdrWorkerProjection
-  >();
   private initialization: Promise<void> | null = null;
   private initialized = false;
   private recoveryIssue: string | undefined;
@@ -61,13 +55,6 @@ export class HerdrEnhancement {
 
   private get client(): HerdrClient {
     return (this.clientInstance ??= new HerdrClient());
-  }
-
-  private get observer(): HerdrWorkerObserver {
-    return (this.observerInstance ??= new HerdrWorkerObserver({
-      client: this.client,
-      onError: (error) => this.recordError("herdr_projection_failed", error),
-    }));
   }
 
   private recordError(event: string, error: unknown): void {
@@ -177,16 +164,53 @@ export class HerdrEnhancement {
         return transport;
       },
     });
-    const projection = this.observer.observe(
-      () => transport?.workerPane ?? null,
-    );
-    this.projections.set(rpc, projection);
+    // Only this worker can publish to its pane. Coalesce status changes while Herdr is writing.
+    let latest: { sessionId: string; state: HerdrWorkerState } | null = null;
+    let writing = false;
+    let sequence = Date.now() * 1_000;
+    const report = async () => {
+      writing = true;
+      try {
+        while (latest && transport?.workerPane) {
+          const next = latest;
+          try {
+            await this.client.reportWorker(transport.workerPane, {
+              ...next,
+              seq: ++sequence,
+            });
+          } catch (error) {
+            this.recordError("herdr_projection_failed", error);
+            if (latest === next) latest = null;
+            continue;
+          }
+          if (
+            latest?.sessionId === next.sessionId &&
+            latest.state === next.state
+          )
+            break;
+        }
+      } finally {
+        writing = false;
+      }
+    };
+    const update = (sessionId: string, status: SessionRuntimeStatus) => {
+      if (!transport?.workerPane) return;
+      const state = status.needsInput
+        ? "blocked"
+        : isBusyRunState(status.runState)
+          ? "working"
+          : "idle";
+      if (latest?.sessionId === sessionId && latest.state === state) return;
+      latest = { sessionId, state };
+      if (!writing) void report();
+    };
     const dispose = () => {
-      this.projections.delete(rpc);
+      latest = null;
+      rpc.off("worker_status", update);
       rpc.off("exit", dispose);
       rpc.off("stopped", dispose);
-      void projection.dispose();
     };
+    rpc.on("worker_status", update);
     rpc.once("exit", dispose);
     rpc.once("stopped", dispose);
     return rpc;
@@ -194,10 +218,6 @@ export class HerdrEnhancement {
 
   get enhancedWorkersEnabled(): boolean {
     return this.options.enabled;
-  }
-
-  updateWorkerStatus(rpc: PiRpcProcess, status: RuntimeWorkerStatus): void {
-    this.projections.get(rpc)?.update(status);
   }
 
   async status(): Promise<HerdrEnhancementStatus> {

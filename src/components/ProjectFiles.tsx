@@ -140,18 +140,23 @@ const PICKER_CONSTRAINTS: FloatingMenuConstraints = {
   maxHeight: 320,
 };
 
+export type ProjectFileSearch = (
+  query: string,
+  signal: AbortSignal,
+) => Promise<ProjectFileSearchResult>;
+
 interface ProjectFilePickerProps {
   scope: string;
   showHidden: boolean;
   onShowHiddenChange: (value: boolean) => void;
   selected: readonly string[];
   disabled?: boolean;
-  search: (query: string) => Promise<ProjectFileSearchResult>;
+  search: ProjectFileSearch;
   onAdd: (file: ProjectFileResult) => void;
 }
 
 export function useProjectFileSearch(
-  search: ProjectFilePickerProps["search"] | undefined,
+  search: ProjectFileSearch | undefined,
   query: string | undefined,
   scope: string | null | undefined,
   showHidden: boolean,
@@ -177,7 +182,7 @@ export function useProjectFileSearch(
     };
     const timer = setTimeout(() => {
       void request
-        .read(() => search(query))
+        .read((signal) => search(query, signal))
         .then(
           (result) =>
             publish({

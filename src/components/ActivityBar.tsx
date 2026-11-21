@@ -7,22 +7,24 @@ import { PiLoader } from "./PiLoader";
 function RetryStatus({
   label,
   reason,
-  tone,
+  status,
+  compacting = false,
 }: {
   label: string;
   reason?: string;
-  tone: "activity-event" | "warning";
+  status: string;
+  compacting?: boolean;
 }) {
-  const Icon = tone === "warning" ? AlertTriangle : PiLoader;
+  const Icon = compacting ? PiLoader : AlertTriangle;
   return (
-    <span className={`chip chip--${tone} chip--live activity__retry`}>
-      <span className="activity__retry-label">
-        <Icon size={12} aria-hidden />
-        {label}
-      </span>
-      {reason ? (
-        <span className="activity__retry-reason"> — {reason}</span>
-      ) : null}
+    <span
+      className={`chip chip--${compacting ? "activity-event" : "warning"} chip--live`}
+      role="status"
+      aria-label={status}
+      title={reason}
+    >
+      <Icon size={12} aria-hidden />
+      {label}
     </span>
   );
 }
@@ -56,58 +58,29 @@ export const ActivityBar = memo(function ActivityBar({
 
   return (
     <div className="activity">
-      {compacting ? (
-        <div
-          className="activity__live"
-          role="status"
-          aria-label="Context compaction status"
-        >
-          <RetryStatus
-            tone="activity-event"
-            label={
-              summaryRetry
-                ? `Compaction retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`
-                : "Compacting context"
-            }
-            reason={summaryRetry?.message}
-          />
-        </div>
-      ) : null}
-      {!compacting && summaryRetry ? (
-        <div
-          className="activity__live"
-          role="status"
-          aria-label="Summary retry status"
-        >
-          <RetryStatus
-            tone="warning"
-            label={`Summary retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`}
-            reason={summaryRetry.message}
-          />
-        </div>
+      {compacting || summaryRetry ? (
+        <RetryStatus
+          compacting={compacting}
+          status={compacting ? "Context compaction status" : "Summary retry status"}
+          label={
+            compacting
+              ? summaryRetry ? "Retrying compaction" : "Compacting context"
+              : "Retrying summary"
+          }
+          reason={summaryRetry?.message}
+        />
       ) : null}
       {retrying ? (
-        <div
-          className="activity__live"
-          role="status"
-          aria-label="Retry status"
-          aria-atomic="false"
-        >
-          <RetryStatus
-            tone="warning"
-            label={
-              state.retry
-                ? `Retry ${state.retry.attempt}/${state.retry.maxAttempts}`
-                : "Retrying"
-            }
-            reason={state.retry?.message}
-          />
-        </div>
+        <RetryStatus
+          status="Retry status"
+          label="Retrying"
+          reason={state.retry?.message}
+        />
       ) : null}
       {pending > 0 ? (
         <button
           type="button"
-          className="chip chip--info activity__pending"
+          className="chip activity__pending"
           onClick={onJumpToPending}
           aria-label={`Jump to ${pending} pending ${pending === 1 ? "item" : "items"}`}
           title="Jump to Pending input"

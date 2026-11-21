@@ -40,9 +40,15 @@ export async function openFixtureSession(
     (await page.locator(".nav--rail").count())
   )
     await toggle.click();
+  // Copies can share these fixture titles, including after curation changes.
+  sessionId ??= title.source === "Review extension event lifecycle"
+    ? "fixture-history"
+    : title.source === "Formula rendering and spectral analysis"
+      ? "fixture-active"
+      : undefined;
   const row = sessionId
     ? page.locator(`[data-session-id="${sessionId}"] .nav__row-main`)
-    : page.locator(".nav__row-main").filter({ hasText: title });
+    : page.locator(".nav__list .nav__row-main").filter({ hasText: title });
   // Native creations can page an older sample out of Recent. Use real search
   // to locate that identity, then leave the next interaction an unfiltered nav.
   const searched = sessionId !== undefined && (await row.count()) === 0;
@@ -75,11 +81,7 @@ export async function openFixtureSession(
 
 export async function pairAndOpen(page: Page) {
   await pairedPage(page);
-  await openFixtureSession(
-    page,
-    /Review extension event lifecycle/,
-    "fixture-history",
-  );
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();
@@ -156,25 +158,8 @@ export async function openProjectTerminal(page: Page) {
   await palette.getByRole("option", { name: /^Open Terminal$/ }).click();
 }
 
-/** Opens Settings from the header, or from the navigation drawer on narrow layouts. */
 export async function openSettings(page: Page) {
-  // Decide from the viewport, not the header's current DOM: a resize just
-  // before this call may still be unmounting the header control.
-  if (page.viewportSize()!.width > 900) {
-    await page
-      .locator(".topbar")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
-    return;
-  }
-  const drawer = page
-    .locator(".nav")
-    .getByRole("button", { name: "Settings", exact: true });
-  if (!(await drawer.isVisible()))
-    await page
-      .getByRole("button", { name: "Toggle navigation", exact: true })
-      .click();
-  await drawer.click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
 }
 
 /** Use persistent desktop search or open the local narrow tool row. */

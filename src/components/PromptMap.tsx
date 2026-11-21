@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Paperclip } from "lucide-react";
+import { Paperclip, X } from "lucide-react";
 import {
   type CSSProperties,
   useEffect,
@@ -13,7 +13,6 @@ import {
   type UserTurnAnchor,
 } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-
 const ROW_HEIGHT = 40;
 const MAX_TICKS = 12;
 
@@ -53,65 +52,277 @@ function FlatChevron({ direction }: { direction: "up" | "down" }) {
   );
 }
 
+function centeredScrollOffset(
+  total: number,
+  target: number,
+  viewportHeight: number,
+): number {
+  if (total === 0) return 0;
+  const maxOffset = Math.max(0, total * ROW_HEIGHT - viewportHeight);
+  return Math.max(
+    0,
+    Math.min(
+      target * ROW_HEIGHT - Math.max(0, (viewportHeight - ROW_HEIGHT) / 2),
+      maxOffset,
+    ),
+  );
+}
+
+function PromptMapFlyout({
+  turns,
+  total,
+  activeOrdinal,
+  loadedStarts,
+  loadingStarts,
+  error,
+  navigating,
+  retryOrdinal,
+  onLoad,
+  onNavigate,
+}: {
+  turns: readonly UserTurnAnchor[];
+  total: number;
+  activeOrdinal: number | null;
+  loadedStarts: readonly number[];
+  loadingStarts: readonly number[];
+  error: string | null;
+  navigating: boolean;
+  retryOrdinal: number | null;
+  onLoad: (start?: number) => Promise<readonly UserTurnAnchor[]>;
+  onNavigate: (ordinal: number) => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const initializedRef = useRef(false);
+  const followedOrdinalRef = useRef<number | null>(null);
+  const listUserOwnedRef = useRef(false);
+  const turnByOrdinal = useMemo(
+    () => new Map(turns.map((turn) => [turn.ordinal, turn])),
+    [turns],
+  );
+  const initialViewportHeight = Math.max(1, Math.min(total, 12)) * ROW_HEIGHT;
+  const virtualizer = useVirtualizer({
+    enabled: total > 0,
+    count: total,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    initialRect: { width: 280, height: initialViewportHeight },
+    initialOffset: () =>
+      centeredScrollOffset(
+        total,
+        activeOrdinal ?? Math.max(0, total - 1),
+        initialViewportHeight,
+      ),
+    getItemKey: (index) => turnByOrdinal.get(index)?.id ?? `prompt:${index}`,
+    overscan: 8,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+
+  useLayoutEffect(() => {
+    if (total === 0) return;
+    const firstOpen = !initializedRef.current;
+    initializedRef.current = true;
+    const target = activeOrdinal ?? total - 1;
+    if (!firstOpen && listUserOwnedRef.current) return;
+    if (!firstOpen && followedOrdinalRef.current === target) return;
+    followedOrdinalRef.current = target;
+    const list = listRef.current;
+    if (firstOpen && list) {
+      const viewportHeight = list.clientHeight || initialViewportHeight;
+      const centered = centeredScrollOffset(total, target, viewportHeight);
+      if (Math.abs(list.scrollTop - centered) > 1) {
+        list.scrollTop = centered;
+        virtualizer.scrollToOffset(centered, { behavior: "auto" });
+      }
+      return;
+    }
+    virtualizer.scrollToIndex(target, {
+      align: "auto",
+      behavior: "auto",
+    });
+  }, [activeOrdinal, initialViewportHeight, total, virtualizer]);
+
+  useEffect(() => {
+    if (error || virtualItems.length === 0) return;
+    const starts = new Set<number>();
+    for (const item of virtualItems) {
+      if (!turnByOrdinal.has(item.index))
+        starts.add(Math.floor(item.index / PAGE_SIZE) * PAGE_SIZE);
+    }
+    for (const start of starts) {
+      if (!loadedStarts.includes(start) && !loadingStarts.includes(start))
+        void onLoad(start);
+    }
+  }, [
+    error,
+    loadedStarts,
+    loadingStarts,
+    onLoad,
+    turnByOrdinal,
+    virtualItems,
+  ]);
+
+  const outlineRetryStart = (() => {
+    const missing = virtualItems.find((item) => !turnByOrdinal.has(item.index));
+    return missing
+      ? Math.floor(missing.index / PAGE_SIZE) * PAGE_SIZE
+      : undefined;
+  })();
+
+  return (
+    <div className="prompt-map__flyout">
+      <div
+        ref={listRef}
+        className="prompt-map__list"
+        role="list"
+        aria-label="User prompts"
+        tabIndex={0}
+        onPointerDown={() => {
+          listUserOwnedRef.current = true;
+        }}
+        onWheel={() => {
+          listUserOwnedRef.current = true;
+        }}
+        onTouchStart={() => {
+          listUserOwnedRef.current = true;
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            listUserOwnedRef.current = true;
+            virtualizer.scrollToOffset(
+              event.key === "Home" ? 0 : virtualizer.getTotalSize(),
+              { behavior: "instant" },
+            );
+          } else if (
+            ["ArrowDown", "ArrowUp", "PageDown", "PageUp", " "].includes(
+              event.key,
+            )
+          ) {
+            listUserOwnedRef.current = true;
+          }
+        }}
+      >
+        {total === 0 ? (
+          <p className="prompt-map__empty">No user prompts</p>
+        ) : (
+          <div
+            className="prompt-map__virtual"
+            style={{ height: virtualizer.getTotalSize() }}
+          >
+            {virtualItems.map((item) => {
+              const turn = turnByOrdinal.get(item.index);
+              return (
+                <div
+                  key={item.key}
+                  data-index={item.index}
+                  className="prompt-map__virtual-row"
+                  role="listitem"
+                  style={{ transform: `translateY(${item.start}px)` }}
+                >
+                  {turn ? (
+                    <button
+                      type="button"
+                      className={`prompt-map__turn ${item.index === activeOrdinal ? "prompt-map__turn--active" : ""}`}
+                      aria-current={
+                        item.index === activeOrdinal ? "location" : undefined
+                      }
+                      disabled={navigating}
+                      title={turn.snippet}
+                      onClick={() => onNavigate(item.index)}
+                    >
+                      <span className="prompt-map__ordinal">
+                        {item.index + 1}.
+                      </span>
+                      <span className="prompt-map__snippet">
+                        {turn.snippet}
+                      </span>
+                      {turn.attachmentCount > 0 ? (
+                        <span className="prompt-map__attachments">
+                          <Paperclip size={11} aria-hidden />
+                          <span aria-hidden>{turn.attachmentCount}</span>
+                          <span className="visually-hidden">
+                            {turn.attachmentCount}{" "}
+                            {turn.attachmentCount === 1
+                              ? "attachment"
+                              : "attachments"}
+                          </span>
+                        </span>
+                      ) : null}
+                    </button>
+                  ) : (
+                    <div
+                      className="prompt-map__skeleton"
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {loadingStarts.length > 0 ? (
+        <span className="visually-hidden" role="status">
+          Loading user prompts
+        </span>
+      ) : null}
+      {error || retryOrdinal !== null ? (
+        <button
+          type="button"
+          className="prompt-map__error"
+          title={error ?? "Prompt navigation failed"}
+          onClick={() =>
+            retryOrdinal === null
+              ? void onLoad(outlineRetryStart)
+              : onNavigate(retryOrdinal)
+          }
+        >
+          Retry prompt navigation
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function PromptMap({
   container,
-  mobileActive = false,
+  mobileActive,
   onDismissMobile,
   turns,
   total,
   activeOrdinal,
   loadedStarts,
   loadingStarts,
-  navigatingOrdinal,
   error,
   onLoad,
   onNavigate,
 }: {
   container?: HTMLElement | null;
-  mobileActive?: boolean;
-  onDismissMobile?: () => void;
+  mobileActive: boolean;
+  onDismissMobile: () => void;
   turns: readonly UserTurnAnchor[];
   total: number;
   activeOrdinal: number | null;
   loadedStarts: readonly number[];
   loadingStarts: readonly number[];
-  navigatingOrdinal: number | null;
   error: string | null;
   onLoad: (start?: number) => Promise<readonly UserTurnAnchor[]>;
   onNavigate: (ordinal: number) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
-  const [localNavigating, setLocalNavigating] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const [retryOrdinal, setRetryOrdinal] = useState<number | null>(null);
   const [tickWindowStart, setTickWindowStart] = useState(() =>
     centeredTickWindowStart(total, activeOrdinal),
   );
   const navRef = useRef<HTMLElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const disclosureFocusRef = useRef<"open" | "closed" | "escape" | null>(null);
   const pointerFocusRef = useRef(false);
   const hoverOpenTimerRef = useRef<number | null>(null);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const navigatingRef = useRef(false);
-  const wasOpenRef = useRef(false);
-  const followedOrdinalRef = useRef<number | null>(null);
-  const listUserOwnedRef = useRef(false);
   const previousTickOrdinalRef = useRef(activeOrdinal);
-  const previousMobileActiveRef = useRef(mobileActive);
-  const turnByOrdinal = useMemo(
-    () => new Map(turns.map((turn) => [turn.ordinal, turn])),
-    [turns],
-  );
-  const virtualizer = useVirtualizer({
-    enabled: open && total > 0,
-    count: total,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    getItemKey: (index) => turnByOrdinal.get(index)?.id ?? `prompt:${index}`,
-    overscan: 8,
-  });
-  const virtualItems = virtualizer.getVirtualItems();
 
   useLayoutEffect(() => {
     const previousOrdinal = previousTickOrdinalRef.current;
@@ -156,8 +367,8 @@ export function PromptMap({
       const columnLeft = column ? column.left : rect.left + rect.width / 2;
       const columnRight = column ? column.right : rect.left + rect.width / 2;
       const gap = rect.right - columnRight;
-      const offset = Math.max(28, Math.min(gap * 0.5, 72));
-      const x = Math.max(columnLeft - offset, rect.left + 14);
+      const offset = Math.max(30, Math.min(gap * 0.5, 72));
+      const x = Math.max(columnLeft - offset, rect.left + 18);
       const y = rect.top + rect.height / 2;
 
       if (open) {
@@ -193,9 +404,9 @@ export function PromptMap({
     };
   }, [container, mobileActive, open]);
 
-  useEffect(() => {
-    if (previousMobileActiveRef.current && !mobileActive) setOpen(false);
-    previousMobileActiveRef.current = mobileActive;
+  useLayoutEffect(() => {
+    if (mobileActive) navRef.current?.focus({ preventScroll: true });
+    else setOpen(false);
   }, [mobileActive]);
 
   useEffect(
@@ -208,29 +419,11 @@ export function PromptMap({
     [],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) {
       pointerFocusRef.current = false;
-      wasOpenRef.current = false;
-      followedOrdinalRef.current = null;
-      listUserOwnedRef.current = false;
-      return;
     }
-    if (total === 0) return;
-    const firstOpen = !wasOpenRef.current;
-    wasOpenRef.current = true;
-    const target = activeOrdinal ?? total - 1;
-    if (!firstOpen && listUserOwnedRef.current) return;
-    if (!firstOpen && followedOrdinalRef.current === target) return;
-    followedOrdinalRef.current = target;
-    const frame = requestAnimationFrame(() => {
-      if (!listUserOwnedRef.current)
-        virtualizer.scrollToIndex(target, {
-          align: firstOpen ? "center" : "auto",
-        });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [activeOrdinal, open, total, virtualizer.scrollToIndex]);
+  }, [open]);
 
   useLayoutEffect(() => {
     if (disclosureFocusRef.current === "open" && open) {
@@ -260,31 +453,10 @@ export function PromptMap({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open || error || virtualItems.length === 0) return;
-    const starts = new Set<number>();
-    for (const item of virtualItems) {
-      if (!turnByOrdinal.has(item.index))
-        starts.add(Math.floor(item.index / PAGE_SIZE) * PAGE_SIZE);
-    }
-    for (const start of starts) {
-      if (!loadedStarts.includes(start) && !loadingStarts.includes(start))
-        void onLoad(start);
-    }
-  }, [
-    error,
-    loadedStarts,
-    loadingStarts,
-    onLoad,
-    open,
-    turnByOrdinal,
-    virtualItems,
-  ]);
-
   const navigate = async (ordinal: number) => {
     if (navigatingRef.current) return;
     navigatingRef.current = true;
-    setLocalNavigating(true);
+    setNavigating(true);
     setRetryOrdinal(null);
     try {
       if (!(await onNavigate(ordinal))) {
@@ -300,16 +472,9 @@ export function PromptMap({
       setRetryOrdinal(ordinal);
     } finally {
       navigatingRef.current = false;
-      setLocalNavigating(false);
+      setNavigating(false);
     }
   };
-  const navigating = navigatingOrdinal !== null || localNavigating;
-  const outlineRetryStart = (() => {
-    const missing = virtualItems.find((item) => !turnByOrdinal.has(item.index));
-    return missing
-      ? Math.floor(missing.index / PAGE_SIZE) * PAGE_SIZE
-      : undefined;
-  })();
   const previousDisabled =
     navigating || activeOrdinal === null || activeOrdinal <= 0;
   const nextDisabled =
@@ -352,6 +517,18 @@ export function PromptMap({
     }, 120);
   };
 
+  const closeButton = mobileActive && (
+    <button
+      type="button"
+      className="icon-button prompt-map__close"
+      aria-label="Close prompt map"
+      title="Close prompt map"
+      onClick={onDismissMobile}
+    >
+      <X size={14} aria-hidden />
+    </button>
+  );
+
   return (
     <nav
       ref={navRef}
@@ -392,13 +569,14 @@ export function PromptMap({
           event.stopPropagation();
           disclosureFocusRef.current = "escape";
           setOpen(false);
-        } else if (mobileActive && onDismissMobile) {
+        } else if (mobileActive) {
           event.preventDefault();
           event.stopPropagation();
           onDismissMobile();
         }
       }}
     >
+      {open && closeButton}
       <button
         type="button"
         className="prompt-map__step prompt-map__step--previous"
@@ -414,119 +592,20 @@ export function PromptMap({
 
       <div className="prompt-map__body">
         {open ? (
-          <div className="prompt-map__flyout">
-            <div
-              ref={listRef}
-              className="prompt-map__list"
-              role="list"
-              aria-label="User prompts"
-              tabIndex={0}
-              onPointerDown={() => {
-                listUserOwnedRef.current = true;
-              }}
-              onWheel={() => {
-                listUserOwnedRef.current = true;
-              }}
-              onTouchStart={() => {
-                listUserOwnedRef.current = true;
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Home" || event.key === "End") {
-                  event.preventDefault();
-                  listUserOwnedRef.current = true;
-                  event.currentTarget.scrollTop =
-                    event.key === "Home" ? 0 : event.currentTarget.scrollHeight;
-                } else if (
-                  ["ArrowDown", "ArrowUp", "PageDown", "PageUp", " "].includes(
-                    event.key,
-                  )
-                ) {
-                  listUserOwnedRef.current = true;
-                }
-              }}
-            >
-              {total === 0 ? (
-                <p className="prompt-map__empty">No user prompts</p>
-              ) : (
-                <div
-                  className="prompt-map__virtual"
-                  style={{ height: virtualizer.getTotalSize() }}
-                >
-                  {virtualItems.map((item) => {
-                    const turn = turnByOrdinal.get(item.index);
-                    return (
-                      <div
-                        key={item.key}
-                        ref={virtualizer.measureElement}
-                        data-index={item.index}
-                        className="prompt-map__virtual-row"
-                        role="listitem"
-                        style={{ transform: `translateY(${item.start}px)` }}
-                      >
-                        {turn ? (
-                          <button
-                            type="button"
-                            className={`prompt-map__turn ${item.index === activeOrdinal ? "prompt-map__turn--active" : ""}`}
-                            aria-current={
-                              item.index === activeOrdinal
-                                ? "location"
-                                : undefined
-                            }
-                            disabled={navigating}
-                            title={turn.snippet}
-                            onClick={() => void navigate(item.index)}
-                          >
-                            <span className="prompt-map__ordinal">
-                              {item.index + 1}.
-                            </span>
-                            <span className="prompt-map__snippet">
-                              {turn.snippet}
-                            </span>
-                            {turn.attachmentCount > 0 ? (
-                              <span className="prompt-map__attachments">
-                                <Paperclip size={11} aria-hidden />
-                                <span aria-hidden>{turn.attachmentCount}</span>
-                                <span className="visually-hidden">
-                                  {turn.attachmentCount}{" "}
-                                  {turn.attachmentCount === 1
-                                    ? "attachment"
-                                    : "attachments"}
-                                </span>
-                              </span>
-                            ) : null}
-                          </button>
-                        ) : (
-                          <div
-                            className="prompt-map__skeleton"
-                            aria-hidden="true"
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            {loadingStarts.length > 0 ? (
-              <span className="visually-hidden" role="status">
-                Loading user prompts
-              </span>
-            ) : null}
-            {error || retryOrdinal !== null ? (
-              <button
-                type="button"
-                className="prompt-map__error"
-                title={error ?? "Prompt navigation failed"}
-                onClick={() =>
-                  retryOrdinal === null
-                    ? void onLoad(outlineRetryStart)
-                    : void navigate(retryOrdinal)
-                }
-              >
-                Retry prompt navigation
-              </button>
-            ) : null}
-          </div>
+          <PromptMapFlyout
+            turns={turns}
+            total={total}
+            activeOrdinal={activeOrdinal}
+            loadedStarts={loadedStarts}
+            loadingStarts={loadingStarts}
+            error={error}
+            navigating={navigating}
+            retryOrdinal={retryOrdinal}
+            onLoad={onLoad}
+            onNavigate={(ordinal) => {
+              void navigate(ordinal);
+            }}
+          />
         ) : (
           <button
             ref={toggleRef}
@@ -588,6 +667,7 @@ export function PromptMap({
       >
         <FlatChevron direction="down" />
       </button>
+      {!open && closeButton}
     </nav>
   );
 }

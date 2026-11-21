@@ -53,8 +53,12 @@ import {
 } from "../../shared/terminal-contracts";
 import { createApi } from "../api";
 import { showBrowserNotification } from "../browser-notifications";
-import { terminalOperations } from "../controllers/terminal-operation-controller";
+import {
+  TerminalChangePending,
+  terminalOperations,
+} from "../controllers/terminal-operation-controller";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { sessionValue, setSessionValue } from "../session-storage";
 import {
   hasTerminalInsertion,
   subscribeTerminalActions,
@@ -151,23 +155,6 @@ function readTerminalLaunchTarget(): TerminalLaunchTarget | null {
   return { id, focus: params.get("terminalFocus") === "1" };
 }
 
-function storedActiveTerminal(cwd: string): string | null {
-  try {
-    return sessionStorage.getItem(`${ACTIVE_KEY_PREFIX}${cwd}`);
-  } catch {
-    return null;
-  }
-}
-
-function storeActiveTerminal(cwd: string, id: string | null): void {
-  try {
-    if (id) sessionStorage.setItem(`${ACTIVE_KEY_PREFIX}${cwd}`, id);
-    else sessionStorage.removeItem(`${ACTIVE_KEY_PREFIX}${cwd}`);
-  } catch {
-    // Selection persistence is a convenience; terminal authority is remote.
-  }
-}
-
 function terminalLabel(terminal: TerminalDescriptor): string {
   const title = terminal.title.trim();
   return title || terminal.shellLabel || "Terminal";
@@ -190,10 +177,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
   onCommandComplete,
 }: WorkspaceDockProps) {
   const api = useMemo(() => createApi(), []);
-  const recoveryOperations = useSyncExternalStore(
-    terminalOperations.subscribe,
-    terminalOperations.snapshot,
-  );
   const launchTarget = useMemo(readTerminalLaunchTarget, []);
   const lastSessionCwdRef = useRef(sessionCwd);
   const [cwd, setCwd] = useState(sessionCwd);
@@ -254,18 +237,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
   const terminalActionHandlerRef = useRef<
     (intent: TerminalActionIntent) => boolean
   >(() => false);
-
-  useEffect(() => {
-    try {
-      terminalOperations.restore();
-    } catch (restoreError) {
-      setError(
-        restoreError instanceof Error
-          ? restoreError.message
-          : "Terminal operation recovery failed",
-      );
-    }
-  }, []);
 
   useLayoutEffect(() => {
     catalogController.active = true;
@@ -333,16 +304,16 @@ export const WorkspaceDock = memo(function WorkspaceDock({
         setLoading(true);
         setError(null);
       }
+      void terminalOperations.resume();
       try {
         const next = await api.json("terminals", { query: { cwd } });
         if (!current() || !catalogController.replace(next)) return;
-        if (!poll)
-          setActiveId((id) => {
-            const preferred = id ?? storedActiveTerminal(cwd);
-            return next.terminals.some((terminal) => terminal.id === preferred)
-              ? preferred
-              : (next.terminals[0]?.id ?? null);
-          });
+        setActiveId((id) => {
+          const preferred = id ?? sessionValue(ACTIVE_KEY_PREFIX + cwd);
+          return next.terminals.some((terminal) => terminal.id === preferred)
+            ? preferred
+            : (next.terminals[0]?.id ?? null);
+        });
       } catch (error) {
         if (!poll && current())
           setError(
@@ -411,7 +382,8 @@ export const WorkspaceDock = memo(function WorkspaceDock({
   );
 
   useEffect(() => {
-    if (active && cwd && catalog) storeActiveTerminal(cwd, activeId);
+    if (active && cwd && catalog)
+      setSessionValue(ACTIVE_KEY_PREFIX + cwd, activeId);
     const ids = new Set(terminals.map((terminal) => terminal.id));
     const selected = active ? activeId : null;
     setOpenedIds((current) => {
@@ -493,7 +465,10 @@ export const WorkspaceDock = memo(function WorkspaceDock({
       try {
         await perform();
       } catch (error) {
-        if (catalogController.active)
+        if (
+          catalogController.active &&
+          !(error instanceof TerminalChangePending)
+        )
           setError(error instanceof Error ? error.message : fallback);
       }
     },
@@ -1052,19 +1027,21 @@ export const WorkspaceDock = memo(function WorkspaceDock({
           </button>
         </>
       )}
-      <button
-        type="button"
-        className="icon-button terminal-toolbar__focus"
-        onClick={() => dispatchTerminalAction("focus")}
-        aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
-        title={focused ? "Exit focus" : "Focus terminal"}
-      >
-        {focused ? (
-          <Minimize2 size={16} aria-hidden />
-        ) : (
-          <Maximize2 size={16} aria-hidden />
-        )}
-      </button>
+      {terminals.length > 0 || focused ? (
+        <button
+          type="button"
+          className="icon-button terminal-toolbar__focus"
+          onClick={() => dispatchTerminalAction("focus")}
+          aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
+          title={focused ? "Exit focus" : "Focus terminal"}
+        >
+          {focused ? (
+            <Minimize2 size={16} aria-hidden />
+          ) : (
+            <Maximize2 size={16} aria-hidden />
+          )}
+        </button>
+      ) : null}
       <details
         className="terminal-menu"
         name={menuGroupName}
@@ -1122,27 +1099,14 @@ export const WorkspaceDock = memo(function WorkspaceDock({
                   <Icon size={14} aria-hidden /> {label}
                 </button>
               ))}
-              <details
-                className="terminal-menu__group"
-                data-terminal-menu-group
-              >
-                <DetailSummary>
-                  <Monitor size={14} aria-hidden /> Display
-                </DetailSummary>
+              <details className="terminal-menu__group" data-terminal-menu-group>
+                <DetailSummary><Monitor size={14} aria-hidden /> Display</DetailSummary>
                 <div>
-                  {(
-                    [
-                      ["clear", "Clear local scrollback", Eraser],
-                      ["reset", "Reset terminal display", RotateCcw],
-                    ] as const
-                  ).map(([action, label, Icon]) => (
-                    <button
-                      key={action}
-                      type="button"
-                      onClick={(event) =>
-                        currentView.invoke(action, event.currentTarget)
-                      }
-                    >
+                  {([
+                    ["clear", "Clear local scrollback", Eraser],
+                    ["reset", "Reset terminal display", RotateCcw],
+                  ] as const).map(([action, label, Icon]) => (
+                    <button key={action} type="button" onClick={(event) => currentView.invoke(action, event.currentTarget)}>
                       <Icon size={14} aria-hidden /> {label}
                     </button>
                   ))}
@@ -1150,16 +1114,8 @@ export const WorkspaceDock = memo(function WorkspaceDock({
               </details>
             </div>
           )}
-          <button
-            type="button"
-            className="terminal-menu__focus"
-            onClick={() => dispatchTerminalAction("focus")}
-          >
-            {focused ? (
-              <Minimize2 size={14} aria-hidden />
-            ) : (
-              <Maximize2 size={14} aria-hidden />
-            )}
+          <button type="button" className="terminal-menu__focus" onClick={() => dispatchTerminalAction("focus")}>
+            {focused ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
             {focused ? "Exit focused terminal" : "Focus terminal"}
           </button>
           {activeTerminal ? (
@@ -1173,53 +1129,48 @@ export const WorkspaceDock = memo(function WorkspaceDock({
               >
                 <ExternalLink size={14} aria-hidden /> Open in window
               </button>
-              <details
-                className="terminal-menu__group"
-                data-terminal-menu-group
-              >
-                <DetailSummary>
-                  <SquareTerminal size={14} aria-hidden /> Manage terminal
-                </DetailSummary>
+              <details className="terminal-menu__group" data-terminal-menu-group>
+                <DetailSummary><SquareTerminal size={14} aria-hidden /> Manage terminal</DetailSummary>
                 <div>
-                  {([-1, 1] as const).map((step) => {
-                    const target =
-                      terminals[terminals.indexOf(activeTerminal) + step];
-                    if (!target) return null;
-                    const Icon = step < 0 ? ArrowLeft : ArrowRight;
-                    return (
-                      <button
-                        key={step}
-                        type="button"
-                        onClick={() => moveTerminal(activeTerminal, step)}
-                      >
-                        <Icon size={14} aria-hidden />{" "}
-                        {step < 0 ? "Move tab left" : "Move tab right"}
-                      </button>
-                    );
-                  })}
+              {([-1, 1] as const).map((step) => {
+                const target =
+                  terminals[terminals.indexOf(activeTerminal) + step];
+                if (!target) return null;
+                const Icon = step < 0 ? ArrowLeft : ArrowRight;
+                return (
                   <button
+                    key={step}
                     type="button"
-                    data-terminal-focus-trigger
-                    onClick={() => dispatchTerminalAction("restart")}
+                    onClick={() => moveTerminal(activeTerminal, step)}
                   >
-                    <RotateCcw size={14} aria-hidden /> Restart
+                    <Icon size={14} aria-hidden />{" "}
+                    {step < 0 ? "Move tab left" : "Move tab right"}
                   </button>
-                  <button
-                    type="button"
-                    className="terminal-menu__danger"
-                    onClick={() => dispatchTerminalAction("close")}
-                  >
-                    <Trash2 size={14} aria-hidden /> Close
-                  </button>
-                  {activeTerminal.status === "running" ? (
-                    <button
-                      type="button"
-                      className="terminal-menu__danger"
-                      onClick={() => void closeTerminal(activeTerminal, true)}
-                    >
-                      <X size={14} aria-hidden /> Force terminate
-                    </button>
-                  ) : null}
+                );
+              })}
+              <button
+                type="button"
+                data-terminal-focus-trigger
+                onClick={() => dispatchTerminalAction("restart")}
+              >
+                <RotateCcw size={14} aria-hidden /> Restart
+              </button>
+              <button
+                type="button"
+                className="terminal-menu__danger"
+                onClick={() => dispatchTerminalAction("close")}
+              >
+                <Trash2 size={14} aria-hidden /> Close
+              </button>
+              {activeTerminal.status === "running" ? (
+                <button
+                  type="button"
+                  className="terminal-menu__danger"
+                  onClick={() => void closeTerminal(activeTerminal, true)}
+                >
+                  <X size={14} aria-hidden /> Force terminate
+                </button>
+              ) : null}
                 </div>
               </details>
             </>
@@ -1480,91 +1431,6 @@ export const WorkspaceDock = memo(function WorkspaceDock({
               <X size={13} aria-hidden />
             </button>
           </div>
-        ) : null}
-        {recoveryOperations.length > 0 ? (
-          <section
-            className="terminal-pending"
-            aria-label="Terminal control recovery"
-          >
-            {recoveryOperations.map((operation) => (
-              <div
-                className="terminal-pending__row"
-                role="status"
-                key={operation.key}
-              >
-                <span className="terminal-pending__description">
-                  <span
-                    className="terminal-pending__label"
-                    title={operation.label}
-                  >
-                    {operation.label}
-                  </span>
-                  <span>
-                    {operation.outcome !== "unknown"
-                      ? `${operation.outcome === "completed" ? "Completed" : "Rejected"} · Could not clear tracking`
-                      : "Outcome unknown"}
-                  </span>
-                </span>
-                {operation.canRetry ? (
-                  <button
-                    type="button"
-                    className="button button--quiet"
-                    disabled={operation.busy}
-                    aria-busy={operation.busy}
-                    onClick={() => {
-                      void runControl(
-                        "Terminal outcome remains unknown",
-                        async () => {
-                          await api.retryTerminalOperation(operation.key);
-                          if (catalogController.active) await load();
-                        },
-                      );
-                    }}
-                  >
-                    <ButtonLabel
-                      reserve={
-                        operation.outcome !== "unknown"
-                          ? "Clear recovery record"
-                          : "Retry same operation"
-                      }
-                    >
-                      {operation.busy
-                        ? "Checking…"
-                        : operation.outcome !== "unknown"
-                          ? "Clear recovery record"
-                          : "Retry same operation"}
-                    </ButtonLabel>
-                  </button>
-                ) : null}
-                {operation.outcome === "unknown" ? (
-                  <button
-                    type="button"
-                    className="button button--quiet"
-                    disabled={operation.busy}
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          `Stop tracking ${operation.label}? The operation may still be running. Check your terminals before trying again.`,
-                        )
-                      )
-                        return;
-                      try {
-                        terminalOperations.stopTracking(operation.key);
-                      } catch (trackingError) {
-                        setError(
-                          trackingError instanceof Error
-                            ? trackingError.message
-                            : "Could not stop tracking this operation",
-                        );
-                      }
-                    }}
-                  >
-                    Stop tracking…
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </section>
         ) : null}
         {error ? (
           <NoticeCard

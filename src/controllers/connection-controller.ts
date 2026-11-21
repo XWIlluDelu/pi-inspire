@@ -2,7 +2,6 @@ import {
   assistantStreamTextLength,
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../../shared/assistant-stream";
-import { BROWSER_UPGRADE_CLOSE } from "../../shared/browser-build.mjs";
 import {
   isSessionRuntimeStatus,
   type SessionDetailInterest,
@@ -76,14 +75,13 @@ export type ManagedConnectionState =
   | "reconnecting"
   | "offline";
 export type ManagedConnectionProblem =
-  | { kind: "browser-upgrade" }
   | { kind: "device-offline" }
   | { kind: "address-unreachable" }
   | { kind: "relay-unavailable" }
   | { kind: "service-error"; message: string }
   | { kind: "stream-interrupted" }
   | null;
-export type ConnectionRecoveryTrigger = "online" | "pageshow" | "visible";
+type ConnectionRecoveryTrigger = "online" | "pageshow" | "visible";
 
 interface ConnectionControllerHost {
   state(): {
@@ -184,11 +182,10 @@ export class ConnectionController {
   private synchronized = false;
   private scheduledReconnectKind: "resume" | "bootstrap" | null = null;
   private lastFrameAt = 0;
-  private streamUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingStreamUpdate: {
-    socket: WebSocket;
     event: WireEvent;
     key: string;
+    timer: ReturnType<typeof setTimeout>;
   } | null = null;
   private streamMetricStartedAt = -1;
   private streamMetricFrames = 0;
@@ -223,9 +220,7 @@ export class ConnectionController {
       return;
     this.detailSessionId = sessionId;
     this.detailRevision += 1;
-    if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);
-    this.streamUpdateTimer = null;
-    this.pendingStreamUpdate = null;
+    this.takeStreamUpdate();
     const interest: SessionDetailInterest = {
       type: "detail_interest",
       sessionId,
@@ -347,16 +342,8 @@ export class ConnectionController {
       if (!this.flushStreamUpdate(socket)) return;
       this.applySocketEvent(socket, event);
     };
-    socket.onclose = (event) => {
+    socket.onclose = () => {
       if (this.socket !== socket) return;
-      if (event?.code === BROWSER_UPGRADE_CLOSE) {
-        this.stop();
-        this.host.patch({
-          connection: "offline",
-          connectionProblem: { kind: "browser-upgrade" },
-        });
-        return;
-      }
       const resume = this.canResume();
       this.retireSocket("remote");
       this.scheduleReconnectAfterDelay(resume ? "resume" : "bootstrap");
@@ -457,13 +444,18 @@ export class ConnectionController {
     }
   }
 
-  private flushStreamUpdate(socket: WebSocket): boolean {
-    if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);
-    this.streamUpdateTimer = null;
+  private takeStreamUpdate(): WireEvent | undefined {
     const pending = this.pendingStreamUpdate;
+    if (!pending) return;
+    clearTimeout(pending.timer);
     this.pendingStreamUpdate = null;
-    if (!pending || pending.socket !== socket) return this.socket === socket;
-    return this.applySocketEvent(socket, pending.event);
+    return pending.event;
+  }
+
+  private flushStreamUpdate(socket: WebSocket): boolean {
+    if (this.socket !== socket) return false;
+    const event = this.takeStreamUpdate();
+    return !event || this.applySocketEvent(socket, event);
   }
 
   private queueStreamUpdate(
@@ -471,63 +463,43 @@ export class ConnectionController {
     update: { event: WireEvent; key: string; textLength: number },
   ): void {
     const pending = this.pendingStreamUpdate;
-    if (
-      pending &&
-      (pending.socket !== socket || pending.key !== update.key) &&
-      !this.flushStreamUpdate(socket)
-    )
-      return;
-    if (
-      this.pendingStreamUpdate &&
-      this.pendingStreamUpdate.event.type === "message_update_batch" &&
-      update.event.type === "message_update_batch"
-    ) {
-      const previousEvents = this.pendingStreamUpdate.event
-        .assistantMessageEvents as unknown[];
-      const nextEvents = update.event.assistantMessageEvents as unknown[];
-      const sourceEventCount =
-        Number(this.pendingStreamUpdate.event.sourceEventCount) +
-        Number(update.event.sourceEventCount);
-      if (sourceEventCount > MAX_ASSISTANT_STREAM_BATCH_EVENTS) {
-        if (!this.flushStreamUpdate(socket)) return;
-        this.pendingStreamUpdate = {
-          socket,
-          event: update.event,
-          key: update.key,
-        };
-      } else {
-        this.pendingStreamUpdate.event = {
-          ...update.event,
-          assistantMessageEvents: [...previousEvents, ...nextEvents],
-          sourceEventCount,
-        };
+    const next = update.event;
+    if (pending?.key === update.key) {
+      // A full projection replaces the pending state for the same message.
+      if (next.type === "message_update") {
+        pending.event = next;
+        return;
       }
-    } else if (
-      this.pendingStreamUpdate &&
-      this.pendingStreamUpdate.event.type === "message_update" &&
-      update.event.type === "message_update_batch"
-    ) {
-      // A complete projection followed by deltas is ordered, not
-      // supersedable. Publish the complete base before retaining the batch.
-      if (!this.flushStreamUpdate(socket)) return;
-      this.pendingStreamUpdate = {
-        socket,
-        event: update.event,
-        key: update.key,
-      };
-    } else {
-      // A later complete projection subsumes any earlier queued update.
-      this.pendingStreamUpdate = {
-        socket,
-        event: update.event,
-        key: update.key,
-      };
+      const previous = pending.event;
+      if (previous.type === "message_update_batch") {
+        const count = Number(next.sourceEventCount);
+        const sourceEventCount = Number(previous.sourceEventCount) + count;
+        if (
+          sourceEventCount <= MAX_ASSISTANT_STREAM_BATCH_EVENTS &&
+          typeof previous.streamRevision === "number" &&
+          previous.streamRevision + count === next.streamRevision
+        ) {
+          pending.event = {
+            ...next,
+            assistantMessageEvents: [
+              ...(previous.assistantMessageEvents as unknown[]),
+              ...(next.assistantMessageEvents as unknown[]),
+            ],
+            sourceEventCount,
+          };
+          return;
+        }
+      }
     }
-    if (this.streamUpdateTimer) return;
-    this.streamUpdateTimer = setTimeout(() => {
-      this.streamUpdateTimer = null;
-      this.flushStreamUpdate(socket);
-    }, streamRenderInterval(update.textLength));
+    if (pending && !this.flushStreamUpdate(socket)) return;
+    this.pendingStreamUpdate = {
+      key: update.key,
+      event: next,
+      timer: setTimeout(
+        () => this.flushStreamUpdate(socket),
+        streamRenderInterval(update.textLength),
+      ),
+    };
   }
 
   private failSocket(
@@ -630,9 +602,7 @@ export class ConnectionController {
     this.flushStreamMetrics();
     this.clearSnapshotTimer();
     if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
-    if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);
     this.watchdogTimer = null;
-    this.streamUpdateTimer = null;
-    this.pendingStreamUpdate = null;
+    this.takeStreamUpdate();
   }
 }

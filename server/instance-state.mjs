@@ -10,10 +10,8 @@ import {
   open,
   readFile,
   realpath,
-  rename,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname } from "node:path";
@@ -25,17 +23,27 @@ import {
   requestInstanceControl,
 } from "./instance-control.mjs";
 import { windowsPowerShellCommand } from "./platform-environment.mjs";
+import { replacePrivateStateFile } from "./replace-private-state-file.mjs";
 
 const execFile = promisify(execFileCallback);
 
 export { INSTANCE_STATE_VERSION };
 
-function displayHost(host) {
-  return host === "::1" ? "[::1]" : host;
+/** All commands address the same loopback listener and installation state. */
+export function hostListener(
+  host = process.env.INSPIRE_HOST ?? "127.0.0.1",
+  portText = process.env.INSPIRE_PORT ?? "4587",
+) {
+  if (!["127.0.0.1", "::1", "localhost"].includes(host))
+    throw new Error("INSPIRE_HOST must be a loopback address (127.0.0.1, ::1, or localhost)");
+  const port = Number(portText);
+  if (!/^\d+$/u.test(portText) || port < 1 || port > 65_535)
+    throw new Error("INSPIRE_PORT must be a valid TCP port");
+  return { host, port };
 }
 
-export function instanceUrl(state) {
-  return `http://${displayHost(state.host)}:${state.port}/`;
+export function instanceUrl({ host, port }) {
+  return `http://${host === "::1" ? "[::1]" : host}:${port}/`;
 }
 
 /** A pairing transfer, not a reusable token in process arguments/navigation.
@@ -111,18 +119,8 @@ export async function readInstanceState(path) {
 }
 
 async function writePrivateJson(path, state) {
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(state)}\n`, {
-      mode: 0o600,
-      flag: "wx",
-    });
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true });
-  }
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await replacePrivateStateFile(path, `${JSON.stringify(state)}\n`);
 }
 
 export async function writeInstanceState(path, state) {
@@ -151,7 +149,6 @@ export async function consumeStopRequest(path) {
 const SHUTDOWN_DOMAIN = "inspire:local-host-shutdown:v1";
 const MAX_CONTROL_BYTES = 2_048;
 
-const shutdownTarget = instanceIdentity;
 const shutdownNonce = /^[0-9a-f-]{36}$/u;
 
 function controlMac(state, payload) {
@@ -198,7 +195,7 @@ async function readControl(path, state, kind, allowExpired = false) {
       !value ||
       value.version !== 1 ||
       value.kind !== kind ||
-      value.target !== shutdownTarget(state) ||
+      value.target !== instanceIdentity(state) ||
       typeof value.signature !== "string" ||
       !/^[A-Za-z0-9_-]{43}$/u.test(value.signature)
     )
@@ -251,7 +248,7 @@ export async function requestInstanceShutdown(path, state, timeoutMs = 15_000) {
   await writeControl(path + ".shutdown-request", state, {
     version: 1,
     kind: "request",
-    target: shutdownTarget(state),
+    target: instanceIdentity(state),
     nonce: randomUUID(),
     expiresAt: Date.now() + Math.min(timeoutMs, 60_000),
   });
@@ -262,7 +259,7 @@ export async function completeInstanceShutdown(path, state, clean) {
   await writeControl(path + ".shutdown-result", state, {
     version: 1,
     kind: "result",
-    target: shutdownTarget(state),
+    target: instanceIdentity(state),
     clean,
   });
   // This incarnation still owns the launcher lease; no successor can have
@@ -416,6 +413,7 @@ export async function processMayBeLive({ pid, processStartTime }, signal) {
   }
 }
 
+/** @public Dynamically imported by inspire.mjs. */
 export async function observeProcessExit(owner, timeoutMs) {
   const signal = AbortSignal.timeout(timeoutMs);
   while (!signal.aborted) {

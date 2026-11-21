@@ -26,9 +26,7 @@ export class TerminalOperationReceipts {
       byteLimit: 16 * 1024 * 1024,
       retirement: {
         ttlMs: options.tombstoneTtlMs ?? 60 * 60_000,
-        fence: () => {
-          this.epoch = randomUUID();
-        },
+        fence: () => { this.epoch = randomUUID(); },
       },
       snapshot: (_result, serialized) => {
         if (serialized && Buffer.byteLength(serialized) > 256 * 1024)

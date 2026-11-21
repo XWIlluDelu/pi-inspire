@@ -24,7 +24,7 @@ const current = () => {
   };
 };
 
-test("@cross-browser search keeps tab order, wraps matches, and yields composing keys", async ({
+test("search keeps tab order, wraps matches, and yields composing keys", async ({
   page,
 }) => {
   const emit = await searchFixture(page, "Composition-owned search");
@@ -36,6 +36,16 @@ test("@cross-browser search keeps tab order, wraps matches, and yields composing
   const search = page.getByRole("search", { name: "Search conversation" });
   const result = search.getByLabel("Transcript search matches");
   const before = await search.boundingBox();
+  const scrollport = page.getByRole("log");
+  const firstMessage = scrollport.getByText("测量一，测量二。", {
+    exact: true,
+  });
+  await expect(firstMessage).toBeVisible();
+  const reader = (await scrollport.boundingBox())!;
+  expect(before!.y).toBeGreaterThan(reader.y);
+  expect((await firstMessage.boundingBox())!.y).toBeGreaterThan(
+    before!.y + before!.height,
+  );
   await input.fill("测量");
   await expect(result).toHaveText("2 matches");
   expect(await search.boundingBox()).toEqual(before);
@@ -308,7 +318,7 @@ test.describe("touch reading controls", () => {
     expect(right.x - left.x - left.width).toBeGreaterThanOrEqual(8);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await copy.tap();
-    await expect.poll(() => clipboardLines(page)).toEqual(code.split("\n"));
+    expect(await clipboardLines(page)).toEqual(code.split("\n"));
     await expect(page.locator(".ctx")).toHaveCount(0);
     const log = page.getByRole("log");
     const readingPosition = () =>

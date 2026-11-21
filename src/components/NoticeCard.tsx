@@ -60,11 +60,13 @@ export function NoticeCard({
       )}
       {(copyText || onDismiss) && (
         <div className="notice__actions">
-          <CopyAction
-            text={copyText}
-            label={copyLabel ?? label}
-            className="notice__copy"
-          />
+          {copyText ? (
+            <CopyAction
+              text={copyText}
+              label={copyLabel ?? label}
+              className="notice__copy"
+            />
+          ) : null}
           {onDismiss && (
             <button
               type="button"

@@ -79,7 +79,8 @@ describe("listHostDirectories", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("lists visible subdirectories sorted, with host-joined paths", async () => {
+  it("lists sorted host paths and includes dot directories only when requested", async () => {
+    await writeFile(join(root, ".hidden-file"), "not a directory");
     const listing = await listHostDirectories(root);
     const resolved = await realpath(root);
     expect(listing.path).toBe(resolved);
@@ -87,6 +88,10 @@ describe("listHostDirectories", () => {
     expect(listing.dirs).toEqual([
       { name: "alpha", path: join(resolved, "alpha") },
       { name: "beta", path: join(resolved, "beta") },
+    ]);
+    expect((await listHostDirectories(root, true)).dirs).toEqual([
+      { name: ".hidden", path: join(resolved, ".hidden") },
+      ...listing.dirs,
     ]);
   });
 
@@ -104,19 +109,6 @@ describe("listHostDirectories", () => {
       );
   });
 
-  it("reveals dot directories only when requested, without including files", async () => {
-    await writeFile(join(root, ".hidden-file"), "not a directory");
-    const resolved = await realpath(root);
-    expect((await listHostDirectories(root, true)).dirs).toEqual([
-      { name: ".hidden", path: join(resolved, ".hidden") },
-      { name: "alpha", path: join(resolved, "alpha") },
-      { name: "beta", path: join(resolved, "beta") },
-    ]);
-    expect(
-      (await listHostDirectories(root, false)).dirs.map((entry) => entry.name),
-    ).toEqual(["alpha", "beta"]);
-  });
-
   it("can enter a hidden path directly and still filter its hidden children", async () => {
     const path = join(root, ".hidden");
     await mkdir(join(path, "visible"));
@@ -127,18 +119,6 @@ describe("listHostDirectories", () => {
     expect(
       (await listHostDirectories(path, true)).dirs.map((entry) => entry.name),
     ).toEqual([".nested", "visible"]);
-  });
-
-  it("filters native hidden names independently of dot names", async () => {
-    vi.spyOn(hiddenAttributes, "listNativeHiddenNames").mockResolvedValue(
-      new Set(["alpha"]),
-    );
-    expect(
-      (await listHostDirectories(root)).dirs.map((entry) => entry.name),
-    ).toEqual(["beta"]);
-    expect(
-      (await listHostDirectories(root, true)).dirs.map((entry) => entry.name),
-    ).toEqual([".hidden", "alpha", "beta"]);
   });
 
   it("filters native-hidden links before resolving their potentially offline targets", async () => {

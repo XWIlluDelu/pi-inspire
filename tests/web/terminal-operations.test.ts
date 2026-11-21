@@ -46,18 +46,23 @@ function reply(
 
 beforeEach(() => sessionStorage.clear());
 
-it("preserves the original intent across a mismatched receipt, reload, and daemon replacement", async () => {
+it("checks the same terminal operation until the daemon can retire it", async () => {
   const handle = vi
     .fn(reply)
     .mockImplementationOnce((operation) =>
       reply(operation, { executor: { kind: "terminal", epoch: newEpoch } }),
     )
+    .mockRejectedValueOnce(new TypeError("Offline"))
     .mockImplementationOnce((operation) =>
       reply(
         operation,
         {
           state: "unknown",
-          error: { message: "Receipt expired", status: 409 },
+          error: {
+            code: "terminal_operation_expired",
+            message: "Receipt expired",
+            status: 409,
+          },
         },
         409,
       ),
@@ -65,23 +70,19 @@ it("preserves the original intent across a mismatched receipt, reload, and daemo
     .mockImplementationOnce((operation) => reply(operation, { result: null }));
   await expect(
     new TerminalOperationController(transport(handle)).run(remove),
-  ).rejects.toThrow("outcome is unknown");
+  ).rejects.toThrow("Couldn’t confirm");
   const request = transport(handle, newEpoch);
   const restarted = new TerminalOperationController(request);
-  restarted.restore();
-  const [entry] = restarted.snapshot();
-  expect(entry?.outcome).toBe("unknown");
-  await expect(restarted.retry(entry!.key)).rejects.toThrow("Receipt expired");
+  await restarted.resume();
   expect(request.mock.calls[0]?.[0]).toBe("/api/terminal-operations?observe=1");
   const intent = handle.mock.calls[0]![0];
-  expect(handle.mock.calls[1]![0]).toEqual(intent);
-  restarted.stopTracking(entry!.key);
+  expect(handle.mock.calls.slice(0, 3)).toEqual([[intent], [intent], [intent]]);
   await expect(restarted.run(remove)).resolves.toBeNull();
-  expect(handle.mock.calls[2]![0]).toMatchObject({
+  expect(handle.mock.calls[3]![0]).toMatchObject({
     executor: { epoch: newEpoch },
     intent: remove,
   });
-  expect(handle.mock.calls[2]![0].operationId).not.toBe(intent.operationId);
+  expect(handle.mock.calls[3]![0].operationId).not.toBe(intent.operationId);
 });
 
 it("releases a matched refusal and quarantines a malformed stored set without issuing work", async () => {
@@ -97,7 +98,7 @@ it("releases a matched refusal and quarantines a malformed stored set without is
   );
   const controller = new TerminalOperationController(transport(handler));
   await expect(controller.run(create)).rejects.toThrow("Definite refusal");
-  expect(controller.snapshot()).toEqual([]);
+  expect(sessionStorage.getItem(key)).toBe("[]");
   const valid = handler.mock.calls[0]![0];
   const corrupt = JSON.stringify([
     valid,
@@ -105,7 +106,7 @@ it("releases a matched refusal and quarantines a malformed stored set without is
   ]);
   sessionStorage.setItem(key, corrupt);
   const reload = new TerminalOperationController(transport(handler));
-  await expect(reload.run(create)).rejects.toThrow("storage is invalid");
+  await expect(reload.run(create)).rejects.toThrow("new tab");
   expect(handler).toHaveBeenCalledOnce();
   expect(sessionStorage.getItem(key)).toBe(corrupt);
 });
@@ -129,29 +130,6 @@ it("persists before dispatch and preserves a confirmed result when cleanup fails
   expect(handle).not.toHaveBeenCalled();
   writeAllowed = true;
   await expect(controller.run(create)).resolves.toEqual({ id: "terminal" });
-  expect(controller.snapshot()).toMatchObject([{ outcome: "completed" }]);
-  await expect(controller.retry(controller.snapshot()[0]!.key)).rejects.toThrow(
-    "Storage unavailable",
-  );
+  await expect(controller.run(create)).rejects.toThrow("Storage unavailable");
   expect(handle).toHaveBeenCalledOnce();
-});
-
-it("shows previous-version operations as unknown without replaying them", async () => {
-  const prior = "inspire:terminal-operations:v1";
-  const raw = '[{"oldWireRecord":true}]';
-  sessionStorage.setItem(prior, raw);
-  const handle = vi.fn(reply);
-  const request = transport(handle);
-  const controller = new TerminalOperationController(request);
-  controller.restore();
-  expect(controller.snapshot()).toMatchObject([
-    { outcome: "unknown", canRetry: false },
-  ]);
-  await expect(controller.run(create)).rejects.toThrow("previous version");
-  expect(request).not.toHaveBeenCalled();
-  expect(sessionStorage.getItem(prior)).toBe(raw);
-  controller.stopTracking(controller.snapshot()[0]!.key);
-  expect(sessionStorage.getItem(prior)).toBeNull();
-  expect(request).not.toHaveBeenCalled();
-  await expect(controller.run(create)).resolves.toEqual({ id: "terminal" });
 });

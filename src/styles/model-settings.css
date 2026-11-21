@@ -26,11 +26,11 @@
   padding: 0;
 }
 .settings__card > .models-auth {
-  padding: 0 14px;
+  padding: 0 16px;
 }
 .models-auth .settings__card-message { padding-inline: 0; }
 .models-advanced-providers {
-  padding-inline: 14px;
+  padding-inline: 16px;
 }
 
 .models-subheading,
@@ -55,7 +55,7 @@
 .models-auth .button { min-height: 36px; max-width: 100%; font-size: var(--text-sm); }
 .models-auth h4 { margin: 0 0 var(--space-2); color: var(--ink); font-size: var(--text-sm); font-weight: 600; }
 .models-auth__empty { margin: 0; padding: var(--space-2) 0; color: var(--muted); font-size: var(--text-sm); }
-.models-auth__connect {
+.models-auth .models-auth__connect {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -64,7 +64,6 @@
   min-height: 44px;
   padding: 0;
   border: 0;
-  border-top: 1px solid var(--hairline);
   background: transparent;
   color: var(--accent-deep);
   font: inherit;
@@ -72,12 +71,40 @@
   cursor: pointer;
   text-align: left;
 }
-.models-auth__connect:hover:where(:not(:disabled)) { text-decoration: underline; }
+.models-auth .models-auth__connect:not(:first-child) {
+  border-top: 1px solid var(--hairline);
+}
+.models-auth .models-auth__connect:hover:where(:not(:disabled)) { text-decoration: underline; }
+.models-provider-login {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.models-provider-login:last-child { border-bottom: 0; }
+.models-provider-login__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 36px;
+}
+.models-provider-login__copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.models-provider-disclosure { flex-shrink: 0; }
 .models-provider-login__details {
   display: grid;
   justify-items: start;
   gap: var(--space-2);
-  padding: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3) 0 var(--space-1);
   border-top: 1px solid var(--hairline);
 }
 .models-secret-input { display: flex; align-items: center; width: 100%; min-width: 0; gap: var(--space-1); }
@@ -238,7 +265,7 @@
     display: none;
   }
 }
-.models-saved-entries { margin-top: var(--space-3); padding-inline: 14px; font-size: var(--text-sm); }
+.models-saved-entries { margin-top: var(--space-3); padding-inline: 16px; font-size: var(--text-sm); }
 .models-saved-entries summary { cursor: pointer; min-height: 36px; padding: var(--space-2) 0; }
 .models-saved-entries summary:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .models-common { list-style: none; margin: var(--space-3) 0; padding: 0; }
@@ -273,10 +300,8 @@
 .models-status[role=alert] { color: var(--error-ink); }
 .models-auth > .search-field { margin-bottom: var(--space-2); }
 .models-auth__back { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 36px; }
-.models-auth__providers { max-height: 180px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.models-auth__providers .picker__row { width: 100%; min-height: 36px; flex-wrap: wrap; overflow-wrap: anywhere; }
-.models-auth__providers :is(code, small) { color: var(--muted); font-size: var(--text-xs); }
-.models-auth__providers .picker__row[aria-expanded="true"] { background: var(--accent-tint); }
+.models-auth__providers { max-height: 220px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.models-auth__providers :is(code, small) { color: var(--muted); font-size: var(--text-xs); font-weight: 400; }
 .models-login { padding: var(--space-3); margin: var(--space-3) 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-surface); }
 .models-login > .models-subheading { align-items: baseline; flex-wrap: wrap; }
 .models-login > .models-subheading > h4 { min-width: 0; max-width: 100%; margin: 0; overflow-wrap: anywhere; }
@@ -288,18 +313,16 @@
 .models-login__input { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: var(--space-2); margin: var(--space-3) 0; }
 .models-login__input > button { align-self: flex-start; }
 .models-remote { color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
-.models-remote summary { cursor: pointer; padding-block: var(--space-1); }
 .models-remote p { margin: var(--space-1) 0; }
 @media (pointer: coarse) {
-  .models-remote summary { display: list-item; min-height: 36px; align-content: center; }
+  .models-remote summary { min-height: 36px; }
 }
 .model-picker__manage { flex: 0 0 auto; width: 100%; min-height: 40px; padding: var(--space-2) var(--space-3); text-align: left; border: 0; border-top: 1px solid var(--hairline); background: var(--bg-surface); color: var(--accent-deep); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .model-picker__manage:hover { background: var(--bg-control); }
 .model-picker__manage:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
 
 @media (max-width: 600px), (pointer: coarse) {
-  .models-settings,
-  .models-auth { padding: var(--space-3); }
+  .settings__card > .models-auth { padding: 0 var(--space-3); }
   .models-settings .button,
   .models-auth .button,
   .models-auth input:not(.search-field input),

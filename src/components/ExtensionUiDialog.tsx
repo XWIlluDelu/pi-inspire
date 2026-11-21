@@ -8,10 +8,15 @@ import {
 } from "react";
 import { selectedRunState } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
-import { ExtensionDialogContent } from "./ExtensionDialogContent";
+import {
+  ExtensionDialogContent,
+  type ExtensionDialogContentProps,
+} from "./ExtensionDialogContent";
 import { Modal } from "./Modal";
-
-type Respond = (payload: Record<string, unknown>) => void;
+import {
+  ActivityDetails,
+  ActivityText,
+} from "./transcript-activity-visibility";
 
 function RequestTime({ expiresAt }: { expiresAt: number }) {
   const [now, setNow] = useState(Date.now);
@@ -52,7 +57,7 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
     owner: string;
     message: string;
   } | null>(null);
-  const onRespond: Respond = (payload) => {
+  const onRespond = (payload: Record<string, unknown>) => {
     if (!owner) return;
     setResponseError(null);
     void store.respondExtensionUi(payload).then((message) => {
@@ -67,6 +72,29 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
   };
   useImperativeHandle(ref, () => ({ cancel }));
   if (!request) return null;
+  const question: ExtensionDialogContentProps["question"] = request.unsupported
+    ? {
+        unsupported: true,
+        title: request.title,
+        details: (
+          <ActivityDetails
+            reader="extension-request"
+            label="Request details"
+            className="dialog__details"
+          >
+            {() => (
+              <>
+                <code>{request.method}</code>
+                <ActivityText
+                  label="Request payload"
+                  text={JSON.stringify(request.payload, null, 2)}
+                />
+              </>
+            )}
+          </ActivityDetails>
+        ),
+      }
+    : request;
   return (
     <Modal
       aria-label={request.title || "Pi extension request"}
@@ -78,20 +106,22 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
         <div className="extension-dialog__identity">
           <Puzzle size={14} aria-hidden /> Extension request
         </div>
-        {/* key remounts the form state per request */}
         <ExtensionDialogContent
-          key={`${request.sessionId}:${request.id}`}
-          request={request}
+          key={owner}
+          question={question}
           pending={responding}
           error={responseError?.owner === owner ? responseError.message : null}
-          onRespond={onRespond}
+          onAnswer={(answer) =>
+            onRespond(
+              typeof answer === "boolean"
+                ? { id: request.id, confirmed: answer }
+                : { id: request.id, value: answer },
+            )
+          }
           onCancel={() => onRespond({ id: request.id, cancelled: true })}
         />
         {request.expiresAt !== undefined ? (
-          <RequestTime
-            key={`${request.sessionId}:${request.id}:${request.expiresAt}`}
-            expiresAt={request.expiresAt}
-          />
+          <RequestTime key={request.expiresAt} expiresAt={request.expiresAt} />
         ) : null}
       </div>
     </Modal>

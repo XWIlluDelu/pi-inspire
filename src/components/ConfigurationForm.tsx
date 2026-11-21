@@ -19,7 +19,6 @@ import {
 import type { z } from "zod";
 import type {
   ConfigurationControl,
-  SecretEdit,
 } from "../../shared/configuration-fields";
 import { ButtonLabel } from "./ButtonLabel";
 import { Dropdown } from "./Dropdown";
@@ -392,7 +391,7 @@ export function ProtectedConfigurationInput({
   stored?: boolean;
   busy: boolean;
   showValue?: true;
-  onChange: (edit: SecretEdit<string | number>) => void;
+  onChange: (value: string | null | undefined) => void;
 }) {
   const [show, setShow] = useState(false);
   const { label, wide, type, ...input } = control;
@@ -407,16 +406,7 @@ export function ProtectedConfigurationInput({
         autoComplete="new-password"
         disabled={busy || value === null}
         placeholder={stored ? "Stored · leave blank to keep" : "Optional"}
-        onChange={({ currentTarget: field }) =>
-          onChange(
-            field.value
-              ? {
-                  kind: "replace",
-                  value: type === "number" ? field.valueAsNumber : field.value,
-                }
-              : { kind: "keep" },
-          )
-        }
+        onChange={(event) => onChange(event.currentTarget.value || undefined)}
         after={
           showValue && (
             <button
@@ -440,7 +430,7 @@ export function ProtectedConfigurationInput({
             disabled={busy || (showValue && Boolean(value))}
             checked={value === null}
             onChange={(event) =>
-              onChange({ kind: event.target.checked ? "remove" : "keep" })
+              onChange(event.target.checked ? null : undefined)
             }
           />
           Remove {showValue ? label : label.toLowerCase()}

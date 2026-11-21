@@ -3,7 +3,6 @@ import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   MAX_SESSION_LIST_PAGE_SIZE,
   projectNameFromCwd,
-  type SessionCatalogIssue,
   type SessionListResponse,
   type SessionSummary,
 } from "../shared/contracts.js";
@@ -66,14 +65,15 @@ export interface SessionCatalogLike {
 
 export class SessionCatalog implements SessionCatalogLike {
   private cached: SessionRecord[] = [];
+  private navigable: SessionRecord[] = [];
   private searchResult: {
     query: string;
     sources: readonly SessionRecord[];
     matches: SessionRecord[];
-    snippets: Map<string, string>;
+    hits: Map<string, string | undefined>;
   } | null = null;
   private observedProjectCwds = new Set<string>();
-  private issues: SessionCatalogIssue[] = [];
+  private unavailablePaths = new Set<string>();
   private loadedAt = 0;
   // Missing keys are unknown; a null value marks an ID shared by several files.
   private byId = new Map<string, SessionRecord | null>();
@@ -114,7 +114,7 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   private requireComplete(): void {
-    if (this.issues.length)
+    if (this.unavailablePaths.size)
       throw requestError(
         "The session catalog is incomplete because some sources are unavailable. Restore access and refresh the session list.",
         409,
@@ -148,29 +148,19 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   async sessionDirectories(
-    issues?: SessionCatalogIssue[],
+    unavailablePaths: string[],
   ): Promise<readonly (string | undefined)[]> {
-    const unavailable = (path: string, error: unknown) => {
-      if (!issues) throw error;
-      issues.push({
-        path,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Session discovery is unavailable",
-      });
-    };
     const seeds = [this.startupCwd, ...this.observedProjectCwds];
     try {
       seeds.push(...(await this.projectCwds()));
-    } catch (error) {
-      unavailable(this.startupCwd, error);
+    } catch {
+      unavailablePaths.push(this.startupCwd);
     }
     const cwds = new Set(seeds);
     try {
       for (const cwd of (await this.projects?.read()) ?? []) cwds.add(cwd);
-    } catch (error) {
-      unavailable(this.projects!.path, error);
+    } catch {
+      unavailablePaths.push(this.projects!.path);
     }
     // A refresh retries unsaved hints, including projects used while their
     // registry was unavailable. These writes never authorize a Pi writer.
@@ -184,8 +174,8 @@ export class SessionCatalog implements SessionCatalogLike {
     for (const cwd of cwds) {
       try {
         directories.add(await resolveDirectory(cwd));
-      } catch (error) {
-        unavailable(cwd, error);
+      } catch {
+        unavailablePaths.push(cwd);
       }
     }
     return [...directories];
@@ -201,10 +191,10 @@ export class SessionCatalog implements SessionCatalogLike {
       if (predecessor) await predecessor.catch(() => undefined);
       if (generation !== this.generation) return;
 
-      const issues: SessionCatalogIssue[] = [];
-      const directories = await this.sessionDirectories(issues);
+      const unavailablePaths: string[] = [];
+      const directories = await this.sessionDirectories(unavailablePaths);
       if (generation !== this.generation) return;
-      const sessions = await this.metadata.list(directories, issues);
+      const sessions = await this.metadata.list(directories, unavailablePaths);
       if (generation !== this.generation) return;
 
       // Pi storage enumeration is not an ordering contract. Page boundaries
@@ -213,13 +203,21 @@ export class SessionCatalog implements SessionCatalogLike {
       const byId = new Map<string, SessionRecord | null>();
       for (const session of cached)
         byId.set(session.id, byId.has(session.id) ? null : session);
+      const navigable =
+        byId.size === cached.length
+          ? cached
+          : cached.filter((session) => byId.get(session.id) !== null);
       const idByPath = new Map(
-        cached
-          .filter((session) => byId.get(session.id) !== null)
-          .map((session) => [session.path, session.id]),
+        navigable.map((session) => [session.path, session.id]),
       );
+      // Unchanged metadata records keep the same search sources across scans.
+      if (
+        this.navigable.length !== navigable.length ||
+        navigable.some((session, index) => session !== this.navigable[index])
+      )
+        this.navigable = navigable;
       this.cached = cached;
-      this.issues = issues;
+      this.unavailablePaths = new Set(unavailablePaths);
       this.byId = byId;
       this.idByPath = idByPath;
       this.loadedAt = Date.now();
@@ -266,9 +264,8 @@ export class SessionCatalog implements SessionCatalogLike {
       signal?: AbortSignal;
     } = {},
   ): Promise<SessionListResponse> {
-    const sessions = (await this.refresh()).filter(
-      (session) => this.byId.get(session.id) !== null,
-    );
+    await this.refreshRecords(false);
+    const sessions = this.navigable;
     const query = options.query?.trim().slice(0, 200) ?? "";
     const requestedOffset = Number.isFinite(options.offset)
       ? Math.floor(options.offset!)
@@ -284,32 +281,18 @@ export class SessionCatalog implements SessionCatalogLike {
       MAX_SESSION_LIST_PAGE_SIZE,
       Math.max(1, requestedLimit),
     );
-    const issues = [...this.issues];
-    const snippets = new Map<string, string>();
-    const filtered = query
-      ? await this.searchRecords(
-          sessions,
-          query,
-          options.signal,
-          issues,
-          snippets,
-        )
-      : sessions;
+    const result = query
+      ? await this.searchRecords(sessions, query, options.signal)
+      : undefined;
+    const filtered = result?.matches ?? sessions;
 
     return {
       sessions: filtered.slice(offset, offset + limit).map((session) => {
         const summary = this.project(session);
-        const matchSnippet = snippets.get(session.id);
+        const matchSnippet = result?.hits.get(session.id);
         return matchSnippet ? { ...summary, matchSnippet } : summary;
       }),
       total: filtered.length,
-      ...(issues.length
-        ? {
-            issues: [
-              ...new Map(issues.map((issue) => [issue.path, issue])).values(),
-            ].slice(0, 20),
-          }
-        : {}),
       offset,
       limit,
     };
@@ -319,41 +302,34 @@ export class SessionCatalog implements SessionCatalogLike {
     sessions: readonly SessionRecord[],
     query: string,
     signal: AbortSignal | undefined,
-    issues: SessionCatalogIssue[],
-    snippets: Map<string, string>,
-  ): Promise<SessionRecord[]> {
+  ): Promise<NonNullable<SessionCatalog["searchResult"]>> {
     signal?.throwIfAborted();
-    const cached = this.searchResult;
+    const { searchResult: cached, unavailablePaths, generation } = this;
     if (
+      !unavailablePaths.size &&
       cached?.query === query &&
-      cached.sources.length === sessions.length &&
-      sessions.every((session, index) => session === cached.sources[index])
-    ) {
-      for (const [id, snippet] of cached.snippets) snippets.set(id, snippet);
-      return cached.matches;
-    }
-    const generation = this.generation;
-    const searchIssues: SessionCatalogIssue[] = [];
-    const found = new Map<string, string>();
-    const matches = await searchSessionRecords(
-      sessions,
+      cached.sources === sessions
+    )
+      return cached;
+    const { hits, complete } = await searchSessionRecords(
+      unavailablePaths.size
+        ? sessions.filter(({ path }) => !unavailablePaths.has(path))
+        : sessions,
       query,
       signal,
-      searchIssues,
-      found,
     );
-    issues.push(...searchIssues);
-    for (const [id, snippet] of found) snippets.set(id, snippet);
-    // Retain only the last successful query; failed reads remain recoverable.
-    if (generation === this.generation && searchIssues.length === 0) {
-      this.searchResult = {
-        query,
-        sources: sessions,
-        matches,
-        snippets: found,
-      };
-    }
-    return matches;
+    signal?.throwIfAborted();
+    const matches = sessions.filter(({ id }) => hits.has(id));
+    const result = { query, sources: sessions, matches, hits };
+    // A partial search must retry files that become readable again.
+    if (
+      complete &&
+      !unavailablePaths.size &&
+      generation === this.generation &&
+      sessions === this.navigable
+    )
+      this.searchResult = result;
+    return result;
   }
 
   async listByIds(ids: readonly string[]): Promise<SessionSummary[]> {
@@ -376,9 +352,9 @@ export class SessionCatalog implements SessionCatalogLike {
   async listByCwds(cwds: readonly string[]): Promise<SessionSummary[]> {
     if (cwds.length === 0) return [];
     const requested = new Set(cwds);
-    const sessions = (await this.refresh()).filter(
-      (session) =>
-        requested.has(session.cwd) && this.byId.get(session.id) !== null,
+    await this.refreshRecords(false);
+    const sessions = this.navigable.filter((session) =>
+      requested.has(session.cwd),
     );
     if (sessions.length > MAX_CURATED_SESSION_RESULTS) {
       throw requestError(

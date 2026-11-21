@@ -2,7 +2,7 @@ import type { InspirePreferences } from "../shared/contracts";
 
 /** A non-authoritative first-paint cache. The host preference file remains the
  * source of truth after bootstrap. */
-export const VISUAL_PREFERENCES_STORAGE_KEY = "inspire.visual-preferences";
+const VISUAL_PREFERENCES_STORAGE_KEY = "inspire.visual-preferences";
 
 /** Overlay chrome continues the themed outer frame. Ordinary tabs retain the
  * neutral browser hint. theme-init.js supplies the pre-CSS counterpart. */

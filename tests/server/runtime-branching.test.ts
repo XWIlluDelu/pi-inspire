@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
-import { appendFile, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
 import {
@@ -12,10 +19,6 @@ import { SessionCatalog } from "../../server/session-catalog.js";
 import { stageSessionFork } from "../../server/session-fork.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import type { BranchNavigateRequest } from "../../shared/contracts.js";
-import {
-  nativePiWorkspace,
-  stubNativePiEnvironment,
-} from "./fixtures/native-pi.js";
 import {
   deferredSignal,
   disposeRuntimeFixture,
@@ -143,23 +146,8 @@ class BranchRpc extends FakeRpc {
   }
 }
 
-let workspace: Awaited<ReturnType<typeof nativePiWorkspace>>;
-beforeEach(async () => {
-  await initializeRuntimeFixture();
-  workspace = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(workspace.env);
-});
-afterEach(async () => {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+beforeEach(initializeRuntimeFixture);
+afterEach(disposeRuntimeFixture);
 
 async function fixture({
   userContent = "second question",
@@ -167,13 +155,14 @@ async function fixture({
   external = false,
   cold = external,
   ...options
-}: Pick<RuntimeControllerOptions, "openForkProjection" | "stageFork"> & {
+}: Pick<RuntimeControllerOptions, "stageFork"> & {
   userContent?: Parameters<typeof entry>[3];
   extra?: ReturnType<typeof entry>[];
   external?: boolean;
   cold?: boolean;
 } = {}) {
-  const { cwd, sessions: directory } = workspace;
+  const cwd = join(fixtureWorkspace, "workspace");
+  const directory = join(fixtureWorkspace, "sessions");
   const path = join(directory, "session.jsonl");
   const timestamp = "2026-08-01T00:00:00.000Z";
   const header = { type: "session", version: 3, id, timestamp, cwd };
@@ -193,9 +182,13 @@ async function fixture({
   ]);
   const catalog = new SessionCatalog(cwd);
   const attachments = trackedAttachmentStore();
+  let externalLeaf = "a2";
   const workers: BranchRpc[] = [];
   const runtime = new RuntimeController(catalog, attachments, {
     ...options,
+    externalLeaves: external
+      ? async (session) => (session === id ? [externalLeaf] : [])
+      : undefined,
     createProcess: (options) => {
       const worker = new BranchRpc(options);
       workers.push(worker);
@@ -203,11 +196,6 @@ async function fixture({
     },
   });
   trackRuntime(runtime);
-  let externalLeaf = "a2";
-  if (external)
-    runtime.setExternalSessionPresence(async (session) =>
-      session === id ? [externalLeaf] : [],
-    );
   await runtime.openSession(id);
   if (!cold) await startWorker(runtime, id);
   const snapshot = () => runtime.snapshot(id);
@@ -243,6 +231,61 @@ async function fixture({
       }),
   };
 }
+
+it("forks the whole saved tree after a retained session's workspace moves", async () => {
+  const f = await fixture({
+    extra: [
+      entry("alternate", "a1", "user", "Side branch", 8),
+      entry("latest", "a2", "assistant", "Latest branch", 9),
+    ],
+  });
+  await rename(join(fixtureWorkspace, "workspace"), join(fixtureWorkspace, "moved"));
+  const {
+    sessionId,
+    transcriptPage: { viewId },
+    readOnlyReason,
+  } = await f.active();
+  expect(readOnlyReason).toBe("workspace-unavailable");
+  const cwd = join(fixtureWorkspace, "other");
+  const destinationDirectory = join(fixtureWorkspace, "recovered-sessions");
+  const config = join(cwd, ".pi");
+  await mkdir(config);
+  await writeFile(
+    join(config, "settings.json"),
+    JSON.stringify({ sessionDir: destinationDirectory }),
+  );
+  vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "");
+
+  const forked = await f.runtime.recoverWorkspaceFork({
+    sessionId,
+    viewId,
+    cwd,
+  });
+  const file = forked.snapshot.active!.sessionFile!;
+  expect(dirname(file)).toBe(destinationDirectory);
+  const [header, ...entries] = parseLines(await readFile(file, "utf8"));
+  expect(header).toMatchObject({
+    id: forked.sessionId,
+    parentSession: f.path,
+    cwd,
+  });
+  expect(forked.sessionId).not.toBe(sessionId);
+  expect(entries).toEqual(parseLines(f.source).slice(1));
+  expect(forked.snapshot.active).toMatchObject({
+    durableLeafId: "latest",
+    cwd,
+  });
+  expect(forked.snapshot.active?.readOnlyReason).toBeUndefined();
+  expect(forked.editorText).toBe("");
+  expect(forked.editorAttachments).toBeUndefined();
+  expect(await f.catalog.get(forked.sessionId)).toMatchObject({
+    cwd,
+    path: file,
+  });
+  expect(await readFile(f.path, "utf8")).toBe(f.source);
+  expect(f.workers).toEqual([f.worker]);
+  expect(f.worker.available).toBe(true);
+});
 
 it.each(["Stop", "exit"] as const)(
   "cannot renew a worker lease retired by %s during final reconciliation",
@@ -390,14 +433,16 @@ it("holds a published destination reservation and restages ordered duplicate ima
   const f = await fixture({
     cold: true,
     userContent: images,
-    async openForkProjection(record) {
-      if (!record.path.includes(".inspire-fork-")) {
-        destination = record.id;
-        opened.resolve();
-        await release.promise;
-      }
-      return SessionProjection.open(record);
-    },
+  });
+  const adopt = SessionProjection.prototype.adoptPublishedFork;
+  vi.spyOn(
+    SessionProjection.prototype,
+    "adoptPublishedFork",
+  ).mockImplementationOnce(async function (this: SessionProjection, path) {
+    destination = this.sessionId;
+    opened.resolve();
+    await release.promise;
+    await adopt.call(this, path);
   });
   const forking = f.runtime.forkBranch(await f.address());
   try {
@@ -449,7 +494,13 @@ it.each([
   "final projection",
 ] as const)("preserves the Fork commit boundary after %s", async (failure) => {
   let staged!: Awaited<ReturnType<typeof stageSessionFork>>;
-  const occupied = "existing destination\n";
+  const occupied = jsonl({
+    type: "session",
+    version: 3,
+    id: "occupied",
+    cwd: fixtureWorkspace,
+    timestamp: new Date(0).toISOString(),
+  });
   const f = await fixture({
     cold: true,
     userContent: [image],
@@ -464,15 +515,12 @@ it.each([
         await writeFile(staged.destinationPath, occupied);
       return staged;
     },
-    async openForkProjection(record) {
-      if (
-        failure === "final projection" &&
-        record.path === staged.destinationPath
-      )
-        throw new Error("projection fixture failed");
-      return SessionProjection.open(record);
-    },
   });
+  if (failure === "final projection")
+    vi.spyOn(
+      SessionProjection.prototype,
+      "adoptPublishedFork",
+    ).mockRejectedValueOnce(new Error("projection fixture failed"));
   const images = vi.spyOn(f.attachments, "stageImages");
   const outcome = await f.runtime
     .forkBranch(await f.address())
@@ -535,9 +583,16 @@ it("reads and copies the admitted external branch across appends, then retires i
       f.runtime.sessionHistory(id, source.viewId, {
         kind: "entry",
         targetId: "u2",
+        point: offset === undefined ? "1" : undefined,
         offset,
       });
     const first = await read();
+    expect(first.node).toMatchObject({
+      id: "u2",
+      depth: 2,
+      routeLeafId: "a2",
+      active: true,
+    });
     expect(first.nextOffset).toBe(32_000);
     await expect(f.navigate("u2", "edit")).rejects.toMatchObject({
       code: "EXTERNAL_PI_WRITER_ACTIVE",
@@ -564,7 +619,7 @@ it("reads and copies the admitted external branch across appends, then retires i
       );
       expect(header).toMatchObject({
         id: copy.sessionId,
-        cwd: workspace.cwd,
+        cwd: join(fixtureWorkspace, "workspace"),
         parentSession: f.path,
       });
       expect(entries.map(({ id }) => id)).toEqual(copiedIds);
@@ -615,6 +670,21 @@ it("reads and copies the admitted external branch across appends, then retires i
     release();
   }
 }, 15_000);
+
+it("does not offer to restore a normal saved append before the worker catches up", async () => {
+  const f = await fixture();
+  const before = await f.active();
+  const parent = before.durableLeafId!;
+  await appendFile(
+    f.path,
+    jsonl(entry("ahead", parent, "user", "next question", 55)),
+  );
+  expect(await f.active()).toMatchObject({
+    durableLeafId: "ahead",
+    effectiveLeafId: before.effectiveLeafId,
+    restoreSavedLeafId: null,
+  });
+});
 
 it("advances saved History without moving the selected worker branch", async () => {
   const f = await fixture();

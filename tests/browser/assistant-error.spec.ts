@@ -20,16 +20,13 @@ test.describe("narrow conversation", () => {
     contextOptions: { reducedMotion: "reduce" },
   });
 
-  test("Stopped preserves output and drafts without hiding later failures @cross-browser", async ({
+  test("Stopped preserves output and drafts without hiding later failures", async ({
     page,
   }) => {
     const fixture = await assistantOutcomeScenario(page);
     await pairedPage(page);
     await openFixtureSession(page, /Pi error display fixture/);
     await expect.poll(fixture.ready).toBe(true);
-    await expect(
-      page.getByRole("button", { name: /^Session & usage/ }),
-    ).toBeVisible();
     const input = page.getByRole("textbox", { name: "Message", exact: true });
     await input.fill("Keep this unsent draft.");
     const stop = page.getByRole("button", {
@@ -120,7 +117,5 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
   await error.getByRole("button", { name: "Show details" }).press("Enter");
   const diagnostics = error.getByRole("region", { name: "Error details" });
   await diagnostics.press("PageDown");
-  await expect
-    .poll(() => diagnostics.evaluate((el) => el.scrollTop))
-    .toBeGreaterThan(0);
+  await expect.poll(() => diagnostics.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });

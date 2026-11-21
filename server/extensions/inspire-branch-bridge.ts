@@ -7,7 +7,7 @@ import {
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
   BRANCH_BRIDGE_VERSION,
-  type BranchBridgeRequest,
+  branchBridgeRequest,
   type BranchBridgeResult,
   decodeBranchBridgeJson,
   encodeBranchBridgeJson,
@@ -15,11 +15,8 @@ import {
   MODEL_REFRESH_TIMEOUT_MS,
   PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
-  type RetryStateRequest,
-  type RetryStateResult,
   UI_RELOAD_SUFFIX,
 } from "../../shared/branch-bridge-protocol.js";
-import { MAX_SESSION_ID_CHARS } from "../../shared/contracts.js";
 import {
   CHECKPOINT_CHUNK_CHARS,
   CHECKPOINT_MAX_CHARS,
@@ -31,61 +28,19 @@ import {
 import { nativeEntryDigest } from "../native-entry-digest.js";
 import { userMessageEvidence } from "../pending-image-evidence.js";
 import { registerProviderAuthBridge } from "./provider-auth-bridge.js";
+import { registerToolLoadoutBridge } from "./tool-loadout-bridge.js";
+import { registerWorkerStatusCommand } from "./worker-status-command.js";
 
 const CHECKPOINT_STATE = Symbol.for("inspire.worker-checkpoint");
 type CheckpointState = {
   workerId: string;
   contextGeneration: number;
   published: number;
-  run: number;
   tail: string | null;
   leaf: string | null;
 };
 
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/;
-const ENTRY_ID = /^[A-Za-z0-9_-]{1,200}$/;
-
-function parseRequest(argument: string, workerId: string): BranchBridgeRequest {
-  const decoded = decodeBranchBridgeJson(
-    argument,
-    BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-  );
-  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded))
-    throw new Error("invalid bridge request");
-  const value = decoded as Record<string, unknown>;
-  if (
-    value.v !== BRANCH_BRIDGE_VERSION ||
-    value.operation !== "navigate" ||
-    typeof value.nonce !== "string" ||
-    !TOKEN.test(value.nonce) ||
-    typeof value.workerId !== "string" ||
-    value.workerId !== workerId ||
-    typeof value.sessionId !== "string" ||
-    value.sessionId.length === 0 ||
-    value.sessionId.length > MAX_SESSION_ID_CHARS ||
-    typeof value.targetId !== "string" ||
-    !ENTRY_ID.test(value.targetId) ||
-    (value.summarize !== undefined && typeof value.summarize !== "boolean") ||
-    (value.customInstructions !== undefined &&
-      (typeof value.customInstructions !== "string" ||
-        value.customInstructions.length > 2000)) ||
-    Object.keys(value).some(
-      (key) =>
-        ![
-          "v",
-          "nonce",
-          "workerId",
-          "sessionId",
-          "operation",
-          "targetId",
-          "summarize",
-          "customInstructions",
-        ].includes(key),
-    )
-  )
-    throw new Error("invalid bridge request");
-  return value as unknown as BranchBridgeRequest;
-}
 
 function boundedError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -128,7 +83,9 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
   if (!TOKEN.test(command) || !TOKEN.test(statusKey) || !TOKEN.test(workerId))
     return;
 
-  registerProviderAuthBridge(pi, { command, statusKey, workerId });
+  const owner = { command, statusKey, workerId };
+  registerProviderAuthBridge(pi, owner);
+  registerToolLoadoutBridge(pi, owner);
 
   const processState = process as NodeJS.Process & {
     [CHECKPOINT_STATE]?: CheckpointState;
@@ -141,14 +98,13 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
           workerId,
           contextGeneration: 0,
           published: 0,
-          run: 0,
           tail: null,
           leaf: null,
         };
   processState[CHECKPOINT_STATE] = checkpoint;
   const checkpointKey = `${statusKey}${CHECKPOINT_SUFFIX}`;
 
-  function publish(ctx: ExtensionContext, sealed: WorkerCheckpoint["sealed"]) {
+  function publish(ctx: ExtensionContext, sealed: boolean) {
     if (ctx.mode !== "rpc") return;
     const native = ctx.sessionManager;
     const entries = native.getEntries();
@@ -190,8 +146,7 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
         from: checkpoint.tail,
         tail: entries[at - 1]?.id ?? null,
         leaf: final ? leaf : checkpoint.leaf,
-        run: checkpoint.run,
-        sealed: final ? sealed : null,
+        sealed: final && sealed,
         entries: bodies.length,
       };
       ctx.ui.setStatus(checkpointKey, JSON.stringify(marker));
@@ -213,24 +168,16 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     } while (at < entries.length);
   }
 
-  pi.on("agent_start", () => {
-    checkpoint.run += 1;
-  });
-  pi.on("turn_start", (_event, ctx) => {
-    publish(ctx, "turn");
-  });
-  pi.on("context", (_event, ctx) => {
-    // Pi has persisted the input by the time it assembles model context.
-    // Adopt that input before the response so its saved actions are available.
-    publish(ctx, "turn");
-  });
-  pi.on("agent_settled", (_event, ctx) => {
-    publish(ctx, "settled");
-  });
+  // Pi has adopted the input before assembling model context. Publish its saved
+  // actions at that boundary as well as at turn start and settlement.
+  const seal = (_event: unknown, ctx: ExtensionContext) => publish(ctx, true);
+  pi.on("turn_start", seal);
+  pi.on("context", seal);
+  pi.on("agent_settled", seal);
   pi.registerCommand(`${command}${CHECKPOINT_SUFFIX}`, {
     description: "Internal Inspire native session checkpoint",
     handler: async (_argument, ctx) => {
-      publish(ctx, ctx.isIdle() ? "idle" : null);
+      publish(ctx, ctx.isIdle());
     },
   });
 
@@ -283,75 +230,35 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     }
   });
 
-  pi.registerCommand(`${command}${RETRY_STATE_SUFFIX}`, {
-    description: "Internal Inspire effective retry state",
-    handler: async (argument, ctx) => {
-      const request = decodeBranchBridgeJson(
-        argument,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      ) as RetryStateRequest;
-      if (
-        !request ||
-        ctx.mode !== "rpc" ||
-        request.v !== BRANCH_BRIDGE_VERSION ||
-        request.workerId !== workerId ||
-        request.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof request.nonce !== "string" ||
-        !TOKEN.test(request.nonce)
-      )
-        throw new Error("invalid retry state owner");
-      const settings = pi.getSettings();
-      ctx.ui.setStatus(
-        `${statusKey}${RETRY_STATE_SUFFIX}`,
-        encodeBranchBridgeJson(
-          {
-            v: BRANCH_BRIDGE_VERSION,
-            nonce: request.nonce,
-            workerId,
-            sessionId: request.sessionId,
-            autoRetryEnabled: settings.retry?.enabled ?? true,
-          } satisfies RetryStateResult,
-          BRANCH_BRIDGE_MAX_RESULT_BYTES,
-        ),
-      );
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: RETRY_STATE_SUFFIX,
+      description: "effective retry state",
+      versioned: true,
     },
-  });
+    (_request, _ctx, emit) => {
+      emit({ autoRetryEnabled: pi.getSettings().retry?.enabled ?? true });
+    },
+  );
 
-  pi.registerCommand(`${command}${PENDING_IMAGE_SUFFIX}`, {
-    description: "Internal Inspire pending image evidence",
-    handler: async (argument, ctx) => {
-      const request = decodeBranchBridgeJson(
-        argument,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      ) as Record<string, unknown>;
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: PENDING_IMAGE_SUFFIX,
+      description: "pending image evidence",
+      versioned: true,
+    },
+    (request, ctx, emit) => {
       if (
-        !request ||
-        ctx.mode !== "rpc" ||
-        request.v !== BRANCH_BRIDGE_VERSION ||
-        request.workerId !== workerId ||
-        request.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof request.nonce !== "string" ||
-        !TOKEN.test(request.nonce) ||
-        (request.since !== undefined &&
-          request.since !== null &&
-          typeof request.since !== "string")
+        request.since !== undefined &&
+        request.since !== null &&
+        typeof request.since !== "string"
       )
-        throw new Error("invalid pending image owner");
+        throw new Error("invalid pending image cursor");
       const entries = ctx.sessionManager.getEntries();
-      const emit = (payload: object) =>
-        ctx.ui.setStatus(
-          `${statusKey}${PENDING_IMAGE_SUFFIX}`,
-          encodeBranchBridgeJson(
-            {
-              v: BRANCH_BRIDGE_VERSION,
-              nonce: request.nonce,
-              workerId,
-              sessionId: request.sessionId,
-              ...payload,
-            },
-            BRANCH_BRIDGE_MAX_RESULT_BYTES,
-          ),
-        );
       if (request.since !== undefined) {
         const start =
           request.since === null
@@ -369,26 +276,19 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
       // message_start events still own consumption before persistence.
       emit({ cursor: entries.at(-1)?.id ?? null });
     },
-  });
+  );
 
   // Catalog refresh is independent of branch navigation and active agent work.
   // ModelRuntime retains extension providers and owns authentication/network policy.
   let refreshing: Promise<string | undefined> | undefined;
-  pi.registerCommand(`${command}${MODEL_REFRESH_SUFFIX}`, {
-    description: "Internal Inspire model catalog refresh",
-    handler: async (argument, ctx) => {
-      const request = decodeBranchBridgeJson(
-        argument,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-      ) as Record<string, unknown>;
-      if (
-        ctx.mode !== "rpc" ||
-        request.workerId !== workerId ||
-        request.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof request.nonce !== "string" ||
-        !TOKEN.test(request.nonce)
-      )
-        throw new Error("invalid model refresh owner");
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: MODEL_REFRESH_SUFFIX,
+      description: "model catalog refresh",
+    },
+    async (_request, ctx, emit) => {
       let ok = true;
       let warning: string | undefined;
       try {
@@ -418,21 +318,9 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
         ok = false;
         warning = boundedError(error);
       }
-      ctx.ui.setStatus(
-        `${statusKey}${MODEL_REFRESH_SUFFIX}`,
-        encodeBranchBridgeJson(
-          {
-            nonce: request.nonce,
-            workerId,
-            sessionId: request.sessionId,
-            ok,
-            ...(warning ? { warning: warning.slice(0, 300) } : {}),
-          },
-          BRANCH_BRIDGE_MAX_RESULT_BYTES,
-        ),
-      );
+      emit({ ok, ...(warning ? { warning: warning.slice(0, 300) } : {}) });
     },
-  });
+  );
 
   let navigating:
     | {
@@ -456,8 +344,7 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
   pi.registerCommand(command, {
     description: "Internal Inspire branch navigation bridge",
     handler: async (argument, ctx) => {
-      let request: BranchBridgeRequest | null = null;
-      let result: BranchBridgeResult = {
+      const result: BranchBridgeResult = {
         v: BRANCH_BRIDGE_VERSION,
         nonce: "invalid",
         workerId,
@@ -468,7 +355,12 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
         effectiveLeaf: null,
       };
       try {
-        request = parseRequest(argument, workerId);
+        const parsed = branchBridgeRequest.safeParse(
+          decodeBranchBridgeJson(argument, BRANCH_BRIDGE_MAX_ARGUMENT_BYTES),
+        );
+        if (!parsed.success || parsed.data.workerId !== workerId)
+          throw new Error("invalid bridge request");
+        const request = parsed.data;
         result.nonce = request.nonce;
         result.sessionId = request.sessionId;
         if (ctx.mode !== "rpc" || !ctx.isIdle() || ctx.hasPendingMessages())
@@ -500,10 +392,6 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
       } catch (error) {
         result.effectiveLeaf = ctx.sessionManager.getLeafId();
         result.error = boundedError(error);
-        if (request) {
-          result.nonce = request.nonce;
-          result.sessionId = request.sessionId;
-        }
       }
       emitResult(ctx, statusKey, result);
     },

@@ -42,7 +42,8 @@ async function scenario(webPort?: number) {
   const sentinel = join(home, "inherited-instance.json");
   await writeFile(sentinel, "existing instance must remain untouched");
   const backendPort = await freeLoopbackPort();
-  const frontendPort = webPort ?? (await freeLoopbackPort());
+  let frontendPort = webPort ?? (await freeLoopbackPort());
+  while (frontendPort === backendPort) frontendPort = await freeLoopbackPort();
   const environment = isolatedTestEnvironment(home, {
     INSPIRE_HOST: "127.0.0.1",
     INSPIRE_PORT: String(backendPort),

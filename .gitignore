@@ -21,6 +21,7 @@
 /.pi-subagents/
 /.agents/
 /.codex/
+/.codex-attachments/
 /.claude/settings.local.json
 /.claude/scheduled_tasks.lock
 /.claude/scheduled_tasks.json
@@ -44,4 +45,4 @@
 /docdoki/stages/archive/
 /docs/redesign/
 
-/.inspire-web-build.lock/
+/.inspire-web-build.lock

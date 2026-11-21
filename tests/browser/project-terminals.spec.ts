@@ -46,15 +46,15 @@ const terminalInput = (page: Page) =>
   activeTerminal(page).locator(".xterm-helper-textarea");
 const terminalTab = (page: Page, id: string) =>
   page.locator(`#terminal-tab-${id}`);
-async function selectTerminalTab(page: Page, id: string, label: string) {
+async function selectTerminalTab(page: Page, id: string, title: string) {
   const tab = terminalTab(page, id);
+  const overflow = page.getByRole("button", { name: "More tabs", exact: true });
+  await expect(tab.or(overflow).filter({ visible: true }).first()).toBeVisible();
   if (await tab.isVisible()) await tab.click();
   else {
-    await page.getByRole("button", { name: "More tabs", exact: true }).click();
-    await page
-      .getByRole("listbox", { name: "Open tabs" })
-      .getByRole("option", { name: label, exact: true })
-      .click();
+    await overflow.click();
+    await page.getByRole("listbox", { name: "Open tabs" })
+      .getByRole("option", { name: title, exact: true }).click();
   }
   await expect(tab).toHaveAttribute("aria-selected", "true");
 }
@@ -70,14 +70,12 @@ async function terminalAction(page: Page, name: string) {
   const menu = page.getByLabel("Terminal actions", { exact: true });
   await menu.click();
   const popover = menu.locator("..");
-  const group =
-    name === "Clear local scrollback" || name === "Reset terminal display"
-      ? "Display"
-      : /^(Move tab|Restart$|Close$|Force terminate$)/u.test(name)
-        ? "Manage terminal"
-        : null;
-  if (group)
-    await popover.locator("summary").getByText(group, { exact: true }).click();
+  const group = name === "Clear local scrollback" || name === "Reset terminal display"
+    ? "Display"
+    : /^(Move tab|Restart$|Close$|Force terminate$)/u.test(name)
+      ? "Manage terminal"
+      : null;
+  if (group) await popover.locator("summary").getByText(group, { exact: true }).click();
   return popover.getByRole("button", { name, exact: true });
 }
 
@@ -156,9 +154,7 @@ test("a replacement terminal snapshot retires output still waiting in xterm's pa
   await expect(terminalStatus(page)).toBeVisible();
 });
 
-test("project terminals and a lost create response survive browser reload", {
-  tag: ["@cross-browser", "@platform-ui"],
-}, async ({ context, fixtures, page }) => {
+test("project terminals and a lost create response survive browser reload", async ({ context, page }) => {
   // Real typing, replay, two clients and confirmed
   // serial PTY retirement share this budget; each operation keeps its deadline.
   test.setTimeout(60_000);
@@ -173,10 +169,9 @@ test("project terminals and a lost create response survive browser reload", {
   await expect(input).toBeVisible();
   const { terminals } = await terminalCatalog(page);
   const firstId = terminals[0]!.id;
-  fixtures.track(firstId);
-  let secondId!: string;
+  const terminalIds = [firstId];
+  let foreignId: string | undefined;
   const deliveries: boolean[] = [];
-  const check = Promise.withResolvers<void>();
   const routePattern = /\/api\/terminal-operations(?:\?observe=1)?$/;
   try {
     const pane = page.locator(".ctx");
@@ -184,9 +179,7 @@ test("project terminals and a lost create response survive browser reload", {
     await openWorkspaceFile(pane, "README.md");
     await terminalTab(page, firstId).click();
     await expect(terminalStatus(page)).toBeVisible();
-    await pane
-      .getByRole("button", { name: "Close README.md", exact: true })
-      .click();
+    await pane.getByRole("button", { name: "Close README.md", exact: true }).click();
 
     await writeTerminal(input, "终端✓\n");
     await expect(output).toContainText("终端✓");
@@ -207,18 +200,15 @@ test("project terminals and a lost create response survive browser reload", {
       deliveries.push(new URL(request.url()).searchParams.has("observe"));
       const response = await route.fetch();
       if (deliveries.length === 1 && response.ok()) {
-        secondId = (await response.json()).result.id;
-        fixtures.track(secondId);
+        terminalIds.push((await response.json()).result.id);
         // The daemon committed the create before the browser lost the response.
         return route.abort("failed");
       }
-      await check.promise;
       await route.fulfill({ response });
     });
     await page.getByRole("button", { name: "New terminal" }).click();
-    const pending = page.locator(".terminal-pending");
-    await expect(pending).toContainText("Outcome unknown");
-    const secondTab = terminalTab(page, secondId);
+    await expect.poll(() => deliveries).toEqual([false, true]);
+    const secondTab = terminalTab(page, terminalIds[1]!);
     // Catalog observation finds the second tab without sending another create.
     await expect(secondTab).toBeVisible({ timeout: 10_000 });
     await secondTab.click();
@@ -238,7 +228,7 @@ test("project terminals and a lost create response survive browser reload", {
     });
     expect(foreignResponse.ok()).toBe(true);
     const { result: foreign } = await foreignResponse.json();
-    fixtures.track(foreign.id);
+    foreignId = foreign.id;
     await page.getByLabel("Terminal actions", { exact: true }).click();
     await page.getByLabel("Terminals in all projects", { exact: true }).click();
     await page
@@ -252,17 +242,6 @@ test("project terminals and a lost create response survive browser reload", {
       .getByRole("button")
       .click();
     const foreignTab = terminalTab(page, foreign.id);
-    await expect(foreignTab).toHaveAttribute("aria-selected", "true");
-    await expect(pending).toContainText(browserWorkspace);
-    await pending
-      .getByRole("button", { name: "Retry same operation" })
-      .press("Enter");
-    await expect(
-      pending.getByRole("button", { name: "Checking…" }),
-    ).toBeDisabled();
-    check.resolve();
-    await expect(pending).toHaveCount(0);
-    expect(deliveries).toEqual([false, true]);
     await expect(foreignTab).toHaveAttribute("aria-selected", "true");
     await page
       .getByRole("button", { name: "Back to current project" })
@@ -297,13 +276,25 @@ test("project terminals and a lost create response survive browser reload", {
     );
     await focusedPage.close();
   } finally {
-    check.resolve();
     await page.unroute(routePattern);
+    for (const terminalId of foreignId
+      ? [...terminalIds, foreignId]
+      : terminalIds) {
+      const response = await terminalOperation(page, {
+        command: "remove",
+        params: { id: terminalId, force: true },
+      });
+      expect(response.ok()).toBe(true);
+    }
   }
+  await expect
+    .poll(async () => (await terminalCatalog(page)).terminals)
+    .toEqual([]);
 });
 
 test("Escape restores the owners of terminal menus in the narrow pane", async ({
   page,
+  fixtures,
 }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -320,21 +311,20 @@ test("Escape restores the owners of terminal menus in the narrow pane", async ({
   ];
   await page.route(/\/api\/terminals(?:\?|$)/, async (route) => {
     const response = await route.fetch();
-    await route.fulfill({
-      response,
-      json: { ...(await response.json()), profiles },
-    });
+    await route.fulfill({ response, json: { ...(await response.json()), profiles } });
   });
   await openFixtureTerminal(page);
   const picker = page.getByLabel("Choose terminal profile", { exact: true });
-  await page
-    .locator(".terminal-empty")
-    .getByRole("button", { name: "New terminal" })
-    .click();
+  await page.locator(".terminal-empty").getByRole("button", { name: "New terminal" }).click();
   await expect(picker).toBeFocused();
+  const created = page.waitForResponse((response) =>
+    response.url().endsWith("/api/terminal-operations") &&
+    response.request().method() === "POST" &&
+    response.request().postDataJSON()?.intent?.command === "create",
+  );
   await page.getByRole("button", { name: alternative }).click();
+  fixtures.track((await (await created).json()).result.id);
   await expect(terminalStatus(page)).toBeVisible();
-  const [terminal] = (await terminalCatalog(page)).terminals;
   const actions = page.getByLabel("Terminal actions", { exact: true });
   const projects = page.getByLabel("Terminals in all projects", {
     exact: true,
@@ -369,16 +359,10 @@ test("Escape restores the owners of terminal menus in the narrow pane", async ({
   await expect(actions).toBeFocused();
 
   await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("button", { name: "Show terminal controls" }),
-  ).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".ctx")).toHaveCount(0);
-  const removed = await terminalOperation(page, {
-    command: "remove",
-    params: { id: terminal!.id, force: true },
-  });
-  expect(removed.ok()).toBe(true);
+  const controls = page.getByRole("button", { name: "Show terminal controls" });
+  await expect(controls).toBeFocused();
+  await controls.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Context panel" })).toHaveCount(0);
 });
 
 // Playwright's physical chords cannot produce a character from a foreign
@@ -454,9 +438,7 @@ function nativeClipboard(
 }
 
 for (const platform of ["Win32", "MacIntel"]) {
-  test(`${platform} preserves clipboard and layout input in the terminal`, {
-    tag: "@cross-browser",
-  }, async ({ page, fixtures }) => {
+  test(`${platform} preserves clipboard and layout input in the terminal`, async ({ page, fixtures }) => {
     const mac = platform === "MacIntel";
     await page.addInitScript((platform) => {
       Object.defineProperty(navigator, "platform", {
@@ -465,23 +447,20 @@ for (const platform of ["Win32", "MacIntel"]) {
       });
     }, platform);
     await pairWithTerminalOutput(page);
-    const firstLabel = "Keyboard input fixture";
-    const firstId = (await fixtures.create(firstLabel)).id;
-    const secondId = mac
-      ? undefined
-      : (await fixtures.create("Second keyboard input fixture")).id;
+    const firstTitle = "Clipboard terminal";
+    const firstId = (await fixtures.create(firstTitle)).id;
+    const secondId = mac ? undefined : (await fixtures.create()).id;
     const wire = observeTerminalSocket(page, firstId);
-    // Focus reports belong to terminal emulation rather than keyboard input.
-    const bytes = () => wire.inputs.join("").replace(/\x1b\[[IO]/gu, "");
+    const bytes = () => wire.inputs.join("");
     await openFixtureTerminal(page);
-    await selectTerminalTab(page, firstId, firstLabel);
+    await selectTerminalTab(page, firstId, firstTitle);
     await expect(terminalStatus(page)).toBeVisible();
-    await expect.poll(() => wire.attached()?.writable).toBe(true);
     const input = terminalInput(page);
-    await input.focus();
-    const beforeInterrupt = bytes().length;
+    const interruptStart = wire.inputs.length;
     await input.press("Control+c");
-    await expect.poll(() => bytes().slice(beforeInterrupt)).toBe("\u0003");
+    await expect.poll(() =>
+      wire.inputs.slice(interruptStart).filter((chunk) => chunk === "\u0003"),
+    ).toHaveLength(1);
 
     await writeTerminal(input, "COPY_ME\r\n");
     const rendered = terminalOutput(page).getByText("COPY_ME", { exact: true });
@@ -546,11 +525,8 @@ for (const platform of ["Win32", "MacIntel"]) {
       expect(response.ok()).toBe(true);
       const { result: created } = await response.json();
       fixtures.track(created.id);
-      await expect(terminalTab(page, created.id)).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-      await selectTerminalTab(page, firstId, firstLabel);
+      await expect(terminalTab(page, created.id)).toHaveAttribute("aria-selected", "true");
+      await selectTerminalTab(page, firstId, firstTitle);
       await fixtures.remove(created.id);
     }
     const openInteraction = async () => {
@@ -581,9 +557,9 @@ for (const platform of ["Win32", "MacIntel"]) {
           ctrlKey: true,
         }),
       ).toBe(false);
-      expect(
-        (await terminalCatalog(page)).terminals.map(({ id }) => id),
-      ).toEqual([firstId, secondId]);
+      expect((await terminalCatalog(page)).terminals.map(({ id }) => id)).toEqual(
+        [firstId, secondId],
+      );
       await setShortcutPriority("Workbench");
 
       const beforeTabs = bytes();
@@ -646,7 +622,7 @@ for (const platform of ["Win32", "MacIntel"]) {
   });
 }
 
-test("terminal search, last output, and asynchronous paste follow the active tab", { tag: "@platform-ui" }, async ({
+test("terminal search, last output, and asynchronous paste follow the active tab", async ({
   context,
   page,
   fixtures,
@@ -658,8 +634,7 @@ test("terminal search, last output, and asynchronous paste follow the active tab
   const secondId = (await fixtures.create(secondLabel)).id;
   const firstTerminal = observeTerminalSocket(page, firstId);
   const secondTerminal = observeTerminalSocket(page, secondId);
-  const selectTab = (id: string) =>
-    selectTerminalTab(page, id, id === firstId ? firstLabel : secondLabel);
+  const selectTab = (id: string) => selectTerminalTab(page, id, id === firstId ? firstLabel : secondLabel);
   await openFixtureTerminal(page);
   await selectTab(firstId);
   await expect(terminalStatus(page)).toBeVisible();
@@ -738,20 +713,19 @@ test("terminal search, last output, and asynchronous paste follow the active tab
         requestAnimationFrame(() => resolve()),
       );
     }, value);
-  const clipboardInput = ({ inputs }: { inputs: readonly string[] }) =>
-    inputs.join("").match(/TERMINAL_CLIPBOARD_(?:STALE|FRESH)/gu) ?? [];
+  const beforePaste = firstTerminal.inputs.length;
   await (await terminalAction(page, "Paste into terminal")).click();
   await selectTab(secondId);
   await selectTab(firstId);
   await deliverPaste("TERMINAL_CLIPBOARD_STALE");
-  expect(clipboardInput(firstTerminal)).toEqual([]);
-  expect(clipboardInput(secondTerminal)).toEqual([]);
+  expect(firstTerminal.inputs.slice(beforePaste)).toEqual([]);
+  expect(secondTerminal.inputs).toEqual([]);
   await (await terminalAction(page, "Paste into terminal")).click();
   await deliverPaste("TERMINAL_CLIPBOARD_FRESH");
   await expect
-    .poll(() => clipboardInput(firstTerminal))
+    .poll(() => firstTerminal.inputs.slice(beforePaste))
     .toEqual(["TERMINAL_CLIPBOARD_FRESH"]);
-  expect(clipboardInput(secondTerminal)).toEqual([]);
+  expect(secondTerminal.inputs).toEqual([]);
   await expect(input).toBeFocused();
 
   // A height-only resize changes PTY rows while retaining its columns and output.
@@ -850,9 +824,11 @@ test.describe("touch terminal", () => {
     });
     await composer.fill("Existing question");
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    const { id } = await fixtures.create();
+    const title = "Touch input terminal";
+    const { id } = await fixtures.create(title);
     const { inputs } = observeTerminalSocket(page, id);
     await openFixtureTerminal(page);
+    await selectTerminalTab(page, id, title);
     await expect(terminalStatus(page)).toBeVisible();
     const input = terminalInput(page);
     const keys = page.getByRole("group", {
@@ -864,10 +840,8 @@ test.describe("touch terminal", () => {
     await page.setViewportSize({ width: 320, height: 844 });
     const arrowUp = keys.getByRole("button", { name: "Arrow up", exact: true });
     const pageDown = keys.getByRole("button", { name: "PgDn", exact: true });
-    await page.evaluate(() => document.fonts.ready);
-    await pageDown.scrollIntoViewIfNeeded();
-    await expect(pageDown).toBeInViewport({ ratio: 0.98 });
-    await expect(arrowUp).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole("dialog", { name: "Context panel" })).toBeVisible();
+    await pageDown.tap({ trial: true });
     await scroll.evaluate((node) => {
       node.scrollLeft = 0;
     });
@@ -898,7 +872,7 @@ test.describe("touch terminal", () => {
 
     // Clear pending input with the shell's own editing key.
     await input.press(process.platform === "win32" ? "Escape" : "Control+u");
-    await pasteTerminalText(input, terminalWriteCommand("TOUCH_COPY_中文\n"));
+    await page.keyboard.insertText(terminalWriteCommand("TOUCH_COPY_中文\n"));
     await input.press("Enter");
     const more = page.getByLabel("Terminal actions", { exact: true });
     const selectText = async () => {

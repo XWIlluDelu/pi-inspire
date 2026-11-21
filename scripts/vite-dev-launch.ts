@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
 import {
+  hostListener,
   inspectInstance,
   instanceLaunchUrl,
 } from "../server/instance-state.mjs";
@@ -15,6 +16,10 @@ export function developmentLaunch(environment = process.env): Plugin {
     configureServer(server: ViteDevServer) {
       const statePath = environment.INSPIRE_DEV_STATE_PATH;
       if (!statePath || !server.httpServer) return;
+      const target = {
+        root: resolve(server.config.root),
+        ...hostListener(environment.INSPIRE_HOST, environment.INSPIRE_PORT),
+      };
       let closed = false;
       server.httpServer.once("close", () => {
         closed = true;
@@ -22,15 +27,9 @@ export function developmentLaunch(environment = process.env): Plugin {
       const launch = async (explicit = false) => {
         const deadline = Date.now() + 30_000;
         while (!closed && Date.now() < deadline) {
-          const owned = await inspectInstance(
-            statePath,
-            {
-              root: resolve(server.config.root),
-              host: environment.INSPIRE_HOST ?? "127.0.0.1",
-              port: Number(environment.INSPIRE_PORT ?? "4587"),
-            },
-            { healthTimeoutMs: 1000 },
-          );
+          const owned = await inspectInstance(statePath, target, {
+            healthTimeoutMs: 1000,
+          });
           if (
             owned.kind === "healthy" &&
             owned.state.token === environment.INSPIRE_TOKEN

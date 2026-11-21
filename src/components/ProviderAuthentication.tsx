@@ -11,8 +11,10 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge";
+import { isTransientFailure } from "../recovery-backoff";
 import { store } from "../store";
 import { ConfigurationConfirmation } from "./ConfigurationForm";
+import { DetailSummary } from "./DetailSummary";
 import { PromptChoices, PromptInput } from "./PromptFields";
 import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
@@ -35,7 +37,7 @@ function matchesProvider(
 function RemoteLoginHelp({ instruction }: { instruction: string }) {
   return (
     <details className="models-remote">
-      <summary>Remote login</summary>
+      <DetailSummary>Remote login</DetailSummary>
       <p>{instruction}</p>
     </details>
   );
@@ -44,7 +46,7 @@ function RemoteLoginHelp({ instruction }: { instruction: string }) {
 type AuthenticationProps = {
   owner: Owner;
   providers: ProviderLoginOption[];
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<ProviderLoginOption[] | void>;
   initialQuery?: string;
   discover?: boolean;
   loadError?: string | null;
@@ -137,7 +139,6 @@ function AuthenticationPanel({
     if (!attemptId || attemptStatus !== "pending") return;
     let observing = true;
     let timer: ReturnType<typeof setTimeout>;
-    let pollError: string | null = null;
     const poll = async () => {
       const revision = mutationRevision.current;
       try {
@@ -151,18 +152,13 @@ function AuthenticationPanel({
         if (
           next.status !== "pending" ||
           mutationRevision.current === revision
-        ) {
-          if (pollError) {
-            const recovered = pollError;
-            setError((error) => (error === recovered ? null : error));
-            pollError = null;
-          }
-          update(next);
-        }
+        ) update(next);
       } catch (error) {
         if (!observing || !ownsPendingAttempt(attemptId)) return;
-        pollError = messageOf(error);
-        setError(pollError);
+        if (!isTransientFailure(error)) {
+          update(null);
+          setError(messageOf(error));
+        }
       }
       if (observing && ownsPendingAttempt(attemptId))
         timer = setTimeout(() => void poll(), 750);
@@ -200,15 +196,20 @@ function AuthenticationPanel({
     setBusy(true);
     setError(null);
     try {
-      const result = await store.providerAuth(owner, request);
       if (request.operation === "logout") {
-        if (owns()) {
-          setRemoving(null);
-          setView({ kind: "saved" });
-          await onRefresh();
-        }
+        const removed = await store.providerAuth(owner, request).then(
+          () => true, () => false,
+        );
+        if (!owns()) return;
+        const current = await onRefresh();
+        if (!owns()) return;
+        if (!removed && (!current || current.some(
+          (provider) => provider.id === request.provider && provider.stored,
+        ))) throw new Error("Couldn’t remove the saved credentials.");
+        setRemoving(null);
+        setView({ kind: "saved" });
       } else {
-        const next = result as ProviderLoginAttempt | null;
+        const next = (await store.providerAuth(owner, request)) as ProviderLoginAttempt | null;
         if (owns()) update(next);
         else if (request.operation === "start" && next?.status === "pending")
           void store
@@ -315,38 +316,38 @@ function AuthenticationPanel({
             <div key={provider.id} className="models-provider-login">
               <div className="models-provider-login__heading">
                 <div className="models-provider-login__copy">
-                  <SearchMatchText
-                    text={provider.name}
-                    ranges={discovering ? nameMatches : []}
-                  />
-                  {idMatches.length > 0 && (
-                    <code>
-                      <SearchMatchText text={provider.id} ranges={idMatches} />
-                    </code>
-                  )}
-                  {provider.stored && (
-                    <small>
-                      {provider.stored === "api_key"
-                        ? "API key configured"
-                        : "Signed in"}
-                    </small>
-                  )}
+              <SearchMatchText
+                text={provider.name}
+                ranges={discovering ? nameMatches : []}
+              />
+              {idMatches.length > 0 && (
+                <code>
+                  <SearchMatchText text={provider.id} ranges={idMatches} />
+                </code>
+              )}
+              {provider.stored && (
+                <small>
+                  {provider.stored === "api_key"
+                    ? "API key configured"
+                    : "Signed in"}
+                </small>
+              )}
                 </div>
                 <button
-                  type="button"
-                  className="button models-provider-disclosure"
-                  aria-label={`${discovering ? "Set up" : "Manage"} ${provider.name}`}
-                  aria-expanded={view.provider === provider.id}
-                  disabled={busy}
-                  onClick={() => {
-                    setRemoving(null);
-                    setView({
-                      kind: view.kind,
-                      provider:
-                        view.provider === provider.id ? undefined : provider.id,
-                    });
-                  }}
-                >
+              type="button"
+              className="button models-provider-disclosure"
+              aria-label={`${discovering ? "Set up" : "Manage"} ${provider.name}`}
+              aria-expanded={view.provider === provider.id}
+              disabled={busy}
+              onClick={() => {
+                setRemoving(null);
+                setView({
+                  kind: view.kind,
+                  provider:
+                    view.provider === provider.id ? undefined : provider.id,
+                });
+              }}
+            >
                   {discovering ? "Set up" : "Manage"}
                 </button>
               </div>

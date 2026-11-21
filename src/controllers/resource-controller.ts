@@ -61,7 +61,6 @@ type ResourceRead = ReadScope & {
   api: Api;
   sessionId: string;
   viewId: string;
-  revision: number;
 };
 
 /**
@@ -82,7 +81,7 @@ export class ResourceController {
 
   constructor(private readonly host: ResourceControllerHost) {}
 
-  cancelRequest(retainDocumentImages = false): void {
+  private cancelRequest(retainDocumentImages = false): void {
     this.resourceRequest?.abort();
     this.resourceRequest = null;
     if (!retainDocumentImages) {
@@ -93,14 +92,12 @@ export class ResourceController {
     this.downloads = new AbortController();
   }
 
-  cancelProbes(clearStanding = false): void {
+  cancelProbes(): void {
     this.probeRecovery.reset();
     this.resourceProbeRequest?.abort();
     this.resourceProbeRequest = null;
     this.resourceProbeKey = null;
     this.resourceProbedReferences.clear();
-    if (clearStanding && Object.keys(this.host.state().resourceStanding).length)
-      this.host.patch({ resourceStanding: {} });
   }
 
   /** Cancels resources without publishing an intermediate state. The caller
@@ -159,7 +156,7 @@ export class ResourceController {
     const api = this.host.api();
     const {
       sessionId,
-      view: { viewId, incarnation, revision },
+      view: { viewId, incarnation },
     } = this.host.state();
     if (!api || !sessionId || !viewId) return null;
     const scope = readScope(() => {
@@ -172,7 +169,7 @@ export class ResourceController {
         owns(state)
       );
     }, signal);
-    return { api, sessionId, viewId, revision, ...scope };
+    return { api, sessionId, viewId, ...scope };
   }
 
   private authFailed(error: unknown, scope: ReadScope): boolean {
@@ -218,9 +215,15 @@ export class ResourceController {
   /** Preflight every reference in explicitly loaded Files-pane pages. Each
    * failed batch is isolated: it never invalidates earlier verified batches,
    * and only its own references remain eligible for retry. */
-  async probeResources(references: string[]): Promise<void> {
+  async probeResources(
+    references: string[],
+    signal?: AbortSignal,
+  ): Promise<void> {
     const revision = this.host.state().view.revision;
-    const request = this.viewRead((state) => state.view.revision === revision);
+    const request = this.viewRead(
+      (state) => state.view.revision === revision,
+      signal,
+    );
     if (!request) return;
     const { api, sessionId, viewId } = request;
     const unique = [...new Set(references)];
@@ -313,7 +316,7 @@ export class ResourceController {
       if (retryNeeded)
         this.probeRecovery.schedule(() => {
           if (this.resourceProbeKey === generationKey && request.current())
-            void this.probeResources(unique);
+            void this.probeResources(unique, signal);
         });
       else this.probeRecovery.reset();
     } finally {
@@ -472,9 +475,7 @@ export class ResourceController {
         "The transcript image owner changed",
         "AbortError",
       );
-    return this.readAuthorized(scope, (owner) =>
-      this.readInlineImage(owner, reference, "transcript"),
-    );
+    return this.readAuthorized(scope, (owner) => this.readInlineImage(owner, reference, "transcript"));
   }
 
   /** Both image reads and download tickets are bound to the current file. */
@@ -513,18 +514,18 @@ export class ResourceController {
   }
 
   /** A linked image needs its own resource authorization. */
-  loadDocumentImage(
+  loadDocumentImage = (
     documentId: string,
     reference: string,
     signal: AbortSignal,
-  ): Promise<Blob> {
+  ): Promise<Blob> => {
     return this.readSelectedFile(
       documentId,
       AbortSignal.any([this.documentImages.signal, signal]),
       (state) => state.contextMode === "files",
       (owner) => this.readInlineImage(owner, reference, "document"),
     );
-  }
+  };
 
   async downloadResource(): Promise<void> {
     const {

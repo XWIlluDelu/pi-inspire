@@ -34,7 +34,7 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
-import { shallowEqual, store, useAppState } from "../store";
+import { store, useAppState } from "../store";
 import { useConfigurationDocument } from "../use-configuration-document";
 import {
   ConfigurationAction,
@@ -81,35 +81,16 @@ function declarationLabel(
 }
 const unavailable = "The Host could not complete this operation";
 export function ModelsSettings({
+  owner,
   destination,
-  active = true,
+  active,
 }: {
+  owner: ModelSettingsOwner;
   destination?: ModelSettingsDestination;
-  active?: boolean;
+  active: boolean;
 }) {
-  const state = useAppState(
-    (source) => ({
-      sessionId: source.sessionId,
-      cwd: source.cwd,
-      transport: source.transportGeneration,
-    }),
-    shallowEqual,
-  );
-  const owner = useMemo<ModelSettingsOwner>(
-    () =>
-      destination?.owner ??
-      (state.sessionId
-        ? { sessionId: state.sessionId }
-        : state.cwd
-          ? { cwd: state.cwd }
-          : {}),
-    [destination?.owner, state.sessionId, state.cwd],
-  );
-  const settingsOwner = JSON.stringify([
-    owner.sessionId,
-    owner.cwd,
-    state.transport,
-  ]);
+  const transport = useAppState((state) => state.transportGeneration);
+  const settingsOwner = JSON.stringify([owner.sessionId, owner.cwd, transport]);
   const configuration = useConfigurationDocument<
     ModelSettingsSnapshot,
     Selection
@@ -140,10 +121,11 @@ export function ModelsSettings({
     selection?.kind === "remove-provider" || selection?.kind === "remove-model"
       ? selection
       : null;
-  const [providers, setProviders] = useState<ProviderLoginOption[]>([]);
+  const [providers, setProviders] = useState<ProviderLoginOption[] | null>(
+    null,
+  );
   const [authError, setAuthError] = useState<string | null>(null);
   const [providersLoading, setProvidersLoading] = useState(true);
-  const [providersLoaded, setProvidersLoaded] = useState(false);
   const declarationsRef = useRef<HTMLDetailsElement>(null);
   const savedEntriesRef = useRef<HTMLDetailsElement>(null);
   const addProviderRef = useRef<HTMLButtonElement>(null);
@@ -151,31 +133,41 @@ export function ModelsSettings({
   const addModelRef = useRef<HTMLButtonElement>(null);
   const defaultGroupName = useId();
   const providerGeneration = useRef(0);
+  const opened = useRef(false);
   useLayoutEffect(() => {
-    setProviders([]);
+    opened.current = false;
+    setProviders(null);
     setAuthError(null);
-    setProvidersLoaded(false);
     return () => {
       providerGeneration.current++;
     };
   }, [settingsOwner]);
   const openEditor = (next: DeclarationEditor, opener: HTMLElement) =>
     configuration.open(next, opener, true);
-  const load = useCallback(
-    () => readSettings(() => store.readModelSettings(owner, true)),
-    [readSettings, owner],
+  const readConfig = useCallback(
+    () => store.readModelSettings(owner, true),
+    [owner],
   );
+  const load = useCallback(() => readSettings(readConfig), [readSettings, readConfig]);
+  useEffect(() => {
+    if (!active || !configuration.browsing || !snapshot) return;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && !busy) void load();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [active, busy, configuration.browsing, load, snapshot]);
   const refreshProviders = useCallback(async () => {
     if (!alive.current) return;
     const current = ++providerGeneration.current;
     const owns = () => alive.current && providerGeneration.current === current;
     setProvidersLoading(true);
     try {
-      const auth = await store.providerAuth(owner, { operation: "providers" });
+      const auth = (await store.providerAuth(owner, { operation: "providers" })) as ProviderLoginOption[];
       if (owns()) {
-        setProviders(auth as ProviderLoginOption[]);
-        setProvidersLoaded(true);
+        setProviders(auth);
         setAuthError(null);
+        return auth;
       }
     } catch (error) {
       if (owns())
@@ -185,12 +177,15 @@ export function ModelsSettings({
     }
   }, [owner, alive]);
   const refreshCredentials = async () => {
-    await Promise.all([refreshProviders(), load()]);
+    const [providers] = await Promise.all([refreshProviders(), load()]);
+    return providers;
   };
   useEffect(() => {
+    if (!active || opened.current) return;
+    opened.current = true;
     void load();
     void refreshProviders();
-  }, [load, refreshProviders]);
+  }, [active, load, refreshProviders]);
   const focusedDestination = useRef<string | undefined>(undefined);
   useEffect(() => {
     const key = `${destination?.focus ?? ""}/${destination?.query ?? ""}`;
@@ -219,6 +214,7 @@ export function ModelsSettings({
       () => store.saveModelPreferences(owner, snapshot.settingsRevision, patch),
       {
         close: fromEditor,
+        readBack: readConfig,
         onSaved: () =>
           patch.defaultModel === null
             ? () => defaultThinkingRef.current
@@ -238,6 +234,7 @@ export function ModelsSettings({
       () => store.editModelConfig(owner, snapshot.configRevision, edit),
       {
         close: true,
+        readBack: readConfig,
         onSaved: () => {
           if (
             edit.kind === "provider" &&
@@ -936,7 +933,7 @@ export function ModelsSettings({
         >
           <ProviderAuthentication
             owner={owner}
-            providers={providers}
+            providers={providers ?? []}
             initialQuery={
               destination?.focus === "credentials"
                 ? destination.query
@@ -945,7 +942,7 @@ export function ModelsSettings({
             discover={destination?.focus === "credentials"}
             loadError={authError}
             loading={providersLoading}
-            loaded={providersLoaded}
+            loaded={providers !== null}
             onRefresh={refreshCredentials}
           />
         </SettingsSection>

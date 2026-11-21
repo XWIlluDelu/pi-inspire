@@ -13,8 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
-import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
+import type { ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
 import { selectedRunState } from "./app-state";
 import { pairBrowser } from "./browser-auth";
@@ -29,6 +28,7 @@ import {
   ContextPaneShell,
 } from "./components/ContextPaneShell";
 import { ContextPaneState } from "./components/ContextPaneState";
+import { DirectoryPicker } from "./components/DirectoryPicker";
 import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import {
@@ -43,11 +43,17 @@ import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StartupCard } from "./components/StartupCard";
+import { ToolLoadoutDialog } from "./components/ToolLoadoutDialog";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
-import { isComposingKeyboardEvent } from "./keyboard-input";
+import { isComposingKeyboardEvent, isEditableTarget } from "./keyboard-input";
 import { thinkingLevelLabel } from "./model-options";
-import { runStop, type WorkbenchDestinations } from "./session-actions";
+import {
+  runStop,
+  sessionActionAvailable,
+  type SessionInspection,
+  type WorkbenchDestinations,
+} from "./session-actions";
 import { shallowEqual, store, useAppState } from "./store";
 import { useInspectionHistory } from "./use-inspection-history";
 import { hasActiveModal, useModalDepth } from "./use-modal-focus";
@@ -100,7 +106,7 @@ function DeferredPanel({
             : `Loading ${surface.toLowerCase()}`
         }
         role={error ? "alert" : "status"}
-        action={error ? { label: "Reload", run: reloadPage } : undefined}
+        action={error ? { label: "Refresh page", run: reloadPage } : undefined}
       />
     </>
   );
@@ -190,7 +196,7 @@ function TokenGate() {
   return (
     <StartupCard
       title="Pair this browser"
-      hint="Open the link from the Inspire launcher or paste its access token. Pair only on a device you trust. This browser can control your sessions, files and terminals."
+      hint="Open the launcher link or paste the Host access token."
     >
       <form
         onSubmit={(event) => {
@@ -242,12 +248,6 @@ function connectionProblemText(
   host: string,
 ): { title: string; detail: string } {
   switch (problem.kind) {
-    case "browser-upgrade":
-      return {
-        title: "Reload Inspire",
-        detail:
-          "A newer build is available. Reload when ready. Draft text stays in this tab; keep a copy of any unsent attachments.",
-      };
     case "device-offline":
       return {
         title: "This device is offline",
@@ -260,17 +260,17 @@ function connectionProblemText(
       };
     case "service-error":
       return {
-        title: "Host needs attention",
+        title: "Host error",
         detail: problem.message,
       };
     case "stream-interrupted":
       return {
-        title: "Live connection interrupted",
+        title: "Connection interrupted",
         detail: `Reconnecting to ${host}. Recent content stays visible.`,
       };
     default:
       return {
-        title: "INSΠRE address not reachable",
+        title: "Cannot reach Inspire",
         detail: `Could not connect to ${host}.`,
       };
   }
@@ -302,15 +302,13 @@ function HostUnavailable({
         <button
           type="button"
           className="button button--primary"
-          onClick={() => store.retryConnection()}
+          onClick={() => store.connectionController.retry()}
         >
-          {problem.kind === "browser-upgrade" ? "Reload" : "Try again"}
+          Try again
         </button>
-        {problem.kind !== "browser-upgrade" ? (
-          <span>
-            <PiLoader size={12} aria-hidden /> Reconnecting automatically
-          </span>
-        ) : null}
+        <span>
+          <PiLoader size={12} aria-hidden /> Reconnecting automatically
+        </span>
       </div>
     </StartupCard>
   );
@@ -357,9 +355,6 @@ const ConversationStage = memo(function ConversationStage({
       queue: source.live.queue,
       pendingAction: source.pendingAction?.action ?? null,
       extensionDisplays: source.live.extensionDisplays,
-      thinkingVisibility: source.prefs.thinkingVisibility,
-      toolVisibility: source.prefs.toolVisibility,
-      activityFoldVisibility: source.prefs.activityFoldVisibility,
     }),
     shallowEqual,
   );
@@ -384,15 +379,12 @@ const ConversationStage = memo(function ConversationStage({
       queue={state.queue}
       pendingAction={state.pendingAction}
       extensionDisplays={state.extensionDisplays}
-      thinkingVisibility={state.thinkingVisibility}
-      toolVisibility={state.toolVisibility}
-      activityFoldVisibility={state.activityFoldVisibility}
     />
   );
   const composer = (
     <div className="composer-dock">
-      <CommandActivity />
       <ActivityBar onJumpToPending={jumpToPending} />
+      <CommandActivity />
       <ExtensionDisplayDock
         displays={state.extensionDisplays}
         placement="aboveEditor"
@@ -422,11 +414,13 @@ const ConversationStage = memo(function ConversationStage({
           </dl>
           {state.readOnlyReason === "external-active" && state.sessionId ? (
             <TakeOverNotice key={state.sessionId} sessionId={state.sessionId} />
+          ) : state.readOnlyReason === "workspace-unavailable" ? (
+            <WorkspaceRecoveryNotice
+              key={`${state.sessionId}:${state.transcriptViewId}`}
+            />
           ) : (
             <p role="status">
-              {state.readOnlyReason === "workspace-unavailable"
-                ? "Project folder unavailable. This session is read-only."
-                : "Pi is unavailable. You can still read this session."}
+              Pi is unavailable. You can still read this session.
             </p>
           )}
         </div>
@@ -446,6 +440,39 @@ const ConversationStage = memo(function ConversationStage({
     </section>
   );
 });
+
+function WorkspaceRecoveryNotice() {
+  const [fork, setFork] =
+    useState<ReturnType<typeof store.branches.prepareWorkspaceFork>>(null);
+  const action = useAppState((state) => state.branchActionId);
+  return (
+    <div className="composer-readonly__notice">
+      <p role="status">Project folder unavailable. This session is read-only.</p>
+      <button
+        type="button"
+        className="button button--quiet"
+        disabled={action !== null}
+        onClick={() => {
+          const prepared = store.branches.prepareWorkspaceFork();
+          if (prepared) setFork(() => prepared);
+        }}
+      >
+        {action === "recover" ? "Forking…" : "Fork into another folder…"}
+      </button>
+      {fork ? (
+        <DirectoryPicker
+          title="Choose fork destination"
+          actionLabel="Fork into this folder"
+          onCancel={() => setFork(null)}
+          onPick={(cwd) => {
+            setFork(null);
+            void fork(cwd);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 /** Another Pi is running this branch: watch here, or take it over. Taking
  * over attaches to that Pi; its terminal keeps working alongside Inspire. */
@@ -495,6 +522,12 @@ type Inspection =
   | { kind: "palette" }
   | { kind: "rename"; sessionId: string; name: string; fromPalette: boolean }
   | { kind: "export"; sessionId: string }
+  | {
+      kind: "tool-loadout";
+      sessionId: string;
+      viewId: string;
+      transportGeneration: number;
+    }
   | { kind: "help"; mode: "hotkeys" | "changelog" };
 
 export function App() {
@@ -515,7 +548,6 @@ export function App() {
       attentionCount: source.attentionSessionIds.length,
       sessionId: source.sessionId,
       runState: selectedRunState(source),
-      bashRunning: source.live.bashRunning,
       error: source.error,
       errorSeverity: source.errorSeverity,
       projectionConflict: source.view.conflict,
@@ -543,7 +575,6 @@ export function App() {
   const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
   useEffect(() => saveNavCollapsed(navCollapsed), [navCollapsed]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const mobileNavToggleRef = useRef<HTMLButtonElement>(null);
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [inspection, setInspection] = useState<Inspection | null>(null);
@@ -551,9 +582,7 @@ export function App() {
   const closeInspection = useCallback(() => setInspection(null), []);
   const closeCommandPalette = useCallback(() => {
     setInspection((current) =>
-      current?.kind === "palette" || current?.kind === "rename"
-        ? null
-        : current,
+      current?.kind === "palette" || current?.kind === "rename" ? null : current,
     );
   }, []);
   const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
@@ -618,7 +647,7 @@ export function App() {
         commands: [...current.commands],
       });
     }
-    void store.deselectSession().then((deselected) => {
+    void store.selection.deselect().then((deselected) => {
       if (!deselected) return;
       store.setResourcesOpen(false);
     });
@@ -627,7 +656,8 @@ export function App() {
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
     setInspection((current) =>
-      (current?.kind === "export" || current?.kind === "rename") &&
+      (current?.kind === "export" || current?.kind === "rename" ||
+        current?.kind === "tool-loadout") &&
       current.sessionId !== state.sessionId
         ? current.kind === "rename" && current.fromPalette
           ? { kind: "palette" }
@@ -639,13 +669,6 @@ export function App() {
   const closeMobileNavigation = useCallback(() => {
     setMobileNavOpen(false);
   }, []);
-  const openNavigationSettings = useCallback(() => {
-    // The drawer closes, so Settings returns focus to the toggle that reopens
-    // it. Commit the close first: the header is inert while the drawer is open.
-    flushSync(() => setMobileNavOpen(false));
-    mobileNavToggleRef.current?.focus();
-    openSettings("display");
-  }, [openSettings]);
   const closeResources = useCallback(() => {
     store.setResourcesOpen(false);
   }, []);
@@ -737,14 +760,19 @@ export function App() {
     if (extensionOverlayOpen || hasActiveModal()) return;
     showCommandPalette();
   }, [extensionOverlayOpen, showCommandPalette]);
-  const openExport = useCallback(() => {
-    const sessionId = store.getState().sessionId;
-    if (!sessionId) return;
+  const openSessionInspection = useCallback((kind: SessionInspection) => {
+    const source = store.getState();
+    const { sessionId, view: { viewId }, transportGeneration } = source;
+    if (!sessionId || !sessionActionAvailable(kind, source)) return;
+    const next: Inspection | null = kind === "export"
+      ? { kind, sessionId }
+      : viewId ? { kind, sessionId, viewId, transportGeneration } : null;
+    if (!next) return;
     closeCommandPalette();
     // Let the invoking menu/palette restore focus before taking modal ownership.
     requestAnimationFrame(() => {
       if (store.getState().sessionId === sessionId)
-        setInspection((current) => current ?? { kind: "export", sessionId });
+        setInspection((previous) => previous ?? next);
     });
   }, [closeCommandPalette]);
 
@@ -856,7 +884,7 @@ export function App() {
   }, [state.windowTitle, state.sessionName, state.attentionCount]);
 
   useEffect(() => {
-    const acknowledge = () => store.acknowledgeVisibleSession();
+    const acknowledge = () => store.runtimeEvents.acknowledgeVisibleSession();
     window.addEventListener("focus", acknowledge);
     document.addEventListener("visibilitychange", acknowledge);
     acknowledge();
@@ -885,10 +913,7 @@ export function App() {
       const target = event.target instanceof Element ? event.target : null;
       const cycleAction = modelCycleAction(event);
       if (cycleAction) {
-        const editable = target?.closest(
-          "input,textarea,[contenteditable=true]",
-        );
-        const draft = editable && target?.closest(".composer");
+        const draft = target?.matches("textarea.composer__input");
         const combobox = target?.closest("[role=combobox]");
         if (
           !store.getState().sessionId ||
@@ -897,7 +922,7 @@ export function App() {
           ) ||
           (combobox &&
             (!draft || combobox.getAttribute("aria-expanded") !== "false")) ||
-          (editable && !draft)
+          (isEditableTarget(target) && !draft)
         )
           return;
         event.preventDefault();
@@ -934,11 +959,7 @@ export function App() {
       ) {
         event.preventDefault();
         store.setResourcesOpen(false);
-      } else if (
-        event.key === "Escape" &&
-        !event.defaultPrevented &&
-        (isAbortableRunState(state.runState) || state.bashRunning)
-      ) {
+      } else if (event.key === "Escape") {
         runStop(state.sessionId);
       }
     };
@@ -946,7 +967,6 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     state.runState,
-    state.bashRunning,
     state.sessionId,
     state.resourcesOpen,
     narrowViewport,
@@ -975,7 +995,6 @@ export function App() {
         collapsed={narrowViewport ? false : navCollapsed}
         isModal={isNavModal}
         onClose={closeMobileNavigation}
-        onOpenSettings={openNavigationSettings}
         onToggleNavigation={toggleNavigation}
         searchInputRef={navSearchRef}
         onNewSession={newSession}
@@ -1015,11 +1034,10 @@ export function App() {
         <AppTopbar
           narrowViewport={narrowViewport}
           mobileNavOpen={mobileNavOpen}
-          mobileNavToggleRef={mobileNavToggleRef}
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
-          onExportSession={openExport}
+          onInspectSession={openSessionInspection}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -1028,23 +1046,11 @@ export function App() {
             className={`banner banner--${state.errorSeverity}`}
             role={state.errorSeverity === "warning" ? "status" : "alert"}
           >
-            <span className="banner__message">
-              {state.error}
-              {state.projectionConflict?.incidentId ? (
-                <span role="group" aria-label="Diagnostic incident">
-                  <code
-                    className="banner__incident"
-                    title="Diagnostic incident ID"
-                  >
-                    {state.projectionConflict.incidentId}
-                  </code>
-                </span>
-              ) : null}
-            </span>
+            <span className="banner__message">{state.error}</span>
             <div className="banner__actions">
               {state.projectionConflict ? (
                 <button type="button" onClick={() => void store.abort()}>
-                  Recover
+                  Reopen saved conversation
                 </button>
               ) : (
                 <>
@@ -1062,9 +1068,7 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {showConnectionBanner &&
-        (!state.error ||
-          state.connectionProblem?.kind === "browser-upgrade") ? (
+        {showConnectionBanner && !state.error ? (
           <div className="banner banner--warning" role="status">
             <span>
               {state.connectionProblem
@@ -1074,10 +1078,11 @@ export function App() {
                   ).detail
                 : "Connection lost. Recent content stays visible."}
             </span>
-            <button type="button" onClick={() => store.retryConnection()}>
-              {state.connectionProblem?.kind === "browser-upgrade"
-                ? "Reload"
-                : "Retry now"}
+            <button
+              type="button"
+              onClick={() => store.connectionController.retry()}
+            >
+              Retry now
             </button>
           </div>
         ) : null}
@@ -1138,6 +1143,15 @@ export function App() {
           onClose={closeInspection}
         />
       ) : null}
+      {inspection?.kind === "tool-loadout" && inspection.sessionId === state.sessionId ? (
+        <ToolLoadoutDialog
+          sessionId={inspection.sessionId}
+          viewId={inspection.viewId}
+          transportGeneration={inspection.transportGeneration}
+          active={!extensionOverlayOpen}
+          onClose={closeInspection}
+        />
+      ) : null}
       {inspection?.kind === "palette" ||
       (inspection?.kind === "rename" && inspection.fromPalette) ? (
         <CommandPalette
@@ -1145,7 +1159,7 @@ export function App() {
           rename={inspection.kind === "rename" ? inspection : undefined}
           onRenameBack={closeRename}
           onClose={closeCommandPalette}
-          onExportSession={openExport}
+          onInspectSession={openSessionInspection}
           onRenameSession={openRename}
           onToggleNav={toggleNavigation}
           onToggleCtx={toggleResources}

@@ -60,7 +60,7 @@ afterEach(async () => {
 
 async function repositoryStatus(cwd: string) {
   const status = await service.status(cwd);
-  if (status.kind !== "repository") throw new Error("Expected repository");
+  if (!("files" in status)) throw new Error("Expected repository detail");
   return status;
 }
 
@@ -569,17 +569,15 @@ describe("effective safe Git configuration in real repositories", () => {
 });
 
 describe("native working tree projection", () => {
-  it("accepts Git's paired unknown ahead/behind tracking header through the real service", async () => {
-    const { directory, root, git } = await repository();
-    const origin = join(directory, "origin");
-    await git("init", "-q", "--bare", origin);
+  it("shows working changes when the configured upstream branch is gone", async () => {
+    const { root, git } = await repository();
+    await git("checkout", "-qb", "review");
     await writeFile(join(root, "tracked.txt"), "base\n");
     await git("add", ".");
     await git("commit", "-qm", "base");
-    await git("remote", "add", "origin", origin);
-    await git("push", "-qu", "origin", "HEAD");
-    await writeFile(join(root, "tracked.txt"), "local-commit\n");
-    await git("commit", "-qam", "ahead");
+    await git("remote", "add", "origin", ".");
+    await git("config", "branch.review.remote", "origin");
+    await git("config", "branch.review.merge", "refs/heads/missing");
     await writeFile(join(root, "tracked.txt"), "working-change\n");
 
     expect(await repositoryStatus(root)).toMatchObject({

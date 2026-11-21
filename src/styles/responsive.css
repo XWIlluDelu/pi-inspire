@@ -7,8 +7,6 @@
 
   .topbar {
     padding-top: var(--safe-top);
-    padding-inline: max(var(--space-4), var(--safe-left))
-      max(var(--space-3), var(--safe-right));
     height: calc(var(--topbar-h) + var(--safe-top));
   }
 
@@ -92,12 +90,12 @@
   }
 
   .notices {
-    right: max(var(--space-3), var(--safe-right));
+    --notice-inset: var(--space-3);
     width: min(
       360px,
       calc(
-        100vw - max(var(--space-3), var(--safe-left)) -
-          max(var(--space-3), var(--safe-right))
+        100vw - max(var(--notice-inset), var(--safe-left)) -
+          max(var(--notice-inset), var(--safe-right))
       )
     );
   }
@@ -166,7 +164,7 @@
   }
 
   .composer__input {
-    line-height: 1.45;
+    line-height: var(--leading-ui);
   }
 
   .composer__meta .thinking-select {
@@ -258,8 +256,16 @@
     flex: 0 0 auto;
     gap: 4px;
     padding: var(--space-1) var(--space-2);
-    font-size: var(--text-xs);
+    border-block-end-width: 2px;
     white-space: nowrap;
+  }
+
+  .settings__nav-item--active {
+    border-color: transparent transparent var(--accent-deep);
+    background: transparent;
+    box-shadow: none;
+    color: var(--accent-deep);
+    font-weight: 500;
   }
 
   .settings__nav-item:focus-visible {
@@ -316,7 +322,7 @@
   *::before,
   *::after {
     animation: none !important;
-    transition-duration: 0.01ms !important;
+    transition: none !important;
   }
 }
 
@@ -328,12 +334,12 @@
   .prompt-map--mobile-active {
     position: absolute;
     z-index: 5;
-    top: var(--space-2);
+    top: var(--space-1);
     right: max(var(--space-3), var(--safe-right));
     left: max(var(--space-3), var(--safe-left));
     display: flex;
     width: auto;
-    height: 44px;
+    height: var(--transcript-tools-height);
     flex-direction: row;
     align-items: center;
     gap: var(--space-1);
@@ -353,6 +359,16 @@
     height: 44px;
     flex: 0 0 44px;
     opacity: 0.6;
+  }
+
+  .prompt-map__close.icon-button {
+    width: var(--transcript-tools-height);
+    height: var(--transcript-tools-height);
+    flex: none;
+  }
+
+  .prompt-map--open .prompt-map__close {
+    align-self: flex-end;
   }
 
   .prompt-map--mobile-active .prompt-map__step--previous svg,
@@ -424,12 +440,10 @@
   .prompt-map--mobile-active.prompt-map--open {
     position: fixed;
     z-index: 45;
-    top: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top) + var(--space-2));
-    right: max(var(--space-2), var(--safe-right));
-    left: max(var(--space-2), var(--safe-left));
+    top: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top) + var(--space-1));
     display: flex;
     width: auto;
-    height: min(62dvh, calc(24px + var(--prompt-map-list-height)));
+    height: min(62dvh, calc(68px + var(--prompt-map-list-height)));
     min-height: 0;
     flex-direction: column;
     overflow: hidden;

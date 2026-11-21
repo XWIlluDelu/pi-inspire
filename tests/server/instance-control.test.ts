@@ -385,7 +385,6 @@ describe("Host local-control ingress", () => {
         commit: (id) => controller.commit(id),
         release: (id) => controller.release(id),
       },
-      activeHerdrMode: true,
     });
     const api = request(f.application.server);
     const localControl = (message: object) =>
@@ -410,12 +409,6 @@ describe("Host local-control ingress", () => {
         true,
       );
       await localControl(ready).expect(401);
-      const mode = createInstanceControlRequest(owner, "restart-mode");
-      const modeResponse = await localControl(mode).expect(200);
-      expect(modeResponse.body.result).toEqual({ includeHerdr: true });
-      expect(
-        verifyInstanceControlResponse(owner, mode, modeResponse.body),
-      ).toBe(true);
       const link = await instanceLaunchUrl(owner);
       expect(link).not.toBeNull();
       const pairing = new URL(link!);
@@ -486,10 +479,10 @@ describe("Host local-control ingress", () => {
       controller = maintenance({ kind: "package", version: "0.1.0" });
       current = { kind: "package", version: "0.2.0" };
       await assertLease(["inspire"]);
-      const previousMode = createInstanceControlRequest(owner, "restart-mode");
+      const previousReady = createInstanceControlRequest(owner, "readiness");
       const previousOwner = owner;
       owner = null;
-      await localControl(previousMode).expect(503);
+      await localControl(previousReady).expect(503);
       await expect(
         requestInstanceControl(previousOwner, "readiness"),
       ).resolves.toBeNull();

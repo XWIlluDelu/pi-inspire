@@ -101,16 +101,21 @@ describe("TerminalSessionManager", () => {
       "relative/path\u001b]2;spoof";
     state.terminals.find(({ id }) => id === unavailable.id)!.profileId =
       "missing-shell";
-    state.orderByProject[0]!.terminalIds = [
-      unavailable.id,
-      terminal.id,
-      terminal.id,
+    // A prior v1 daemon persisted ordering separately, including stale IDs.
+    state.orderByProject = [
+      {
+        projectCwd: process.cwd(),
+        terminalIds: [unavailable.id, "removed-terminal", unavailable.id],
+      },
     ];
     await first.manager.close();
 
     const second = setup();
     try {
       await second.manager.restoreState(state);
+      expect(
+        second.manager.exportState().terminals.map(({ id }) => id),
+      ).toEqual([unavailable.id, terminal.id]);
       expect(second.spawns).toHaveLength(0);
       expect(second.manager.list(process.cwd())).toMatchObject({
         terminals: [
@@ -186,9 +191,7 @@ describe("TerminalSessionManager", () => {
       const delivered = sink.controls.length;
       const change = { type: "resize", cols: 130, rows: 45 } as const;
       rejectResize();
-      expect(() => writer.send({ control: change })).toThrow(
-        "PTY resize failed",
-      );
+      expect(() => writer.send({ control: change })).toThrow("PTY resize failed");
       expect(manager.list().terminals[0]).toMatchObject({
         cols: before.cols,
         rows: before.rows,
@@ -233,15 +236,8 @@ describe("TerminalSessionManager", () => {
         throw new Error("PTY resize failed");
       });
 
-      expect(() => second.send({ control: takeover })).toThrow(
-        "PTY resize failed",
-      );
-      first.send({
-        data: encodeTerminalInputFrame(
-          1,
-          Buffer.from("after resize refusal\r"),
-        ),
-      });
+      expect(() => second.send({ control: takeover })).toThrow("PTY resize failed");
+      first.send({ data: encodeTerminalInputFrame(1, Buffer.from("after resize refusal\r")) });
       expect(pty.writes.map(String)).toEqual(["after resize refusal\r"]);
 
       vi.spyOn(secondSink, "sendControl").mockImplementation(() => {
@@ -249,9 +245,7 @@ describe("TerminalSessionManager", () => {
       });
       second.send({ control: takeover });
       expect(manager.list().terminals[0]).toMatchObject({ viewerCount: 1 });
-      first.send({
-        data: encodeTerminalInputFrame(2, Buffer.from("after sink failure\r")),
-      });
+      first.send({ data: encodeTerminalInputFrame(2, Buffer.from("after sink failure\r")) });
       expect(pty.writes.map(String)).toEqual([
         "after resize refusal\r",
         "after sink failure\r",
@@ -264,9 +258,7 @@ describe("TerminalSessionManager", () => {
 
       const retry = await manager.attach(nextOwner, new FakeSink());
       retry.send({ control: takeover });
-      retry.send({
-        data: encodeTerminalInputFrame(1, Buffer.from("new owner\r")),
-      });
+      retry.send({ data: encodeTerminalInputFrame(1, Buffer.from("new owner\r")) });
       expect(String(pty.writes.at(-1))).toBe("new owner\r");
     } finally {
       await manager.close();
@@ -304,9 +296,7 @@ describe("TerminalSessionManager", () => {
         vi.useFakeTimers();
 
         if (contender)
-          contender.send({
-            control: { type: "take_control", cols: 100, rows },
-          });
+          contender.send({ control: { type: "take_control", cols: 100, rows } });
         else {
           const ownerToken = attachedMessage(first)!.ownerToken;
           await expect(
@@ -372,9 +362,7 @@ describe("TerminalSessionManager", () => {
         (frame) => decodeTerminalServerDataFrame(frame).data,
       );
       expect(Buffer.concat(replay).toString()).toBe("second\r\n");
-      resumed.send({
-        data: encodeTerminalInputFrame(1, Buffer.from("reclaimed\r")),
-      });
+      resumed.send({ data: encodeTerminalInputFrame(1, Buffer.from("reclaimed\r")) });
       expect(pty.writes.map(String)).toEqual(["reclaimed\r"]);
 
       pty.emitExit(7, 0);

@@ -18,7 +18,11 @@ import {
 } from "react";
 import type { GitDiffResponse, GitFileChange } from "../../shared/contracts";
 import { inspectedGitChange } from "../controllers/git-controller";
-import { gitHeadLabel, presentGitFacet } from "../git-presentation";
+import {
+  gitHeadLabel,
+  gitStatusDetail,
+  presentGitFacet,
+} from "../git-presentation";
 import { sourceDiffRows } from "../source-diff";
 import { store } from "../store";
 import type { FileReadingState } from "../workbench-session";
@@ -27,7 +31,7 @@ import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
 import { FileIndexRow } from "./FileIndexRow";
 import { PiLoader } from "./PiLoader";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 
 function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
@@ -51,14 +55,11 @@ function describeGitResult(result: GitDiffResponse) {
       return {
         icon: GitBranch,
         title: "Submodule change",
-        hint:
-          [
-            result.state.commitChanged && "commit changed",
-            result.state.trackedModified && "tracked content modified",
-            result.state.untracked && "untracked content",
-          ]
-            .filter(Boolean)
-            .join(" · ") || "Submodule state changed.",
+        hint: [
+          result.state.commitChanged && "commit changed",
+          result.state.trackedModified && "tracked content modified",
+          result.state.untracked && "untracked content",
+        ].filter(Boolean).join(" · ") || "Submodule state changed.",
       };
     case "conflict":
       return {
@@ -89,6 +90,10 @@ const ChangeRow = memo(function ChangeRow({
   selectedPathId: string | null;
 }) {
   const facet = presentGitFacet(change);
+  const path = pathName(change);
+  const parent = parentPath(path);
+  const name = parent ? path.slice(parent.length + 1) : path;
+  const directory = parent && <ResourcePathLabel path={parent} title={path} />;
   const originalPath = change.worktree?.originalPath;
   const sourceLabel = originalPath
     ? `${change.worktree?.kind === "copied" ? "copied" : "renamed"} from ${originalPath.display}`
@@ -96,13 +101,18 @@ const ChangeRow = memo(function ChangeRow({
   const selected = selectedPathId === change.path.id;
   return (
     <FileIndexRow
-      file={pathName(change)}
-      name={<ResourcePathLabel path={pathName(change)} />}
+      file={path}
+      name={name}
       context={
-        originalPath && (
-          <span className="changes__source" title={originalPath.display}>
-            from <ResourcePathLabel path={originalPath.display} />
-          </span>
+        originalPath ? (
+          <>
+            {directory}
+            <span className="changes__source" title={originalPath.display}>
+              from <ResourcePathLabel path={originalPath.display} />
+            </span>
+          </>
+        ) : (
+          directory
         )
       }
       stacked={Boolean(originalPath)}
@@ -110,19 +120,19 @@ const ChangeRow = memo(function ChangeRow({
       className={originalPath ? "file-row--renamed" : undefined}
       aria-current={selected || undefined}
       data-git-path={change.path.id}
-      aria-label={[pathName(change), facet?.label, sourceLabel]
+      aria-label={[path, facet?.label, sourceLabel]
         .filter(Boolean)
         .join(", ")}
       title={
         change.path.workspacePath
-          ? `${pathName(change)}\nCtrl+click: Show in file manager`
-          : pathName(change)
+          ? `${path}\nCtrl+click: Show in file manager`
+          : path
       }
       onClick={(event) => {
         const workspacePath = change.path.workspacePath;
         if ((event.ctrlKey || event.metaKey) && workspacePath)
           void store.showInFileManager(workspacePath, workspacePath);
-        else void store.openGitDiff(change.path.id);
+        else void store.git.openChange(change.path.id);
       }}
     />
   );
@@ -139,9 +149,9 @@ function ChangeGroup({
 }) {
   if (changes.length === 0) return null;
   return (
-    <section className="changes__group">
+    <section className="res__index-section">
       <h3>
-        {title} <span>{changes.length}</span>
+        {title} <span className="changes__group-count">{changes.length}</span>
       </h3>
       {changes.map((change) => (
         <ChangeRow
@@ -155,7 +165,7 @@ function ChangeGroup({
 }
 
 function ChangesIndex({ state }: { state: ContextPaneView }) {
-  const status = state.gitStatus;
+  const status = gitStatusDetail(state.gitStatus);
   if (!status) {
     const error = state.gitStatusPending ? null : state.gitStatusError;
     return (
@@ -218,13 +228,13 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
 }
 
 function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
-  const status = state.gitStatus;
+  const status = gitStatusDetail(state.gitStatus);
   const repo = status?.kind === "repository" ? status : null;
   const isClean = repo?.total === 0 && !repo.truncated;
-  const hasConflict = repo?.files.some((file) => file.conflict);
-  const headLabel = gitHeadLabel(status);
+  const hasConflict = Boolean(repo?.conflicts);
+  const headLabel = gitHeadLabel(state.gitStatus);
   return (
-    <div className="pane-toolbar res__index-header">
+    <div className="res__index-header res__index-header--git">
       <GitBranch size={13} aria-hidden />
       <span className="res__index-title" title={headLabel ?? undefined}>
         {headLabel ?? "Workspace"}
@@ -257,9 +267,8 @@ export function useFileChanges({
     rendered: { current: null },
   });
   const reading = readingState ?? localReading.current;
-  const change = enabled
-    ? inspectedGitChange(state, state.gitStatus)
-    : undefined;
+  const status = gitStatusDetail(state.gitStatus);
+  const change = enabled ? inspectedGitChange(state, status) : undefined;
   const pathId = change?.path.id ?? null;
   const hasComparison = change !== undefined;
   const pending = state.gitDiff;
@@ -292,11 +301,11 @@ export function useFileChanges({
   const waitingForStatus =
     statusPending && confirmedStatusScope.current !== scope;
   useLayoutEffect(() => {
-    if (!enabled || !state.gitStatus || confirmedStatusScope.current !== scope)
+    if (!enabled || !status || confirmedStatusScope.current !== scope)
       confirmedStatusScope.current = null;
-    if (enabled && state.gitStatus && !statusPending && !state.gitStatusError)
+    if (enabled && status && !statusPending && !state.gitStatusError)
       confirmedStatusScope.current = scope;
-  }, [enabled, state.gitStatus, state.gitStatusError, statusPending, scope]);
+  }, [enabled, status, state.gitStatusError, statusPending, scope]);
   const readingKey = pathId ? JSON.stringify([scope, pathId]) : null;
   const readingOwner = useRef({ reading, scope });
   const sameReadingScope =
@@ -388,17 +397,16 @@ export function useFileChanges({
   };
   if (!enabled) return null;
 
-  const readingStatus =
-    waitingForStatus || (!state.gitStatus && !state.gitStatusError);
+  const readingStatus = waitingForStatus || (!status && !state.gitStatusError);
   const noComparison = hasComparison
     ? null
     : readingStatus
       ? "Reading Git status"
       : state.gitStatusError
         ? "Git status unavailable"
-        : state.gitStatus?.kind !== "repository"
+        : status?.kind !== "repository"
           ? "Not in a Git repository"
-          : state.gitStatus.truncated
+          : status.truncated
             ? "Git status incomplete"
             : "No Git comparison";
 
@@ -426,7 +434,7 @@ export function useFileChanges({
         icon={<AlertTriangle size={17} aria-hidden />}
         title="Source unavailable"
         hint={diffView.message}
-        action={{ run: () => void store.openGitDiff(diffView.pathId) }}
+        action={{ run: () => void store.git.openChange(diffView.pathId) }}
       />
     );
   } else if (textResult && projection?.rows.length) {
@@ -557,10 +565,14 @@ export function ChangesPane({
     };
   }, [browseScrollTop]);
   return (
-    <div className="res__body res__body--changes">
+    <div className="res__body">
       <ChangesIndexHeader state={state} />
-      <div className="res__list" ref={listRef} data-pane-scroll-active="true">
-        {state.gitStatus && state.gitStatusError ? (
+      <div
+        className="res__index-list"
+        ref={listRef}
+        data-pane-scroll-active="true"
+      >
+        {gitStatusDetail(state.gitStatus) && state.gitStatusError ? (
           <p className="changes__projection-note" role="status">
             Refresh failed; showing the last known status.
           </p>

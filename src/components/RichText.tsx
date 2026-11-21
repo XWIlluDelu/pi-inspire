@@ -37,6 +37,7 @@ import {
   TranscriptImageOwnerContext,
 } from "./ImagePreview";
 import { RichTextMath } from "./RichTextMath";
+import { RichTextMermaid } from "./RichTextMermaid";
 import { ActivityHeader } from "./transcript-activity-visibility";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
@@ -85,7 +86,7 @@ function TaskCheckbox({ checked }: { checked?: boolean }) {
       type="checkbox"
       className="choice-input"
       checked={checked}
-      aria-label="Task"
+      aria-label="Task completion"
       disabled
     />
   );
@@ -151,7 +152,10 @@ const components: Components = {
     const language =
       classNames.find((name) => name.startsWith("language-"))?.slice(9) ?? "";
     // mdast-to-hast adds one terminator; source blank lines before it remain.
-    return <CodeBlock language={language} code={value.replace(/\n$/, "")} />;
+    const trimmed = value.replace(/\n$/, "");
+    if (language.toLowerCase() === "mermaid")
+      return <RichTextMermaid code={trimmed} />;
+    return <CodeBlock language={language} code={trimmed} />;
   },
   code: function ResourceCode({ className, children }) {
     const linked = useContext(ImageLinkContext);

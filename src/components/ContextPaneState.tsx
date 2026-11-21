@@ -1,5 +1,6 @@
 import { RotateCw } from "lucide-react";
 import type { ReactNode } from "react";
+import { EmptyState } from "./EmptyState";
 
 export function ContextPaneState({
   icon,
@@ -19,10 +20,13 @@ export function ContextPaneState({
   action?: { label?: string; run: () => void };
 }) {
   return (
-    <div className={`empty-state res__state ${className ?? ""}`} role={role}>
-      {icon}
-      <p className="empty-state__title">{title}</p>
-      {hint ? <p className="empty-state__hint">{hint}</p> : null}
+    <EmptyState
+      title={title}
+      hint={hint}
+      icon={icon}
+      className={className ? `res__state ${className}` : "res__state"}
+      role={role}
+    >
       {children}
       {action && (
         <button
@@ -34,6 +38,6 @@ export function ContextPaneState({
           {action.label ?? "Retry"}
         </button>
       )}
-    </div>
+    </EmptyState>
   );
 }

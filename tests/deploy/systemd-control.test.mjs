@@ -3,7 +3,6 @@ import {
   hostServicePath,
   inspectHostService,
   inspectRestartTarget,
-  manageHostService,
   submitSystemdRestart,
 } from "../../deploy/systemd/control.mjs";
 import { runIdleMaintenanceRestart } from "../../deploy/systemd/idle-maintenance-restart.mjs";
@@ -13,7 +12,6 @@ import {
   environment,
   invocationId,
   managedProperties,
-  managedTerminalProperties,
   root,
   show,
 } from "./systemd-fixture.mjs";
@@ -32,7 +30,6 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     [
       "matching",
       {},
-      {},
       {
         kind: "managed",
         activeState: "active",
@@ -44,64 +41,32 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     [
       "foreign checkout",
       { WorkingDirectory: "/workspace/other" },
-      {},
       { kind: "foreign" },
     ],
     [
-      "missing terminal requirement",
-      { Wants: "network-online.target" },
-      {},
+      "missing readiness wait",
+      { ExecStartPost: "" },
       { kind: "outdated" },
     ],
-    [
-      "foreign terminal",
-      {},
-      { WorkingDirectory: "/workspace/other" },
-      { kind: "outdated" },
-    ],
-  ])(
-    "recognizes service authority: %s",
-    async (_case, host, terminal, expected) => {
-      await expect(
-        inspectHostService(root, {
-          environment,
-          run: show(
-            managedProperties(host),
-            managedTerminalProperties(terminal),
-          ),
-        }),
-      ).resolves.toMatchObject(expected);
-    },
-  );
-
-  it("refuses full restart without verified terminal-before-Host ordering", async () => {
-    const calls = [];
-    const run = async (args) => {
-      calls.push(args);
-      return show(managedProperties({ After: "" }))(args);
-    };
-    expect(
-      (await manageHostService(root, "restart-all", { environment, run })).kind,
-    ).toBe("outdated");
-    expect(calls.some((args) => args.includes("restart"))).toBe(false);
+  ])("recognizes service authority: %s", async (_case, host, expected) => {
+    await expect(
+      inspectHostService(root, {
+        environment,
+        run: show(managedProperties(host)),
+      }),
+    ).resolves.toMatchObject(expected);
   });
 
-  it("fences both phases to the captured invocation and uses one ordered restart", async () => {
+  it("fences both phases to the captured invocation and restarts inspire-host.service", async () => {
     let active = invocationId;
-    const run = vi.fn(async (args) =>
-      show(managedProperties({ InvocationID: active }))(args),
+    const run = vi.fn(async () =>
+      show(managedProperties({ InvocationID: active }))(),
     );
     const options = { environment, run };
     const plan = {
       invocationId,
-      terminals: true,
       detached: true,
-      commit: vi.fn(async () => {
-        expect(run.mock.calls.at(-1)?.[0]).toContain(
-          "inspire-terminal.service",
-        );
-        return true;
-      }),
+      commit: vi.fn(async () => true),
     };
     await expect(
       inspectRestartTarget(root, "b".repeat(32), options),
@@ -115,26 +80,8 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
       "--user",
       "--no-block",
       "restart",
-      "inspire-terminal.service",
       "inspire-host.service",
     ]);
-
-    run.mockClear();
-    await expect(
-      submitSystemdRestart(
-        root,
-        {
-          ...plan,
-          beforeRestart: async () => {
-            active = "b".repeat(32);
-          },
-        },
-        options,
-      ),
-    ).resolves.toEqual({ kind: "not-issued", reason: "invocation-changed" });
-    expect(run.mock.calls.some(([args]) => args.includes("restart"))).toBe(
-      false,
-    );
   });
 
   it("honors the manager's unit absence even when a unit file remains on disk", async () => {

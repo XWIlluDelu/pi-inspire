@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
+import { z } from "zod";
 import {
   type ComposerHistoryEntry,
   MAX_ATTACHMENTS,
@@ -14,6 +15,7 @@ import {
   operationFingerprintSchema,
   promptFingerprintInput,
   promptObservationSchema,
+  promptSchema,
 } from "../../shared/host-operations";
 import {
   isImageMimeType,
@@ -29,7 +31,7 @@ import {
   rememberComposerHistory,
 } from "../composer-history";
 import { inputRejection, ReceiptRead } from "../operation-observer";
-import { type ReceiptStorageIssue, receiptStorage } from "../receipt-storage";
+import { receiptStorage } from "../receipt-storage";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   hasDraftInput,
@@ -41,10 +43,7 @@ interface RecalledHistoryArtifact {
   type: "image" | "file";
   reference: string;
   fileKind?: "attachment" | "project";
-  viewId: string;
-  incarnation: string | null;
-  effectiveLeafId: string | null;
-  scopeKey: string;
+  scope: ComposerHistoryScope;
 }
 
 export interface PendingAttachment {
@@ -67,12 +66,9 @@ export interface PendingAttachment {
 }
 
 interface StagedFile {
-  sessionId: string;
   file: File;
   recovery: RecoveryBackoff;
   upload?: AbortController;
-  /** Possibly delivered bytes must never enter automatic upload recovery. */
-  submitted: boolean;
 }
 
 interface DeliveryRecord {
@@ -81,9 +77,7 @@ interface DeliveryRecord {
   message: string;
   attachments: PendingAttachment[];
   projectFiles: string[];
-  /** Controls the available recovery action after observation. */
-  recovery: "draft" | "previous" | "palette";
-  refused?: boolean;
+  status: "sending" | "unconfirmed" | "refused";
   confirmation: ReceiptRead<Api, PromptAcceptedResponse | false>;
   handoffRevision?: number;
   historyScope?: ComposerHistoryScope;
@@ -92,12 +86,17 @@ interface DeliveryRecord {
 const DELIVERY_STORAGE = "inspire:composer-operations:v1:";
 const MAX_SAVED_DELIVERIES = 16;
 const savedDeliveries = promptObservationSchema
-  .extend({ fingerprint: operationFingerprintSchema })
+  .extend({
+    fingerprint: operationFingerprintSchema,
+    text: promptSchema.shape.message.optional(),
+    projectFiles: promptSchema.shape.projectFiles,
+    refused: z.literal(true).optional(),
+  })
   .array()
   .max(MAX_SAVED_DELIVERIES);
 
 const deliveryStorage = receiptStorage(
-  MAX_SAVED_DELIVERIES * 256,
+  MAX_SAVED_DELIVERIES * (6 * (MAX_PROMPT_CHARS + MAX_PROJECT_FILES * 4_096) + 256),
   savedDeliveries.parse,
   [],
 );
@@ -117,13 +116,7 @@ export function recalledInputAttachments(
   entry: ComposerHistoryEntry,
 ): PendingAttachment[] {
   const scopeKey = composerHistoryScopeKey(scope);
-  const owner = {
-    viewId: scope.viewId,
-    incarnation: scope.incarnation,
-    effectiveLeafId: scope.effectiveLeafId,
-    scopeKey,
-  };
-  const attachments = [
+  return [
     ...entry.images.map<PendingAttachment>((image, index) => ({
       localId: `history:${scopeKey}:${image.reference}`,
       fileName: `Recalled image ${index + 1}`,
@@ -132,7 +125,7 @@ export function recalledInputAttachments(
       kind: "image",
       status: "ready",
       recalledArtifact: {
-        ...owner,
+        scope,
         type: "image",
         reference: image.reference,
       },
@@ -145,26 +138,20 @@ export function recalledInputAttachments(
       kind: "file",
       status: "ready",
       recalledArtifact: {
-        ...owner,
+        scope,
         type: "file",
         reference: file.reference,
         fileKind: file.kind,
       },
     })),
   ];
-  return attachments;
 }
 
 /** Owns staging and delivery resources. Editors read the draft itself. */
 export class ComposerController {
-  private readonly deliveries = new Map<string, DeliveryRecord>();
-  /** Absence means this session's receipt storage has not been read yet. */
-  private readonly storageState = new Map<
-    string,
-    ReceiptStorageIssue | "unread" | null
-  >();
+  /** An absent partition has not finished reading tab storage. */
+  private readonly deliveries = new Map<string, Set<DeliveryRecord>>();
   private readonly listeners = new Set<() => void>();
-  private deliveryVersion = 0;
   private readonly stagedFiles = new Map<string, StagedFile>();
   private recoveryAuthorityId: string | null = null;
   private readonly appliedRecoveryImages = new Map<string, Set<string>>();
@@ -176,101 +163,84 @@ export class ComposerController {
     return () => this.listeners.delete(listener);
   };
 
-  getDeliveryVersion = () => this.deliveryVersion;
-
-  deliveryState = (sessionId: string | null) => {
-    const previous = this.deliveriesFor(sessionId, "previous").at(-1)?.receipt;
-    return {
-      failedCount: this.deliveriesFor(sessionId, "draft").length,
-      storageIssue: sessionId ? this.storageIssue(sessionId) : undefined,
-      previous: previous?.operationId,
-      canCheckPrevious: previous?.authorityId === this.host.authorityId(),
-    };
-  };
-
-  private storageIssue(sessionId: string): ReceiptStorageIssue | undefined {
-    const issue = this.storageState.get(sessionId);
-    return issue === "unread" ? "storage" : (issue ?? undefined);
+  failedDeliveryCount(sessionId: string | null): number {
+    return this.recordsFor(sessionId).filter((record) => record.status === "refused").length;
   }
 
-  private deliveriesFor(
-    sessionId: string | null,
-    recovery?: DeliveryRecord["recovery"],
-  ) {
-    return [...this.deliveries.values()].filter(
-      (record) =>
-        record.sessionId === sessionId &&
-        (recovery === undefined ||
-          (record.recovery === recovery &&
-            !record.confirmation.pending &&
-            (recovery !== "draft" || !this.isLinked(record)))),
-    );
+  private recordsFor(sessionId: string | null): DeliveryRecord[] {
+    return Array.from(this.deliveries.get(sessionId ?? "") ?? []);
+  }
+
+  private *allDeliveries() {
+    for (const records of this.deliveries.values()) yield* records;
   }
 
   loadDeliveries(sessionId: string): void {
-    const previous = this.storageState.get(sessionId);
-    if (previous !== undefined && previous !== "unread") return;
+    if (this.deliveries.has(sessionId)) return;
     const saved = deliveryStorage.read(DELIVERY_STORAGE + sessionId);
+    if (saved.issue === "storage") return;
+    const records = new Set<DeliveryRecord>();
+    this.deliveries.set(sessionId, records);
     const operations = saved.value ?? [];
+    if (!saved.issue && !operations.length) return;
     const ids = new Set(operations.map(({ operationId }) => operationId));
-    const issue =
-      saved.issue ??
-      (ids.size !== operations.length ||
-      [...ids].some((id) => this.deliveries.has(id))
-        ? "format"
-        : null);
-    this.storageState.set(sessionId, issue === "storage" ? "unread" : issue);
-    if (!issue)
-      for (const receipt of operations) {
-        const record: DeliveryRecord = {
-          sessionId,
-          receipt,
-          message: "",
-          attachments: [],
-          projectFiles: [],
-          recovery: "previous",
-          confirmation: new ReceiptRead(),
-        };
-        this.deliveries.set(receipt.operationId, record);
-        if (receipt.authorityId === this.host.authorityId())
-          void this.observe(record);
-      }
-    if (issue || operations.length || previous === "unread") this.publish();
+    if (
+      saved.issue ||
+      ids.size !== operations.length ||
+      [...this.allDeliveries()].some((record) => ids.has(record.receipt.operationId))
+    ) {
+      this.persist(sessionId);
+      return;
+    }
+    const { revision } = this.host.drafts.get(sessionId);
+    for (const { text, projectFiles = [], refused, ...receipt } of operations) {
+      records.add({
+        sessionId,
+        receipt,
+        message: text ?? "",
+        attachments: [],
+        projectFiles,
+        status: refused ? "refused" : "unconfirmed",
+        handoffRevision: text === undefined ? undefined : revision,
+        confirmation: new ReceiptRead(),
+      });
+    }
+    for (const record of records)
+      if (record.status === "refused") this.settleDelivery(record, true);
+    this.resumeDeliveries(sessionId);
   }
 
   private persist(sessionId: string): boolean {
+    const partition = this.deliveries.get(sessionId);
+    if (!partition) return false;
     try {
-      const issue = this.storageState.get(sessionId);
-      if (issue === "format" || issue === "unread") return false;
-      const records = this.deliveriesFor(sessionId).filter(
-        ({ refused }) => !refused,
-      );
-      const overflow = Math.max(0, records.length - MAX_SAVED_DELIVERIES);
-      const retired = new Set(
-        this.deliveriesFor(sessionId, "previous").slice(0, overflow),
-      );
-      if (retired.size < overflow) return false;
-      const operations = records
-        .filter((record) => !retired.has(record))
-        .map(({ receipt }) => receipt);
-      deliveryStorage.write(
-        DELIVERY_STORAGE + sessionId,
-        operations.length ? operations : null,
-      );
-      for (const record of retired) {
-        this.deliveries.delete(record.receipt.operationId);
-        for (const item of record.attachments) this.retireFile(item);
+      const records = [...partition];
+      let retired: DeliveryRecord | undefined;
+      if (records.length > MAX_SAVED_DELIVERIES) {
+        const index = records.findIndex(
+          (record) => record.status === "unconfirmed" &&
+            record.handoffRevision === undefined && !record.confirmation.pending,
+        );
+        if (index === -1) return false;
+        [retired] = records.splice(index, 1);
       }
-      this.storageState.set(sessionId, null);
+      const operations = records.map(
+        ({ receipt, message, projectFiles, status, handoffRevision }) => ({
+          ...receipt,
+          ...(handoffRevision !== undefined
+            ? { text: message, projectFiles, refused: status === "refused" || undefined }
+            : {}),
+        }),
+      );
+      deliveryStorage.write(DELIVERY_STORAGE + sessionId, operations.length ? operations : null);
+      if (retired) partition.delete(retired);
       return true;
     } catch {
-      this.storageState.set(sessionId, "storage");
       return false;
     }
   }
 
   private publish(): void {
-    this.deliveryVersion += 1;
     for (const listener of this.listeners) listener();
   }
 
@@ -280,7 +250,7 @@ export class ComposerController {
       staged.upload = undefined;
       staged.recovery.reset();
     }
-    for (const record of this.deliveries.values()) {
+    for (const record of this.allDeliveries()) {
       if (!record.confirmation.pending) continue;
       this.settleDelivery(record);
     }
@@ -301,7 +271,7 @@ export class ComposerController {
       )
         return item;
       const staged = this.stagedFiles.get(item.localId);
-      if (staged && !staged.submitted) {
+      if (staged) {
         staged.recovery.reset();
         return {
           ...item,
@@ -330,24 +300,16 @@ export class ComposerController {
     authorityId: string | null,
     recoveryId?: string,
   ): void {
-    if (
-      recoveryId &&
-      attachments.length &&
-      authorityId === this.host.authorityId()
-    ) {
-      const key = JSON.stringify([authorityId, sessionId, recoveryId]);
-      const applied = this.appliedRecoveryImages.get(key) ?? new Set<string>();
-      this.appliedRecoveryImages.set(key, applied);
-      attachments = attachments.filter((item) => {
-        if (applied.has(item.id)) return false;
-        applied.add(item.id);
-        return true;
-      });
-      if (!attachments.length) return;
-    }
+    if (!attachments.length) return;
     const draft = this.host.drafts.get(sessionId);
     const api = this.host.api();
     const currentAuthority = this.host.authorityId();
+    let applied: Set<string> | undefined;
+    if (recoveryId && authorityId === currentAuthority) {
+      const key = JSON.stringify([authorityId, sessionId, recoveryId]);
+      applied = this.appliedRecoveryImages.get(key) ?? new Set();
+      this.appliedRecoveryImages.set(key, applied);
+    }
     const known = new Set(
       draft.attachments
         .filter((item) => item.uploadedAuthorityId === authorityId)
@@ -355,6 +317,8 @@ export class ComposerController {
     );
     const pending: PendingAttachment[] = attachments
       .filter((item) => {
+        if (applied?.has(item.id)) return false;
+        applied?.add(item.id);
         if (known.has(item.id)) return false;
         known.add(item.id);
         return true;
@@ -417,7 +381,7 @@ export class ComposerController {
       (item, index) => item !== draft.attachments[index],
     );
     if (changed) this.host.drafts.update(sessionId, { attachments }, false);
-    for (const record of this.deliveriesFor(sessionId)) {
+    for (const record of this.recordsFor(sessionId)) {
       const current = record.attachments;
       record.attachments = current.map(update);
       changed ||= record.attachments.some(
@@ -444,15 +408,13 @@ export class ComposerController {
         .attachments.map((item) => [item.localId, item]),
     );
     this.host.drafts.clear(sessionId);
-    for (const [id, record] of this.deliveries) {
-      if (record.sessionId !== sessionId) continue;
+    for (const record of this.recordsFor(sessionId)) {
       record.confirmation.cancel();
       for (const item of record.attachments)
         attachments.set(item.localId, item);
-      this.deliveries.delete(id);
     }
     this.releaseAttachments([...attachments.values()]);
-    this.storageState.set(sessionId, null);
+    this.deliveries.set(sessionId, new Set());
     this.persist(sessionId);
     this.publish();
     discardComposerHistory(sessionId);
@@ -517,18 +479,17 @@ export class ComposerController {
     const attachmentIds = included
       .map((item) => item.uploadedId)
       .filter((id): id is string => Boolean(id));
-    const recalled = included.filter(
-      (
-        item,
-      ): item is PendingAttachment & {
-        recalledArtifact: RecalledHistoryArtifact;
-      } => Boolean(item.recalledArtifact),
+    const recalled = included.flatMap(({ recalledArtifact }) =>
+      recalledArtifact ? [recalledArtifact] : [],
     );
-    const historyOwner = recalled[0]?.recalledArtifact;
+    const historyOwner = recalled[0]?.scope;
     if (
       historyOwner &&
       recalled.some(
-        (item) => item.recalledArtifact.scopeKey !== historyOwner.scopeKey,
+        ({ scope }) =>
+          scope !== historyOwner &&
+          composerHistoryScopeKey(scope) !==
+            composerHistoryScopeKey(historyOwner),
       )
     ) {
       this.host.notify(
@@ -554,8 +515,11 @@ export class ComposerController {
     }
     const previous =
       independent &&
-      this.deliveriesFor(sessionId).find(
-        (record) => record.recovery === "palette" && record.message === message,
+      this.recordsFor(sessionId).find(
+        (record) =>
+          record.status === "sending" &&
+          record.handoffRevision === undefined &&
+          record.message === message,
       );
     if (previous) return this.observe(previous);
     const identity = {
@@ -575,11 +539,11 @@ export class ComposerController {
               incarnation: historyOwner.incarnation,
               effectiveLeafId: historyOwner.effectiveLeafId,
               imageReferences: recalled
-                .filter((item) => item.recalledArtifact.type === "image")
-                .map((item) => item.recalledArtifact.reference),
+                .filter((item) => item.type === "image")
+                .map((item) => item.reference),
               fileReferences: recalled
-                .filter((item) => item.recalledArtifact.type === "file")
-                .map((item) => item.recalledArtifact.reference),
+                .filter((item) => item.type === "file")
+                .map((item) => item.reference),
             },
           }
         : {}),
@@ -593,7 +557,8 @@ export class ComposerController {
       message: editorDraft?.text ?? message,
       attachments: included,
       projectFiles,
-      recovery: independent ? "palette" : "draft",
+      status: "sending",
+      handoffRevision: independent ? undefined : draft.revision,
       confirmation: new ReceiptRead(),
       historyScope:
         !independent && transcriptViewId && composerHistoryVersion
@@ -606,22 +571,16 @@ export class ComposerController {
             }
           : undefined,
     };
-    this.deliveries.set(request.operationId, record);
+    const partition = this.deliveries.get(sessionId);
+    partition?.add(record);
     if (!this.persist(sessionId)) {
-      this.deliveries.delete(request.operationId);
-      this.publish();
-      const message =
-        "The prompt could not be tracked in this tab. Check previous delivery records before sending.";
+      partition?.delete(record);
+      const message = independent
+        ? "Couldn't send the message from this tab."
+        : "Couldn't send from this tab. Your message is still in the editor.";
       if (independent) this.host.notify("warning", message);
       else this.host.notifyVisible(sessionId, message);
       return false;
-    }
-    for (const item of record.attachments) {
-      const staged = this.stagedFiles.get(item.localId);
-      if (staged) {
-        staged.submitted = true;
-        staged.recovery.reset();
-      }
     }
     if (!independent)
       record.handoffRevision = this.host.drafts.update(sessionId, {
@@ -632,29 +591,24 @@ export class ComposerController {
     return this.observe(record, request);
   }
 
-  private isLinked(record: DeliveryRecord): boolean {
-    return (
-      this.host.drafts.get(record.sessionId).intentId ===
-      record.receipt.operationId
-    );
-  }
-
   private async observe(
     record: DeliveryRecord,
     request?: PromptDeliveryRequest,
   ): Promise<PromptAcceptedResponse | false> {
     const { sessionId, receipt } = record;
-    const { authorityId, operationId, fingerprint } = receipt;
+    const { authorityId, fingerprint } = receipt;
     const api = this.host.api();
-    if (!api || record.confirmation.pending || record.refused) return false;
-    if (this.host.authorityId() !== authorityId) {
-      return false;
-    }
+    if (
+      !api ||
+      this.host.authorityId() !== authorityId ||
+      record.confirmation.pending ||
+      record.status === "refused"
+    ) return false;
     return record.confirmation.observe(api, async (signal) => {
       const ownsTransport = () =>
         !signal.aborted &&
         this.host.api() === api &&
-        this.deliveries.get(operationId) === record;
+        this.deliveries.get(sessionId)?.has(record);
       try {
         if (request) await api.prompt(request, signal, fingerprint);
         else await api.observePrompt(receipt, signal);
@@ -675,57 +629,30 @@ export class ComposerController {
         return { accepted: true };
       } catch (error) {
         if (!ownsTransport()) return false;
-        let failure = error;
-        if (!inputRejection(failure) && request && ownsTransport()) {
-          try {
-            await api.observePrompt(receipt, signal);
-            if (!ownsTransport()) return false;
-            this.finishDelivery(record, "accepted");
-            return { accepted: true };
-          } catch (observationError) {
-            if (!ownsTransport()) return false;
-            failure = observationError;
-          }
-        }
-        const rejection = inputRejection(failure);
-        if (rejection) {
-          for (const item of record.attachments) {
-            const staged = this.stagedFiles.get(item.localId);
-            if (staged) staged.submitted = false;
-          }
-        }
+        const rejection = inputRejection(error);
         if (rejection?.code === "PROMPT_RECOVERED")
           return this.returnDelivery(record, rejection);
         if (rejection?.code === "PROMPT_CLEARED")
           return this.finishDelivery(record, "cleared");
         if (rejection?.code === "ATTACHMENTS_EXPIRED") {
           for (const item of record.attachments) {
-            if (
-              !item.uploadedId ||
-              !rejection.matches?.includes(item.uploadedId)
-            )
+            if (!item.uploadedId || !rejection.matches?.includes(item.uploadedId))
               continue;
             this.patchAttachment(
-              sessionId,
-              item.localId,
+              sessionId, item.localId,
               this.stagedFiles.has(item.localId)
                 ? { status: "uploading" }
-                : {
-                    status: "error",
-                    error:
-                      "This attachment is no longer available. Add it again.",
-                  },
+                : { status: "error", error: "This attachment is no longer available. Add it again." },
             );
           }
         }
         this.settleDelivery(record, Boolean(rejection));
         if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
         if (rejection?.code === "PROMPT_ABORTED") return false;
-        if (failure instanceof ApiError && failure.status === 401) {
+        if (error instanceof ApiError && error.status === 401) {
           this.host.handleAuthFailure();
-        } else if (rejection) {
-          if (record.recovery === "palette")
-            this.host.notify("warning", rejection.message);
+        } else if (request && rejection) {
+          if (record.handoffRevision === undefined) this.host.notify("warning", rejection.message);
           else this.host.notifyVisible(sessionId, rejection.message);
         }
         return false;
@@ -734,31 +661,25 @@ export class ComposerController {
   }
 
   private returnDelivery(record: DeliveryRecord, receipt: ApiError): false {
-    if (record.recovery === "previous")
-      return this.finishDelivery(record, "accepted");
-    const {
-      sessionId,
-      attachments: returned,
-      receipt: { authorityId },
-    } = record;
-    const superseded = receipt.recoveredAttachments
-      ? returned.filter((item) => item.kind === "image")
-      : [];
-    const draft = this.host.drafts.get(sessionId);
-    const attachments = new Map(
-      [...returned, ...draft.attachments].map((item) => [item.localId, item]),
-    );
-    for (const item of superseded) {
-      attachments.delete(item.localId);
+    const { sessionId, receipt: { authorityId } } = record;
+    const retained = record.attachments.filter((item) => {
+      if (!receipt.recoveredAttachments || item.kind !== "image") return true;
       this.retireFile(item);
-    }
-    this.host.drafts.update(sessionId, {
-      attachments: [...attachments.values()],
-      projectFiles: this.isLinked(record)
-        ? draft.projectFiles
-        : [...new Set([...record.projectFiles, ...draft.projectFiles])],
+      return false;
     });
-    if (receipt.recoveredAttachments)
+    if (retained.length || record.projectFiles.length) {
+      const draft = this.host.drafts.get(sessionId);
+      const attachments = new Map(
+        [...retained, ...draft.attachments].map((item) => [item.localId, item]),
+      );
+      this.host.drafts.update(sessionId, {
+        attachments: [...attachments.values()],
+        projectFiles: [...new Set([...record.projectFiles, ...draft.projectFiles])],
+      });
+    }
+    // Reloaded receipts retain text and paths only. The original tab owns the
+    // live attachment handoff, including its record of already removed handles.
+    if (receipt.recoveredAttachments && retained.length < record.attachments.length)
       this.restoreStagedAttachments(
         sessionId,
         receipt.recoveredAttachments,
@@ -772,121 +693,67 @@ export class ComposerController {
     record: DeliveryRecord,
     outcome: "accepted" | "returned" | "cleared",
   ): false {
-    const {
-      sessionId,
-      attachments,
-      receipt: { operationId },
-    } = record;
-    if (this.isLinked(record)) {
-      const draft = this.host.drafts.get(sessionId);
-      const ids = new Set(record.attachments.map((item) => item.localId));
-      const untouched = draft.revision === record.handoffRevision;
-      this.host.drafts.update(sessionId, {
-        intentId: undefined,
-        ...(outcome === "returned"
-          ? {}
-          : {
-              text: untouched ? "" : draft.text,
-              attachments: draft.attachments.filter(
-                (item) => !ids.has(item.localId),
-              ),
-              projectFiles:
-                draft.projectFiles === record.projectFiles
-                  ? []
-                  : draft.projectFiles,
-            }),
-      });
-    }
+    const { sessionId, attachments } = record;
     if (outcome === "cleared") this.releaseAttachments(attachments);
     if (outcome === "accepted")
       for (const item of attachments) this.retireFile(item);
-    this.deliveries.delete(operationId);
+    this.deliveries.get(sessionId)?.delete(record);
     this.persist(sessionId);
-    this.publish();
     return false;
   }
 
   private settleDelivery(record: DeliveryRecord, refused = false): void {
-    const {
-      sessionId,
-      receipt: { operationId },
-    } = record;
+    const { sessionId, handoffRevision } = record;
     record.confirmation.cancel();
-    const draft = this.host.drafts.get(sessionId);
     if (!refused) {
-      record.recovery = "previous";
-      if (this.isLinked(record))
-        this.host.drafts.update(sessionId, { intentId: undefined });
-    } else if (this.isLinked(record)) {
-      this.host.drafts.update(sessionId, { intentId: undefined });
-    } else if (record.recovery === "draft") {
-      record.refused = true;
-      if (
-        !draft.intentId &&
-        draft.revision === record.handoffRevision &&
-        !hasDraftInput(draft)
-      )
-        this.restore(record);
-    } else {
+      record.status = "unconfirmed";
+      return;
+    }
+    if (handoffRevision === undefined) {
       this.finishDelivery(record, "cleared");
       return;
     }
-    if (refused) {
-      if (!record.refused) this.deliveries.delete(operationId);
-      this.persist(sessionId);
-    }
-    this.publish();
-  }
-
-  async retryPrevious(sessionId: string): Promise<void> {
-    const record = this.deliveriesFor(sessionId, "previous").at(-1);
-    if (record && (await this.observe(record)))
-      this.host.notifyVisible(sessionId, "The original prompt was accepted.");
-  }
-
-  private forget(record: DeliveryRecord): void {
-    this.deliveries.delete(record.receipt.operationId);
-    if (!this.persist(record.sessionId))
-      this.deliveries.set(record.receipt.operationId, record);
-    else for (const item of record.attachments) this.retireFile(item);
-    this.publish();
-  }
-
-  forgetPrevious(sessionId: string): void {
-    const record = this.deliveriesFor(sessionId, "previous").at(-1);
-    if (record) this.forget(record);
-  }
-
-  restoreFailedPrompt(sessionId: string): boolean {
+    record.status = "refused";
     const draft = this.host.drafts.get(sessionId);
-    if (draft.intentId || hasDraftInput(draft)) return false;
-    const record = this.deliveriesFor(sessionId, "draft")[0];
+    if (draft.revision === handoffRevision && !hasDraftInput(draft))
+      this.restore(record);
+    this.persist(sessionId);
+    this.publish();
+  }
+
+  resumeDeliveries(sessionId?: string): void {
+    const authorityId = this.host.authorityId();
+    if (!authorityId || !this.host.api()) return;
+    const records = sessionId === undefined ? this.allDeliveries() : this.recordsFor(sessionId);
+    for (const record of records) {
+      if (record.status !== "unconfirmed" || record.confirmation.pending) continue;
+      if (record.receipt.authorityId === authorityId) {
+        void this.observe(record);
+      } else {
+        this.settleDelivery(record, true);
+        this.resumeUploads();
+      }
+    }
+  }
+
+  restoreFailedPrompt(sessionId: string | null): boolean {
+    if (!sessionId || hasDraftInput(this.host.drafts.get(sessionId))) return false;
+    const record = this.recordsFor(sessionId).find((record) => record.status === "refused");
     if (!record) return false;
     this.restore(record);
+    this.persist(sessionId);
     this.publish();
     this.resumeUploads();
     return true;
   }
 
   private restore(record: DeliveryRecord): void {
-    const {
-      sessionId,
-      receipt: { operationId },
-    } = record;
-    record.handoffRevision = this.host.drafts.update(sessionId, {
+    this.deliveries.get(record.sessionId)?.delete(record);
+    this.host.drafts.update(record.sessionId, {
       text: record.message,
       attachments: record.attachments,
       projectFiles: record.projectFiles,
-      intentId: record.refused ? undefined : operationId,
-    }).revision;
-    if (record.refused) this.deliveries.delete(operationId);
-  }
-
-  forgetUnsupportedDeliveries(sessionId: string): void {
-    if (this.storageState.get(sessionId) !== "format") return;
-    this.storageState.set(sessionId, null);
-    this.persist(sessionId);
-    this.publish();
+    });
   }
 
   useHistoryEntry(
@@ -900,27 +767,13 @@ export class ComposerController {
     if (sessionId !== scope.sessionId || transcriptViewId !== scope.viewId)
       return false;
     const draft = this.host.drafts.get(sessionId);
-    const linked = draft.intentId
-      ? this.deliveries.get(draft.intentId)
-      : undefined;
-    if (linked?.confirmation.pending) return false;
-    this.releaseAttachments(
-      draft.attachments.filter(
-        (item) =>
-          !linked?.attachments.some(
-            (candidate) => candidate.localId === item.localId,
-          ),
-      ),
-    );
-    if (linked) linked.recovery = "previous";
+    this.releaseAttachments(draft.attachments);
     const attachments = recalledInputAttachments(scope, entry);
     this.host.drafts.update(sessionId, {
       attachments,
       projectFiles: [],
       text: entry.text,
-      intentId: undefined,
     });
-    if (linked) this.publish();
     return true;
   }
 
@@ -951,7 +804,7 @@ export class ComposerController {
     });
     if (sessionId)
       pending.forEach((item, index) =>
-        this.stage(sessionId, item.localId, accepted[index]!),
+        this.stage(item.localId, accepted[index]!),
       );
     this.host.drafts.update(sessionId, {
       attachments: [...draft.attachments, ...pending],
@@ -964,12 +817,10 @@ export class ComposerController {
       : Promise.resolve();
   }
 
-  private stage(sessionId: string, localId: string, file: File): void {
+  private stage(localId: string, file: File): void {
     this.stagedFiles.set(localId, {
-      sessionId,
       file,
       recovery: new RecoveryBackoff(),
-      submitted: false,
     });
   }
 
@@ -980,7 +831,7 @@ export class ComposerController {
     const attachments = start.attachments.map((item): PendingAttachment => {
       const file = item.localFile!;
       const localId = clear ? item.localId : crypto.randomUUID();
-      this.stage(sessionId, localId, file);
+      this.stage(localId, file);
       return {
         ...item,
         localId,
@@ -1029,7 +880,7 @@ export class ComposerController {
     const pending = localIds.flatMap((localId) => {
       const staged = this.stagedFiles.get(localId);
       const item = this.editableAttachment(sessionId, localId);
-      return staged && !staged.submitted && item && !staged.upload
+      return staged && item && !staged.upload
         ? [{ item, staged }]
         : [];
     });
@@ -1107,11 +958,7 @@ export class ComposerController {
             error.code === "INVALID_ATTACHMENT_UPLOAD"
           ) &&
           staged.recovery.schedule(() => {
-            if (
-              this.stagedFiles.get(item.localId) === staged &&
-              !staged.submitted
-            )
-              void this.uploadStaged(sessionId, [item.localId]);
+            void this.uploadStaged(sessionId, [item.localId]);
           });
         this.patchAttachment(
           sessionId,
@@ -1136,33 +983,28 @@ export class ComposerController {
     }
   }
 
-  retryAttachment(localId: string): Promise<void> {
+  retryAttachment = (localId: string): Promise<void> => {
     const sessionId = this.host.state().sessionId;
     const staged = this.stagedFiles.get(localId);
     if (
       !sessionId ||
       !staged ||
-      staged.submitted ||
-      staged.sessionId !== sessionId
+      !this.editableAttachment(sessionId, localId)
     )
       return Promise.resolve();
     staged.recovery.reset();
     return this.uploadStaged(sessionId, [localId]);
-  }
+  };
 
   /** A resumed transport restarts only unfinished staging in its original partition. */
   resumeUploads(): void {
-    const batches = new Map<string, string[]>();
-    for (const [localId, staged] of this.stagedFiles) {
-      const item = this.editableAttachment(staged.sessionId, localId);
-      if (staged.submitted || item?.status !== "uploading" || staged.upload)
-        continue;
-      const batch = batches.get(staged.sessionId) ?? [];
-      batch.push(localId);
-      batches.set(staged.sessionId, batch);
+    for (const [sessionId, draft] of this.host.drafts.entries()) {
+      if (!sessionId) continue;
+      const pending = draft.attachments
+        .filter((item) => item.status === "uploading")
+        .map((item) => item.localId);
+      if (pending.length) void this.uploadStaged(sessionId, pending);
     }
-    for (const [sessionId, localIds] of batches)
-      void this.uploadStaged(sessionId, localIds);
   }
 
   private retireFile({ localId, previewUrl }: PendingAttachment): void {
@@ -1185,15 +1027,7 @@ export class ComposerController {
     const draft = this.host.drafts.get(sessionId);
     const target = draft.attachments.find((item) => item.localId === localId);
     if (!target) return;
-    const linked = draft.intentId
-      ? this.deliveries.get(draft.intentId)
-      : undefined;
-    if (linked?.attachments.some((item) => item.localId === localId)) {
-      linked.attachments = linked.attachments.filter(
-        (item) => item.localId !== localId,
-      );
-      this.retireFile(target);
-    } else this.releaseAttachments([target]);
+    this.releaseAttachments([target]);
     const attachments = draft.attachments.filter(
       (item) => item.localId !== localId,
     );

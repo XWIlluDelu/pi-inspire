@@ -2,23 +2,19 @@ import type { Dirent } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { SessionHeader } from "@earendil-works/pi-coding-agent";
-import type { SessionCatalogIssue } from "../shared/contracts.js";
-import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
 import { jsonRecord } from "../shared/json-record.js";
 import { userMessageTitle } from "../shared/user-message.js";
 import {
   isDisappearedSessionPath,
+  MissingSessionHeaderError,
   PersistedJsonlError,
   SessionDocumentReader,
   type SessionSourceIdentity,
   SessionSourceTypeError,
   sameSessionObject,
-  sessionSourceVersion,
+  sameSessionVersion,
+  sessionVersionAtPath,
 } from "./session-jsonl.js";
-import {
-  sessionSearchMatcher,
-  sessionSearchSnippet,
-} from "./session-search-query.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
 const SESSION_READ_CONCURRENCY = 4;
@@ -52,13 +48,11 @@ interface SessionMetadataState {
 }
 
 interface CachedSessionRecord {
-  version: string;
-  dev: bigint;
-  ino: bigint;
-  size: bigint;
+  source: SessionSourceIdentity;
   completeBytes: number;
   state: SessionMetadataState | null;
   record: SessionRecord | null;
+  unavailable: boolean;
 }
 
 function timestamp(value: unknown): number | null {
@@ -71,23 +65,6 @@ function timestamp(value: unknown): number | null {
   return Number.isFinite(parsed) && Math.abs(parsed) <= 8_640_000_000_000_000
     ? parsed
     : null;
-}
-
-function searchMessageText(message: Record<string, unknown>): string {
-  const content = message.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const imageCount = content.filter(
-    (value) => jsonRecord(value)?.type === "image",
-  ).length;
-  return content
-    .flatMap((value) => {
-      const block = jsonRecord(value);
-      return block?.type === "text" && typeof block.text === "string"
-        ? [stripImageDimensionNotes(block.text, imageCount)]
-        : [];
-    })
-    .join(" ");
 }
 
 function emptyState(): SessionMetadataState {
@@ -167,7 +144,6 @@ async function scanSessionFile(
   path: string,
   start: number,
   previous: SessionMetadataState | null,
-  onEntry?: (entry: Record<string, unknown>) => void,
 ): Promise<{
   state: SessionMetadataState;
   record: Omit<SessionRecord, "source"> | null;
@@ -177,7 +153,6 @@ async function scanSessionFile(
   const fallbackModified = Number(document.source.mtimeNs / 1_000_000n);
   const scan = await document.scan(start, (entry, header) => {
     applyEntry(state, entry, header, fallbackModified);
-    onEntry?.(entry);
   });
   return {
     state,
@@ -187,22 +162,18 @@ async function scanSessionFile(
 }
 
 function readFailure(
-  issues: SessionCatalogIssue[] | undefined,
+  unavailablePaths: string[] | undefined,
   path: string,
   error: unknown,
 ): void {
-  if (!issues) throw error;
-  issues.push({
-    path,
-    message:
-      error instanceof Error ? error.message : "Session source is unavailable",
-  });
+  if (!unavailablePaths) throw error;
+  unavailablePaths.push(path);
 }
 
 async function sessionFiles(
   root: string,
   nested: boolean,
-  issues?: SessionCatalogIssue[],
+  unavailablePaths?: string[],
 ): Promise<string[]> {
   let entries: Dirent[];
   try {
@@ -223,9 +194,9 @@ async function sessionFiles(
     if (!entry.isDirectory()) continue;
     const path = join(root, entry.name);
     try {
-      files.push(...(await sessionFiles(path, false, issues)));
+      files.push(...(await sessionFiles(path, false, unavailablePaths)));
     } catch (error) {
-      readFailure(issues, path, error);
+      readFailure(unavailablePaths, path, error);
     }
   }
   return files;
@@ -238,15 +209,15 @@ export class SessionMetadataIndex {
   /** Refresh one already-discovered identity without enumerating storage or
    * materializing its transcript. Dormant native sessions use this for titles. */
   async readCurrent(session: SessionRecord): Promise<SessionRecord | null> {
-    const current = await this.read(session.path, await realpath(session.path));
+    const current = (
+      await this.read(session.path, await realpath(session.path))
+    )?.record;
     if (
       !current ||
       current.id !== session.id ||
       current.cwd !== session.cwd ||
       (session.source &&
-        (!current.source ||
-          current.source.dev !== session.source.dev ||
-          current.source.ino !== session.source.ino))
+        (!current.source || !sameSessionObject(current.source, session.source)))
     )
       return null;
     return current;
@@ -254,7 +225,7 @@ export class SessionMetadataIndex {
 
   async list(
     directories: string | readonly (string | undefined)[] = [undefined],
-    issues?: SessionCatalogIssue[],
+    unavailablePaths?: string[],
   ): Promise<SessionRecord[]> {
     const roots = typeof directories === "string" ? [directories] : directories;
     const pathsByCanonical = new Map<string, string>();
@@ -268,23 +239,21 @@ export class SessionMetadataIndex {
       );
       let canonicalRoot: string;
       let files: string[];
-      const issuesBefore = issues?.length ?? 0;
+      const failuresBefore = unavailablePaths?.length ?? 0;
       try {
         canonicalRoot = await realpath(configuredRoot);
         files = await sessionFiles(
           configuredRoot,
           customSessionDir === undefined,
-          issues,
+          unavailablePaths,
         );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        readFailure(issues, configuredRoot, error);
+        readFailure(unavailablePaths, configuredRoot, error);
         failedRoots.push(configuredRoot);
         continue;
       }
-      failedRoots.push(
-        ...(issues?.slice(issuesBefore).map((issue) => issue.path) ?? []),
-      );
+      failedRoots.push(...(unavailablePaths?.slice(failuresBefore) ?? []));
       for (const path of files) {
         const canonical = resolve(
           canonicalRoot,
@@ -324,9 +293,11 @@ export class SessionMetadataIndex {
         const index = next++;
         const file = files[index]!;
         try {
-          records[index] = await this.read(file.path, file.canonical);
+          const observed = await this.read(file.path, file.canonical);
+          if (observed?.unavailable) unavailablePaths?.push(file.path);
+          records[index] = observed?.record ?? null;
         } catch (error) {
-          readFailure(issues, file.path, error);
+          readFailure(unavailablePaths, file.path, error);
           records[index] = this.cache.get(file.path)?.record ?? null;
         }
       }
@@ -343,103 +314,30 @@ export class SessionMetadataIndex {
     ];
   }
 
-  /** Worker-only scan: one complete session at a time, never cached. */
-  async scanSearch(
-    sessions: readonly SessionRecord[],
-    query: string,
-    issues?: SessionCatalogIssue[],
-    snippets?: Map<string, string>,
-  ): Promise<SessionRecord[]> {
-    const matchesQuery = sessionSearchMatcher(query);
-    const matches: SessionRecord[] = [];
-    for (const session of sessions) {
-      let document: SessionDocumentReader | undefined;
-      try {
-        document = await SessionDocumentReader.open(session.path);
-        const canonical = await realpath(session.path);
-        if (
-          !session.source ||
-          !sameSessionObject(session.source, document.source) ||
-          !(await document.stillAddressesPrefix(canonical))
-        ) {
-          throw new Error("Session source changed; refresh the session list");
-        }
-        let name: string | undefined;
-        const messages: string[] = [];
-        const scan = await scanSessionFile(
-          document,
-          session.path,
-          0,
-          null,
-          (entry) => {
-            if (entry.type === "session_info")
-              name =
-                typeof entry.name === "string"
-                  ? entry.name.trim() || undefined
-                  : undefined;
-            if (entry.type !== "message") return;
-            const message = jsonRecord(entry.message);
-            if (message?.role !== "user" && message?.role !== "assistant")
-              return;
-            const text = searchMessageText(message);
-            if (text) messages.push(text);
-          },
-        );
-        if (
-          scan.record?.id !== session.id ||
-          scan.record.cwd !== session.cwd ||
-          !(await document.stillAddressesPrefix(canonical))
-        ) {
-          throw new Error("Session source changed while searching; try again");
-        }
-        const allMessagesText = messages.join(" ");
-        if (
-          matchesQuery({
-            id: session.id,
-            cwd: session.cwd,
-            name,
-            allMessagesText,
-          })
-        ) {
-          matches.push(session);
-          const snippet = snippets
-            ? sessionSearchSnippet(query, allMessagesText)
-            : undefined;
-          if (snippet) snippets?.set(session.id, snippet);
-        }
-      } catch (error) {
-        readFailure(issues, session.path, error);
-      } finally {
-        await document?.close();
-      }
-    }
-    return matches;
-  }
-
   private async read(
     path: string,
     canonicalPath: string,
-  ): Promise<SessionRecord | null> {
+  ): Promise<CachedSessionRecord | null> {
     const previous = this.cache.get(path);
     try {
+      if (
+        previous &&
+        (await sessionVersionAtPath(path, previous.source, canonicalPath))
+      )
+        return previous;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const document = await SessionDocumentReader.open(path);
         try {
           const before = document.source;
-          const version = sessionSourceVersion(before);
           const cached = this.cache.get(path);
-          if (cached?.version === version) {
-            if (await document.addressesVersion(canonicalPath))
-              return cached.record;
-            continue;
-          }
           if (!(await document.addressesVersion(canonicalPath))) continue;
+          if (cached && sameSessionVersion(cached.source, before))
+            return cached;
           const append =
             cached !== undefined &&
             cached.state !== null &&
-            sameSessionObject(cached, before) &&
-            cached.size < before.size &&
-            cached.completeBytes <= Number(cached.size);
+            sameSessionObject(cached.source, before) &&
+            cached.source.size < before.size;
           let scan: Awaited<ReturnType<typeof scanSessionFile>> | null = null;
           let scanError: unknown;
           try {
@@ -460,35 +358,24 @@ export class SessionMetadataIndex {
             }
           }
           if (!(await document.stillCurrent(canonicalPath))) continue;
-          if (!scan) {
-            if (scanError instanceof PersistedJsonlError) {
-              this.cache.set(path, {
-                version,
-                dev: before.dev,
-                ino: before.ino,
-                size: before.size,
-                completeBytes: 0,
-                state: null,
-                record: previous?.record ?? null,
-              });
-            } else {
-              throw scanError;
-            }
-            return previous?.record ?? null;
-          }
-          const record = scan.record
-            ? { ...scan.record, source: before }
-            : null;
-          this.cache.set(path, {
-            version,
-            dev: before.dev,
-            ino: before.ino,
-            size: before.size,
-            completeBytes: scan.completeBytes,
-            state: scan.state,
-            record,
-          });
-          return record;
+          if (!scan && !(scanError instanceof PersistedJsonlError))
+            throw scanError;
+          const observed: CachedSessionRecord = {
+            source: before,
+            completeBytes: scan?.completeBytes ?? 0,
+            state: scan?.state ?? null,
+            record: scan
+              ? scan.record && { ...scan.record, source: before }
+              : (previous?.record ?? null),
+            // A loose JSONL file without a session header has no catalog identity.
+            // Losing the header of a previously indexed session is a read failure.
+            unavailable:
+              !scan &&
+              (!(scanError instanceof MissingSessionHeaderError) ||
+                Boolean(previous?.record)),
+          };
+          this.cache.set(path, observed);
+          return observed;
         } finally {
           await document.close();
         }
@@ -505,6 +392,6 @@ export class SessionMetadataIndex {
       }
       if (!isDisappearedSessionPath(error)) throw error;
     }
-    return previous?.record ?? null;
+    return previous ?? null;
   }
 }

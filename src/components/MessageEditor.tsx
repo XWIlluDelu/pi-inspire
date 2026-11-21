@@ -81,7 +81,7 @@ export function MessageEditor({
   useLayoutEffect(() => setDragging(false), [sessionId]);
   const addFiles = (attachments: File[]) => {
     if (!disabled && attachments.length && beforeEdit())
-      void store.addFiles(attachments, sessionId);
+      void store.composer.addFiles(attachments, sessionId);
   };
   const submit = () => {
     if (!disabled && store.getState().sessionId === sessionId) onSubmit();
@@ -127,15 +127,15 @@ export function MessageEditor({
         items={draft.attachments}
         disabled={disabled}
         onRemove={(id) => {
-          if (beforeEdit()) store.removeAttachment(id, sessionId);
+          if (beforeEdit()) store.composer.removeAttachment(id, sessionId);
         }}
-        onRetry={sessionId ? store.retryAttachment : undefined}
+        onRetry={sessionId ? store.composer.retryAttachment : undefined}
       />
       <ProjectFileChips
         paths={draft.projectFiles}
         disabled={disabled}
         onRemove={(path) => {
-          if (beforeEdit()) store.removeProjectFile(path, sessionId);
+          if (beforeEdit()) store.composer.removeProjectFile(path, sessionId);
         }}
       />
       {beforeInput}
@@ -172,53 +172,55 @@ export function MessageEditor({
       {afterInput}
       <div className="composer__meta">
         <div className="composer__selectors">{selectors}</div>
-        <ProjectFileControl
-          key={files.scope}
-          scope={files.scope}
-          buttonDisabled={disabled || files.pickerDisabled}
-          showHidden={files.showHidden}
-          onShowHiddenChange={files.onShowHiddenChange}
-          selected={draft.projectFiles}
-          disabled={disabled}
-          search={files.search}
-          onAdd={(file) => {
-            if (beforeEdit())
-              store.addProjectFile(
-                file.path,
-                sessionId,
-                sessionId === null ? file.workspaceCwd : undefined,
-              );
-          }}
-        />
-        <button
-          type="button"
-          className="icon-button"
-          disabled={disabled}
-          onClick={() => inputRef.current?.click()}
-          aria-label="Attach files"
-          title="Attach, paste, or drop files"
-        >
-          <Paperclip size={14} aria-hidden />
-        </button>
-        <span className="composer__action-slot" ref={setSizeActionSlot} />
-        <span className="composer__spacer" />
-        {actions}
-        {send && (
+        <div className="composer__actions">
+          <ProjectFileControl
+            key={files.scope}
+            scope={files.scope}
+            buttonDisabled={disabled || files.pickerDisabled}
+            showHidden={files.showHidden}
+            onShowHiddenChange={files.onShowHiddenChange}
+            selected={draft.projectFiles}
+            disabled={disabled}
+            search={files.search}
+            onAdd={(file) => {
+              if (beforeEdit())
+                store.composer.addProjectFile(
+                  file.path,
+                  sessionId,
+                  sessionId === null ? file.workspaceCwd : undefined,
+                );
+            }}
+          />
           <button
-            type="submit"
-            className="composer__send"
-            aria-label={send.label}
-            title={send.title ?? send.label}
-            disabled={send.disabled}
-            aria-busy={send.busy}
+            type="button"
+            className="icon-button"
+            disabled={disabled}
+            onClick={() => inputRef.current?.click()}
+            aria-label="Attach files"
+            title="Attach, paste, or drop files"
           >
-            {send.busy ? (
-              <PiLoader size={14} aria-hidden />
-            ) : (
-              <Send size={14} aria-hidden />
-            )}
+            <Paperclip size={14} aria-hidden />
           </button>
-        )}
+          <span className="composer__action-slot" ref={setSizeActionSlot} />
+          <span className="composer__spacer" />
+          {actions}
+          {send && (
+            <button
+              type="submit"
+              className="composer__send"
+              aria-label={send.label}
+              title={send.title ?? send.label}
+              disabled={send.disabled}
+              aria-busy={send.busy}
+            >
+              {send.busy ? (
+                <PiLoader size={14} aria-hidden />
+              ) : (
+                <Send size={14} aria-hidden />
+              )}
+            </button>
+          )}
+        </div>
       </div>
       {children}
     </form>

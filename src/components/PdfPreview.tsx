@@ -42,6 +42,7 @@ import "../styles/pdf-preview.css";
 interface LoadedPdf {
   document: PDFDocumentProxy;
   TextLayer: typeof TextLayer;
+  pageText: Map<number, Promise<string[]>>;
 }
 
 export function pdfRenderSize(
@@ -465,10 +466,8 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
   const [matches, setMatches] = useState<PdfFindMatch[] | null>(null);
   const [current, setCurrent] = useState(0);
   const findInputRef = useRef<HTMLInputElement>(null);
-  const pageText = useRef(new Map<number, string[]>());
   const needle = normalizeFindQuery(query);
   useEffect(() => {
-    pageText.current = new Map();
     setOutline([]);
     setContentsOpen(false);
     setFindOpen(false);
@@ -493,16 +492,21 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
       void (async () => {
         const found: PdfFindMatch[] = [];
         for (let page = 1; page <= loaded.document.numPages; page += 1) {
-          let items = pageText.current.get(page);
-          if (!items) {
-            const content = await (
-              await loaded.document.getPage(page)
-            ).getTextContent();
-            items = content.items.flatMap((item) =>
-              "str" in item ? [item.str] : [],
-            );
-            pageText.current.set(page, items);
+          let text = loaded.pageText.get(page);
+          if (!text) {
+            text = loaded.document
+              .getPage(page)
+              .then((page) => page.getTextContent())
+              .then(({ items }) =>
+                items.flatMap((item) => ("str" in item ? [item.str] : [])),
+              )
+              .catch((error: unknown) => {
+                loaded.pageText.delete(page);
+                throw error;
+              });
+            loaded.pageText.set(page, text);
           }
+          const items = await text;
           if (retired) return;
           found.push(...pageMatches(page, items, needle));
         }
@@ -557,7 +561,7 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
       if (retired) return;
       task = loadPdf(data);
       const document = await task.promise;
-      if (!retired) setLoaded({ document, TextLayer });
+      if (!retired) setLoaded({ document, TextLayer, pageText: new Map() });
     })().catch((reason: unknown) => {
       if (retired) return;
       setError(

@@ -55,17 +55,3 @@ function measureColors(element: Element) {
 export function renderedColors(locator: Locator) {
   return locator.evaluate(measureColors);
 }
-
-/** Resolve a role in the owning surface, including its local token overrides. */
-export function resolvedColor(locator: Locator, role: string) {
-  return locator.evaluate((element, role) => {
-    const value = getComputedStyle(element).getPropertyValue(`--${role}`);
-    const probe = document.createElement("span");
-    probe.style.color = value;
-    if (!probe.style.color) throw new Error(`Invalid color role: --${role}`);
-    document.body.append(probe);
-    const color = getComputedStyle(probe).color;
-    probe.remove();
-    return color;
-  }, role);
-}

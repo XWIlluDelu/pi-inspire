@@ -1,7 +1,6 @@
 import { Square } from "lucide-react";
 import {
   memo,
-  type ReactNode,
   useEffect,
   useId,
   useLayoutEffect,
@@ -25,21 +24,6 @@ import { ComposerThinkingControl } from "./ComposerThinkingControl";
 import { MessageEditor } from "./MessageEditor";
 import { ModelSelector } from "./ModelSelector";
 import { useComposerRecall } from "./use-composer-recall";
-
-function DeliveryNotice({
-  text,
-  children,
-}: {
-  text: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="composer__failed-delivery" role="status">
-      <span>{text}</span>
-      {children}
-    </div>
-  );
-}
 
 const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -117,7 +101,7 @@ const ContextMeter = memo(function ContextMeter() {
         onBlur={() => setOpen(false)}
         onClick={() => {
           setOpen(false);
-          void store.runPaletteNativeCommand("/session");
+          void store.sendPreparedCommand("/session");
         }}
       >
         <span
@@ -241,16 +225,10 @@ export const Composer = memo(function Composer() {
     state.sessionSelectionPending,
   );
   const editorDraft = recall.displayed;
-  useSyncExternalStore(
-    store.subscribeComposerDeliveries,
-    store.composerDeliveryVersion,
+  const failedCount = useSyncExternalStore(
+    store.composer.subscribe,
+    () => store.composer.failedDeliveryCount(sessionId),
   );
-  const {
-    failedCount,
-    storageIssue: deliveryStorageIssue,
-    previous: previousDelivery,
-    canCheckPrevious,
-  } = store.composerDeliveryState(sessionId);
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
@@ -295,11 +273,8 @@ export const Composer = memo(function Composer() {
   const canSend = Boolean(
     !sessionOpening &&
       sessionId &&
-      deliveryStorageIssue !== "format" &&
       !terminalQueueOnly &&
-      (editorDraft.text.trim() ||
-        editorDraft.attachments.length ||
-        editorDraft.projectFiles.length),
+      (editorDraft.text.trim() || editorDraft.attachments.length || editorDraft.projectFiles.length),
   );
   const activeBehavior = deliveryBusy
     ? deliveryBehavior
@@ -314,34 +289,21 @@ export const Composer = memo(function Composer() {
   };
 
   const sendLabel = shellInput
-    ? "Run shell command"
-    : !deliveryBusy
-      ? "Send message"
-      : deliveryBehavior === "steer"
-        ? "Send as steer"
-        : "Queue after current task";
-  const sendTitle = !shellInput && !deliveryBusy ? "Send" : sendLabel;
+      ? "Run shell command"
+      : !deliveryBusy
+        ? "Send message"
+        : deliveryBehavior === "steer"
+          ? "Send as steer"
+          : "Queue after current task";
+  const sendTitle = !shellInput && !deliveryBusy
+      ? "Send"
+      : sendLabel;
   const activeModel = resolveModelMetadata(state.model, state.availableModels);
   // Owned workers and attached terminal Pi both take model and thinking changes.
   const modelsDisabled =
     sessionOpening || Boolean(state.readOnlyReason) || !sessionId;
   const thinkingSupported = activeModel?.reasoning !== false;
   const thinkingLevels = supportedThinkingLevels(activeModel);
-  const deliveryAction = (
-    label: string,
-    run: () => void,
-    disabled = sessionOpening,
-  ) => (
-    <button
-      type="button"
-      className="button button--quiet"
-      onClick={run}
-      disabled={disabled}
-    >
-      {label}
-    </button>
-  );
-
   return (
     <MessageEditor
       sessionId={sessionId}
@@ -356,7 +318,7 @@ export const Composer = memo(function Composer() {
         scope: sessionId,
         search: store.searchProjectFiles,
         showHidden: state.workspaceShowHidden,
-        onShowHiddenChange: store.setWorkspaceShowHidden,
+        onShowHiddenChange: store.workspace.setShowHidden,
       }}
       input={{
         commands: state.commands,
@@ -374,39 +336,19 @@ export const Composer = memo(function Composer() {
         onKeyDown: recall.onKeyDown,
       }}
       beforeInput={
-        <>
-          {deliveryStorageIssue === "format" ? (
-            <DeliveryNotice text="Previous delivery records could not be read. Check the conversation before sending again.">
-              {deliveryAction(
-                "Stop tracking",
-                store.forgetUnsupportedComposerDeliveries,
-              )}
-            </DeliveryNotice>
-          ) : (
-            deliveryStorageIssue && (
-              <DeliveryNotice text="This tab cannot save delivery records." />
-            )
-          )}
-          {failedCount > 0 ? (
-            <DeliveryNotice text="Previous input">
-              {deliveryAction(
-                "Restore",
-                store.restoreFailedComposerPrompt,
-                sessionOpening || hasDraftInput(draft),
-              )}
-            </DeliveryNotice>
-          ) : null}
-          {previousDelivery && (
-            <DeliveryNotice text="Previous message unconfirmed">
-              {canCheckPrevious &&
-                deliveryAction(
-                  "Check receipt",
-                  store.retryPreviousComposerDelivery,
-                )}
-              {deliveryAction("Dismiss", store.forgetPreviousComposerDelivery)}
-            </DeliveryNotice>
-          )}
-        </>
+        failedCount > 0 ? (
+          <div className="composer__failed-delivery" role="status">
+            <span>Message wasn’t sent</span>
+            <button
+              type="button"
+              className="button button--quiet"
+              onClick={() => store.composer.restoreFailedPrompt(sessionId)}
+              disabled={sessionOpening || hasDraftInput(draft)}
+            >
+              Restore draft
+            </button>
+          </div>
+        ) : null
       }
       afterInput={
         <>
@@ -520,7 +462,9 @@ export const Composer = memo(function Composer() {
         </>
       }
       send={
-        !abortable || deliveryBusy || state.bashRunning
+        !abortable ||
+        deliveryBusy ||
+        state.bashRunning
           ? { disabled: !canSend, label: sendLabel, title: sendTitle }
           : undefined
       }

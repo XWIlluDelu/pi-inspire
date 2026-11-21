@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
+test.use({ serviceWorkers: "block" });
+
 for (const touch of [false, true]) {
   test.describe(touch ? "touch file picker" : "desktop file picker", () => {
     test.use({
@@ -76,7 +78,7 @@ for (const touch of [false, true]) {
   });
 }
 
-test("keeps the project-file search field still and rejects a superseded response @cross-browser", async ({
+test("keeps the project-file search field still and rejects a superseded response", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

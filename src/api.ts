@@ -1,6 +1,5 @@
 import type {
   BranchImageRequest,
-  CompletionAttentionPreference,
   PendingRecovery,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
@@ -31,9 +30,7 @@ import type {
 } from "../shared/json-endpoints";
 import { isJsonRecord } from "../shared/json-record";
 import type { ModelSettingsOwner } from "../shared/model-settings";
-import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
-import { browserBuildId } from "./browser-auth";
 import { terminalOperations } from "./controllers/terminal-operation-controller";
 import {
   aborted,
@@ -276,25 +273,25 @@ async function deliverPrompt(
   for (;;) {
     let delay: number;
     try {
-      const receipt =
-        body === undefined
-          ? await readHostReceipt(
-              inputRoutes.observePrompt,
-              observation,
-              identity,
-              "prompt",
-              signal,
-              PROMPT_CONFIRMATION_TIMEOUT_MS,
-            )
-          : await readHostReceipt(
-              inputRoutes.prompt,
-              { body },
-              identity,
-              "prompt",
-              signal,
-              PROMPT_CONFIRMATION_TIMEOUT_MS,
-            );
-      if (receipt.state === "completed") return { accepted: true };
+      const receipt = body === undefined
+        ? await readHostReceipt(
+            inputRoutes.observePrompt,
+            observation,
+            identity,
+            "prompt",
+            signal,
+            PROMPT_CONFIRMATION_TIMEOUT_MS,
+          )
+        : await readHostReceipt(
+            inputRoutes.prompt,
+            { body },
+            identity,
+            "prompt",
+            signal,
+            PROMPT_CONFIRMATION_TIMEOUT_MS,
+          );
+      if (receipt.state === "completed")
+        return { accepted: true };
       failures = 0;
       delay = 250;
     } catch (error) {
@@ -302,7 +299,7 @@ async function deliverPrompt(
         error instanceof ApiError
           ? error.operation ||
             (error.status < 500 && error.status !== 408 && error.status !== 429)
-          : !(error instanceof ApiTransportError) || error.phase === "response"
+          : !(error instanceof ApiTransportError)
       )
         throw error;
       const retry = retryDelays[failures++];
@@ -370,23 +367,6 @@ function hostJson<K extends keyof HostEndpoint>(
 export function createApi() {
   return {
     json: hostJson,
-    configureTaskAlerts: (
-      mode: CompletionAttentionPreference | undefined,
-      subscription?: PushSubscriptionJSON | null,
-      grouping?: TaskNotificationGrouping,
-    ) =>
-      call(routes.configureTaskAlerts, {
-        body: {
-          mode,
-          grouping,
-          subscription: subscription
-            ? {
-                endpoint: subscription.endpoint!,
-                keys: subscription.keys as { p256dh: string; auth: string },
-              }
-            : subscription,
-        },
-      }),
     hostRestartStatus: () => call(routes.hostRestartStatus, {}),
     restartHost: async (intent: HostRestartRequest) => {
       const value = await call(routes.restartHost, { body: intent });
@@ -444,7 +424,6 @@ export function createApi() {
       call(routes.providerAuth, { query, body }, undefined, {
         mutation: body.operation !== "providers" && body.operation !== "status",
       }),
-    retryTerminalOperation: (key: string) => terminalOperations.retry(key),
     terminalOperation: terminalOperations.run.bind(terminalOperations),
     prompt: (
       body: PromptDeliveryRequest,
@@ -488,12 +467,11 @@ export type Api = ReturnType<typeof createApi>;
 
 export function terminalUrl(ticket: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/terminal?${new URLSearchParams({ ticket, build: browserBuildId() })}`;
+  return `${protocol}//${window.location.host}/terminal?${new URLSearchParams({ ticket })}`;
 }
 
 export function eventsUrl(ticket: string, sessionId: string | null): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const query = new URLSearchParams({ ticket, build: browserBuildId() });
-  query.set("detail", sessionId ?? "");
+  const query = new URLSearchParams({ ticket, detail: sessionId ?? "" });
   return `${protocol}//${window.location.host}/events?${query}`;
 }

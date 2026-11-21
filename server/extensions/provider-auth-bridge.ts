@@ -4,10 +4,6 @@ import type {
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  decodeBranchBridgeJson,
-  encodeBranchBridgeJson,
-} from "../../shared/branch-bridge-protocol.js";
-import {
   PROVIDER_AUTH_LIMIT,
   PROVIDER_AUTH_SUFFIX,
   type ProviderAuthOperation,
@@ -16,10 +12,12 @@ import {
   nativeOAuthDescriptors,
   ProviderAuthService,
 } from "../provider-auth.js";
+import type { BranchBridgeIdentity } from "../runtime-slot.js";
+import { registerWorkerStatusCommand } from "./worker-status-command.js";
 
 export function registerProviderAuthBridge(
   pi: ExtensionAPI,
-  owner: { command: string; statusKey: string; workerId: string },
+  owner: BranchBridgeIdentity,
 ): void {
   let closed = false;
   let service: ProviderAuthService | undefined;
@@ -75,48 +73,27 @@ export function registerProviderAuthBridge(
     closed = true;
     service?.close();
   });
-  pi.registerCommand(`${owner.command}${PROVIDER_AUTH_SUFFIX}`, {
-    description: "Internal Inspire provider authentication",
-    handler: async (argument, ctx) => {
-      const value = decodeBranchBridgeJson(
-        argument,
-        PROVIDER_AUTH_LIMIT,
-      ) as ProviderAuthOperation & {
-        nonce: string;
-        workerId: string;
-        sessionId: string;
-      };
-      if (
-        ctx.mode !== "rpc" ||
-        value.workerId !== owner.workerId ||
-        value.sessionId !== ctx.sessionManager.getSessionId() ||
-        typeof value.nonce !== "string" ||
-        !/^[A-Za-z0-9_-]{16,200}$/.test(value.nonce)
-      )
-        throw new Error("invalid provider authentication owner");
+  registerWorkerStatusCommand(
+    pi,
+    owner,
+    {
+      suffix: PROVIDER_AUTH_SUFFIX,
+      description: "provider authentication",
+      argumentLimit: PROVIDER_AUTH_LIMIT,
+      resultLimit: PROVIDER_AUTH_LIMIT,
+    },
+    async (request, ctx, emit) => {
       let result: unknown = null;
       let error: string | undefined;
       try {
         const auth = await getService(ctx);
         if (closed) throw new Error("Provider authentication owner retired");
-        result = await auth.request(value);
+        result = await auth.request(request as ProviderAuthOperation);
       } catch {
         error =
           "Pi could not complete this authentication operation. Reload its status before retrying.";
       }
-      ctx.ui.setStatus(
-        `${owner.statusKey}${PROVIDER_AUTH_SUFFIX}`,
-        encodeBranchBridgeJson(
-          {
-            nonce: value.nonce,
-            workerId: owner.workerId,
-            sessionId: value.sessionId,
-            result,
-            ...(error ? { error } : {}),
-          },
-          PROVIDER_AUTH_LIMIT,
-        ),
-      );
+      emit({ result, ...(error ? { error } : {}) });
     },
-  });
+  );
 }

@@ -10,10 +10,6 @@ import express, {
 import multer from "multer";
 import { ZodError, z } from "zod";
 import {
-  BROWSER_BUILD_HEADER,
-  BROWSER_UPGRADE_REQUIRED,
-} from "../shared/browser-build.mjs";
-import {
   type BootstrapResponse,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
@@ -57,7 +53,10 @@ import { jsonRoute } from "./json-route.js";
 import type { MaintenanceRestartController } from "./maintenance-restart.js";
 import type { McpConfigService } from "./mcp-config.js";
 import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
-import type { NativeModelCatalog } from "./model-metadata.js";
+import type {
+  ModelMetadataCatalog,
+  NativeModelCatalog,
+} from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
@@ -86,10 +85,7 @@ import {
   TaskNotifications,
 } from "./task-notifications.js";
 import { createTerminalGateway } from "./terminal-gateway.js";
-import type {
-  TerminalConnection,
-  TerminalService,
-} from "./terminal-service.js";
+import type { TerminalService } from "./terminal-service.js";
 import type {
   ToolPresentationConfigStore,
   ToolPresentationConfigurationState,
@@ -131,29 +127,18 @@ interface AppDependencies {
     "reserve" | "commit" | "release"
   >;
   hostRestart?: import("./host-restart.js").HostRestartController;
-  activeHerdrMode?: boolean;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
-  /** Already-known picker metadata; bootstrap never starts model discovery. */
-  bootstrapModels?: () => BootstrapResponse["availableModels"];
-  modelMetadata?: (
-    cwd: string,
-    refresh?: boolean,
-  ) => Promise<import("./model-metadata.js").ModelMetadata>;
+  modelMetadata?: ModelMetadataCatalog;
   modelSettings?: ModelSettingsService;
   mcpConfig?: McpConfigService;
-  invalidateModels?: () => void;
   providerAuth?: ProviderAuthService;
   /** Shared update-state owner. Production supplies the persistent deployment
    * instance; test hosts default to one without checkers. */
   updateCoordinator?: UpdateCoordinator;
   distDir?: string;
-  /** Complete prior asset generations retained for already-open clients. */
-  developmentBrowserBuild?: string;
-  requireBrowserBuild?: boolean;
-  /** The persistent PTY authority. Production connects to the terminal
-   * daemon; tests may supply an in-process implementation. */
-  terminal?: TerminalService | Pick<TerminalConnection, "run" | "close">;
+  /** In-process PTY manager owned by this Host. */
+  terminal?: TerminalService;
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
 }
@@ -276,14 +261,6 @@ export function createInspireServer(deps: AppDependencies): {
   const app = express();
   const distDir = resolve(deps.distDir ?? "dist");
   const currentBuild = currentWebBuild(distDir);
-  const currentBrowserBuild = async () =>
-    deps.developmentBrowserBuild ?? (await currentBuild())?.buildId;
-  const browserBuildAllowed = async (claimed: string | undefined) => {
-    const expected = await currentBrowserBuild();
-    return expected === undefined
-      ? !deps.requireBrowserBuild
-      : claimed === expected;
-  };
   const generatedExports = new GeneratedExportStore();
   // HTTP production behavior belongs to this application, not NODE_ENV:
   // changing the process environment also changes Pi and every tool it spawns.
@@ -305,40 +282,31 @@ export function createInspireServer(deps: AppDependencies): {
   ): Promise<HostOperationReceipt<Command>> {
     const receipt = hostReceipt(command, identity);
     const completion = inputOperations.read(
-      command,
-      identity.operationId,
-      fingerprint,
-      execute,
+      command, identity.operationId, fingerprint, execute,
     );
     const completed = settleOperation(
-      receipt,
-      () => completion,
-      (error) => error.outcomeUnknown === true,
+      receipt, () => completion, (error) => error.outcomeUnknown === true,
     );
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disconnected: (() => void) | undefined;
     try {
-      const outcome =
-        command !== "prompt"
-          ? await completed
-          : await Promise.race([
-              completed,
-              new Promise<HostOperationReceipt<Command>>((resolve) => {
-                disconnected = () => resolve({ ...receipt, state: "pending" });
-                timer = setTimeout(
-                  disconnected,
-                  deps.promptObservationWindowMs ??
-                    PROMPT_OBSERVATION_WINDOW_MS,
-                );
-                response.once("close", disconnected);
-              }),
-            ]);
+      const outcome = command !== "prompt"
+        ? await completed
+        : await Promise.race([
+            completed,
+            new Promise<HostOperationReceipt<Command>>((resolve) => {
+              disconnected = () => resolve({ ...receipt, state: "pending" });
+              timer = setTimeout(
+                disconnected,
+                deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
+              );
+              response.once("close", disconnected);
+            }),
+          ]);
       response.status(
         outcome.state === "unknown" || outcome.state === "rejected"
           ? outcome.error.status
-          : command === "prompt"
-            ? 202
-            : 200,
+          : command === "prompt" ? 202 : 200,
       );
       return outcome;
     } finally {
@@ -460,9 +428,6 @@ export function createInspireServer(deps: AppDependencies): {
       case "readiness":
         result = { appName: "inspire" };
         break;
-      case "restart-mode":
-        result = { includeHerdr: deps.activeHerdrMode === true };
-        break;
       case "launch-url": {
         let origin = new URL(instanceUrl(state)).origin;
         if (grant.request.payload.origin !== undefined) {
@@ -539,21 +504,6 @@ export function createInspireServer(deps: AppDependencies): {
     response.locals.browserId = access.browserId;
     next();
   });
-  app.use("/api", async (request, response, next) => {
-    // Explicit non-browser bearer clients use their own request contract.
-    if (
-      !response.locals.browserId ||
-      (await browserBuildAllowed(request.get(BROWSER_BUILD_HEADER)))
-    )
-      return next();
-    response
-      .set(BROWSER_BUILD_HEADER, BROWSER_UPGRADE_REQUIRED)
-      .status(409)
-      .json({
-        code: BROWSER_UPGRADE_REQUIRED,
-        error: "Reload this page to use the current Inspire build.",
-      });
-  });
   app.post(
     "/api/auth/socket-ticket",
     (request, response: AuthenticatedResponse) => {
@@ -587,18 +537,13 @@ export function createInspireServer(deps: AppDependencies): {
         "Refresh browser authentication to configure notifications",
         401,
       );
-    return { id, origin };
+    return { id };
   };
   jsonRoute(app, routes.taskAlertSettings, (_input, request, response) =>
     taskNotifications.settings(notificationPrincipal(request, response)),
   );
   jsonRoute(app, routes.configureTaskAlerts, ({ body }, request, response) =>
-    taskNotifications.configure(
-      notificationPrincipal(request, response),
-      body.mode,
-      body.subscription,
-      body.grouping,
-    ),
+    taskNotifications.configure(notificationPrincipal(request, response), body),
   );
   jsonRoute(
     app,
@@ -634,8 +579,6 @@ export function createInspireServer(deps: AppDependencies): {
       : {
           hostId: authorityId,
           available: false,
-          allPiAvailable: false,
-          allPiReason: "Restart all is unavailable for this Host.",
           reason: "Page restart is unavailable for this Host.",
           operation: null,
         },
@@ -651,7 +594,6 @@ export function createInspireServer(deps: AppDependencies): {
     app,
     deps.terminal,
     heartbeatIntervalMs,
-    currentBrowserBuild,
   );
 
   jsonRoute(app, routes.checkUpdates, ({ query: { kind, refresh } }) =>
@@ -697,7 +639,7 @@ export function createInspireServer(deps: AppDependencies): {
       ...(toolPresentationState.warning
         ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
-      availableModels: deps.bootstrapModels?.() ?? [],
+      availableModels: deps.modelMetadata?.peek(process.cwd())?.models ?? [],
     };
     response.set(
       "Server-Timing",
@@ -728,9 +670,23 @@ export function createInspireServer(deps: AppDependencies): {
     deps.runtime.openSession(body.id),
   );
   jsonRoute(app, routes.deselectSession, () => deps.runtime.deselectSession());
-  jsonRoute(app, routes.newSession, ({ body: { cwd, ...options } }) =>
-    deps.runtime.newSession(cwd, options),
-  );
+  jsonRoute(app, routes.newSession, ({ body: { cwd, receipt, ...options } }) => {
+    if (!receipt) return deps.runtime.newSession(cwd, options);
+    if (receipt.authorityId !== authorityId)
+      throw requestError("The Host restarted before the session opened", 409);
+    return inputOperations.read(
+      "create",
+      receipt.operationId,
+      createHash("sha256").update(JSON.stringify([cwd, options])).digest("hex"),
+      () => deps.runtime.newSession(cwd, options).catch((error) => {
+        if (Number(error?.status) < 500) throw error;
+        throw requestError("Couldn’t start the session.", 500, {
+          code: "SESSION_CREATION_FAILED",
+          cause: error,
+        });
+      }),
+    );
+  });
   registerModelSettingsRoutes(app, deps);
   registerMcpConfigRoutes(app, deps);
   jsonRoute(
@@ -742,7 +698,7 @@ export function createInspireServer(deps: AppDependencies): {
         : process.cwd();
       const result: NativeModelCatalog = sessionId
         ? await deps.runtime.refreshModels(sessionId, inherit === "1")
-        : ((await deps.modelMetadata?.(cwd, true)) ?? { models: [] });
+        : ((await deps.modelMetadata?.read(cwd, true)) ?? { models: [] });
       const { models, commands, defaults, selection, warning } = result;
       const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
       const preferences =
@@ -907,12 +863,7 @@ export function createInspireServer(deps: AppDependencies): {
           code: "HOST_AUTHORITY_CHANGED",
           outcomeUnknown: true,
         });
-      return observeOperation(
-        "prompt",
-        { operationId, authorityId },
-        fingerprint,
-        response,
-      );
+      return observeOperation("prompt", { operationId, authorityId }, fingerprint, response);
     },
   );
   jsonRoute(app, routes.piChangelog, installedPiChangelog);
@@ -1076,6 +1027,15 @@ export function createInspireServer(deps: AppDependencies): {
   jsonRoute(app, routes.setThinkingLevel, ({ body }) =>
     deps.runtime.setThinkingLevel(body.sessionId, body.level),
   );
+  jsonRoute(app, routes.cycleThinkingLevel, ({ body }) =>
+    deps.runtime.cycleThinkingLevel(body.sessionId),
+  );
+  jsonRoute(app, routes.toolLoadout, ({ query }) =>
+    deps.runtime.toolLoadout(query.sessionId, query.viewId),
+  );
+  jsonRoute(app, routes.setToolLoadout, ({ body: { sessionId, viewId, ...change } }) =>
+    deps.runtime.toolLoadout(sessionId, viewId, change),
+  );
   jsonRoute(
     app,
     routes.setRuntimeSetting,
@@ -1106,14 +1066,17 @@ export function createInspireServer(deps: AppDependencies): {
     routes.listFiles,
     ({ query: { sessionId, dir, refresh, showHidden } }) => {
       const cwd = openSessionCwd(sessionId);
-      if (refresh) invalidateProjectFiles(cwd);
+      if (refresh) invalidateProjectFiles();
       return listProjectDirectory(cwd, dir, showHidden);
     },
   );
-  jsonRoute(app, routes.gitStatus, ({ query }, request, response) =>
-    withRequestSignal(request, response, (signal) =>
-      deps.git.status(openSessionCwd(query.sessionId), signal),
-    ),
+  jsonRoute(
+    app,
+    routes.gitStatus,
+    ({ query: { sessionId, view } }, request, response) =>
+      withRequestSignal(request, response, (signal) =>
+        deps.git.status(openSessionCwd(sessionId), signal, view),
+      ),
   );
   jsonRoute(app, routes.gitDiff, ({ body }, request, response) =>
     withRequestSignal(request, response, (signal) =>
@@ -1322,6 +1285,9 @@ export function createInspireServer(deps: AppDependencies): {
   jsonRoute(app, routes.forkBranch, ({ body }) =>
     deps.runtime.forkBranch(body),
   );
+  jsonRoute(app, routes.recoverWorkspaceFork, ({ body }) =>
+    deps.runtime.recoverWorkspaceFork(body),
+  );
 
   // Unknown API paths are protocol errors, never client-side routes. Keep
   // them out of the SPA fallback so a typo cannot return index.html as 200.
@@ -1359,14 +1325,17 @@ export function createInspireServer(deps: AppDependencies): {
     updateCoordinator,
     authorityId,
     heartbeatIntervalMs,
-    currentBrowserBuild,
     taskNotifications,
   });
 
   server.on("upgrade", (request, socket, head) => {
-    void upgrade(request, socket, head).catch(() => socket.destroy());
+    try {
+      upgrade(request, socket, head);
+    } catch {
+      socket.destroy();
+    }
   });
-  async function upgrade(
+  function upgrade(
     request: IncomingMessage,
     socket: import("node:stream").Duplex,
     head: Buffer,
@@ -1409,17 +1378,8 @@ export function createInspireServer(deps: AppDependencies): {
           : undefined,
         deps.token,
       );
-    const browserBuild = url.searchParams.get("build") ?? undefined;
-    if (browserAuthenticated && !(await browserBuildAllowed(browserBuild))) {
-      if (url.pathname === "/events")
-        runtimeEvents.rejectUpgrade(request, socket, head);
-      else if (url.pathname === "/terminal" && deps.terminal)
-        terminalGateway.rejectUpgrade(request, socket, head);
-      else socket.destroy();
-      return;
-    }
     if (url.pathname === "/terminal" && deps.terminal && browserAuthenticated) {
-      terminalGateway.upgrade(request, socket, head, browserBuild);
+      terminalGateway.upgrade(request, socket, head);
       return;
     }
     if (
@@ -1432,9 +1392,8 @@ export function createInspireServer(deps: AppDependencies): {
         head,
         url,
         browserAuthenticated && browserAuthenticated.browserId
-          ? { id: browserAuthenticated.browserId, origin }
+          ? { id: browserAuthenticated.browserId }
           : undefined,
-        browserAuthenticated ? browserBuild : undefined,
       );
       return;
     }

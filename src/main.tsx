@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { browserBuildId, captureBrowserBootstrap } from "./browser-auth";
+import { captureBrowserBootstrap } from "./browser-auth";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { WindowTitlebar } from "./components/WindowTitlebar";
 import { store } from "./store";
@@ -9,23 +9,22 @@ import "./styles.css";
 
 // Strip a one-use launch transfer before render. Ordinary PWA launches use the
 // origin-stored non-extractable browser key, never a persistent bearer/cookie.
-store.captureNotificationTarget();
+store.notifications.captureTarget();
 captureBrowserBootstrap();
-window.addEventListener("inspire-browser-upgrade", () =>
-  store.requireBrowserUpgrade(),
-);
 const initialization = store.init();
 
 // Browser freezes and network changes can strand an apparently open socket
 // without promptly delivering `close`. Re-enter through the same bootstrap +
 // authoritative-snapshot path instead of creating a parallel resync protocol.
-window.addEventListener("online", () => store.recoverConnection("online"));
+window.addEventListener("online", () =>
+  store.connectionController.recover("online"),
+);
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted) store.recoverConnection("pageshow");
+  if (event.persisted) store.connectionController.recover("pageshow");
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible")
-    store.recoverConnection("visible");
+    store.connectionController.recover("visible");
 });
 
 // The full CJK face registry is large even though the browser ultimately
@@ -51,7 +50,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener(
     "load",
     () => {
-      const buildId = browserBuildId();
+      const buildId = new URL(import.meta.url).pathname.split("/").at(-1) ?? "production";
       void navigator.serviceWorker
         .register(`/service-worker.js?v=${encodeURIComponent(buildId)}`)
         .catch(() => undefined);

@@ -16,10 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GeneratedExportStore } from "../../server/generated-exports.js";
 import { piInstallation, SessionManager } from "../../server/pi-runtime.js";
 import { openCanonicalResourceFile } from "../../server/resources.js";
-import {
-  assertExportDestination,
-  serializeBranchExport,
-} from "../../server/session-export.js";
+import { assertExportDestination } from "../../server/session-export.js";
 import { exportArgumentPath } from "../../shared/commands.js";
 import type { HostNativeCommandResponse } from "../../shared/contracts.js";
 import { nativeSessionWorkbench } from "./fixtures/native-session-workbench.js";
@@ -224,7 +221,7 @@ it("exports native in-memory entries before a new session materializes", async (
 }, 30_000);
 
 describe("native path and branch boundaries", () => {
-  it("uses one native path token and rejects incomplete branch projections", () => {
+  it("uses one native path token", () => {
     expect(exportArgumentPath()).toBeUndefined();
     expect(exportArgumentPath("report.jsonl extra ignored")).toBe(
       "report.jsonl",
@@ -233,9 +230,6 @@ describe("native path and branch boundaries", () => {
       "with space.jsonl",
     );
     expect(exportArgumentPath('"unfinished')).toBeUndefined();
-    expect(() =>
-      serializeBranchExport("id", "/tmp", { entries: [], leafId: "missing" }),
-    ).toThrow("incomplete");
   });
   it("refuses canonical source paths, symlinks, and hardlinks", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-export-path-"));

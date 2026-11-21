@@ -23,12 +23,7 @@ function CommandSnippet({
   return (
     <span className="system-versions__command">
       <code>{command}</code>
-      <CopyAction
-        text={command}
-        label={command}
-        className=""
-        onError={onError}
-      />
+      <CopyAction text={command} label={command} className="" onError={onError} />
     </span>
   );
 }
@@ -168,8 +163,8 @@ export function SystemVersionsCard() {
             disabled={checking}
             aria-busy={checking}
             onClick={() => {
-              void store.checkPiUpdate();
-              void store.checkInspireUpdate();
+              void store.updates.refreshPi();
+              void store.updates.refreshInspire();
             }}
           >
             {checking ? (
@@ -199,10 +194,7 @@ export function SystemVersionsCard() {
           {copyError}
         </p>
       ) : null}
-      <dl
-        className="system-versions__list"
-        onClickCapture={() => setCopyError(null)}
-      >
+      <dl className="system-versions__list" onClickCapture={() => setCopyError(null)}>
         <VersionRow
           label="Pi"
           links={
@@ -258,10 +250,7 @@ export function SystemVersionsCard() {
                   {extensions.updates.length} package{" "}
                   {extensions.updates.length === 1 ? "update" : "updates"}
                 </span>
-                <CommandSnippet
-                  command="pi update --extensions"
-                  onError={setCopyError}
-                />
+                <CommandSnippet command="pi update --extensions" onError={setCopyError} />
               </>
             ) : (
               <span>

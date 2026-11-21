@@ -5,14 +5,12 @@ import {
   BRANCH_BRIDGE_VERSION,
   type BranchBridgeRequest,
   type BranchBridgeResult,
+  branchBridgeResult,
 } from "../shared/branch-bridge-protocol.js";
 import { isPiRpcOutcomeUnknown, type PiRpcProcess } from "./pi-rpc.js";
 import type { BranchBridgeIdentity } from "./runtime-slot.js";
 import { runtimeToken } from "./runtime-token.js";
-import {
-  sendWorkerStatusRequest,
-  watchWorkerStatus,
-} from "./worker-status-request.js";
+import { sendWorkerStatusRequest, watchWorkerStatus } from "./worker-status-request.js";
 
 export function newBridgeIdentity(): BranchBridgeIdentity {
   return {
@@ -62,41 +60,6 @@ export function branchDeltaMatches(
   return anchorSeen && parent === result.effectiveLeaf;
 }
 
-function parseBridgeResult(value: Record<string, unknown>): BranchBridgeResult {
-  const leaf = (candidate: unknown) =>
-    candidate === null || typeof candidate === "string";
-  if (
-    value.v !== BRANCH_BRIDGE_VERSION ||
-    typeof value.ok !== "boolean" ||
-    typeof value.cancelled !== "boolean" ||
-    !leaf(value.beforeLeaf) ||
-    !leaf(value.effectiveLeaf) ||
-    (value.navigationLeaf !== undefined && !leaf(value.navigationLeaf)) ||
-    (value.summaryId !== undefined &&
-      (typeof value.summaryId !== "string" || !value.summaryId)) ||
-    (value.error !== undefined &&
-      (typeof value.error !== "string" || value.error.length > 300)) ||
-    Object.keys(value).some(
-      (key) =>
-        ![
-          "v",
-          "nonce",
-          "workerId",
-          "sessionId",
-          "ok",
-          "cancelled",
-          "beforeLeaf",
-          "effectiveLeaf",
-          "navigationLeaf",
-          "summaryId",
-          "error",
-        ].includes(key),
-    )
-  )
-    throw new Error("Malformed branch bridge result");
-  return value as unknown as BranchBridgeResult;
-}
-
 export function startBranchNavigation(
   rpc: PiRpcProcess,
   bridge: BranchBridgeIdentity,
@@ -108,11 +71,7 @@ export function startBranchNavigation(
     workerId: bridge.workerId,
     sessionId: request.sessionId,
   };
-  const {
-    promise: result,
-    resolve,
-    reject,
-  } = Promise.withResolvers<BranchBridgeResult>();
+  const { promise: result, resolve, reject } = Promise.withResolvers<BranchBridgeResult>();
   let received = false;
   let duplicate = false;
   const receive = (value?: Record<string, unknown>) => {
@@ -121,68 +80,40 @@ export function startBranchNavigation(
       return;
     }
     received = true;
-    try {
-      if (!value) throw new Error("Invalid branch bridge result");
-      resolve(parseBridgeResult(value));
-    } catch (error) {
-      reject(error);
-    }
+    const parsed = branchBridgeResult.safeParse(value);
+    if (parsed.success) resolve(parsed.data);
+    else reject(new Error("Malformed branch bridge result"));
   };
   const unwatch = watchWorkerStatus(
-    rpc,
-    bridge.statusKey,
-    owner,
-    BRANCH_BRIDGE_MAX_RESULT_BYTES,
-    receive,
-    () => receive(),
-    () => receive(),
+    rpc, bridge.statusKey, owner, BRANCH_BRIDGE_MAX_RESULT_BYTES,
+    receive, () => receive(), () => receive(),
   );
-  const finished = Promise.resolve()
-    .then(() =>
-      sendWorkerStatusRequest(
-        rpc,
-        bridge.command,
-        { ...request, ...owner, v: BRANCH_BRIDGE_VERSION },
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
-        timeoutMs,
-      ),
-    )
-    .then(
-      () => {
-        if (!received)
-          reject(
-            new Error("Pi completed the branch command without its result"),
-          );
-      },
-      (error: unknown) => {
-        reject(error);
-        throw error;
-      },
-    )
-    .finally(unwatch);
-  const timer =
-    timeoutMs === null
-      ? undefined
-      : setTimeout(
-          () => reject(new Error("Timed out waiting for branch bridge result")),
-          timeoutMs,
-        );
-  timer?.unref();
-  const completion = Promise.allSettled([result, finished]).then(
-    ([reply, command]) => {
-      clearTimeout(timer);
-      if (
-        command.status === "rejected" &&
-        reply.status === "rejected" &&
-        !isPiRpcOutcomeUnknown(command.reason)
-      )
-        throw command.reason;
-      return duplicate ||
-        reply.status === "rejected" ||
-        command.status === "rejected"
-        ? null
-        : reply.value;
+  const finished = Promise.resolve().then(() =>
+    sendWorkerStatusRequest(
+      rpc, bridge.command, { ...request, ...owner, v: BRANCH_BRIDGE_VERSION },
+      BRANCH_BRIDGE_MAX_ARGUMENT_BYTES, timeoutMs,
+    ),
+  ).then(
+    () => {
+      if (!received) reject(new Error("Pi completed the branch command without its result"));
     },
+    (error: unknown) => {
+      reject(error);
+      throw error;
+    },
+  ).finally(unwatch);
+  const timer = timeoutMs === null ? undefined : setTimeout(
+    () => reject(new Error("Timed out waiting for branch bridge result")), timeoutMs,
   );
+  timer?.unref();
+  const completion = Promise.allSettled([result, finished]).then(([reply, command]) => {
+    clearTimeout(timer);
+    if (command.status === "rejected" && reply.status === "rejected" &&
+        !isPiRpcOutcomeUnknown(command.reason))
+      throw command.reason;
+    return duplicate || reply.status === "rejected" || command.status === "rejected"
+      ? null
+      : reply.value;
+  });
   return { result, finished, completion, reject };
 }

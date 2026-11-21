@@ -26,7 +26,10 @@ export function configurationField<Schema extends z.ZodType>(
 export function storedConfigurationValue<
   Stored extends z.ZodType,
   Edited extends z.ZodType,
->(stored: Stored, edited: Edited) {
+>(
+  stored: Stored,
+  edited: Edited,
+) {
   return {
     schema: nullableEdit(edited),
     stored: stored.optional().catch(undefined),
@@ -48,17 +51,4 @@ export function fieldSchemas<
   return Object.fromEntries(
     Object.entries(fields).map(([name, field]) => [name, field[key]]),
   ) as { [Field in keyof Fields]: Fields[Field][Key] };
-}
-
-/** Protected wire values encode keep as omission and remove as null. */
-export type SecretEdit<Value extends string | number = string> =
-  | { kind: "keep" }
-  | { kind: "replace"; value: Value }
-  | { kind: "remove" };
-
-export function secretValue<Value extends string | number>(
-  edit: SecretEdit<Value>,
-): Value | null | undefined {
-  if (edit.kind === "replace") return edit.value;
-  return edit.kind === "remove" ? null : undefined;
 }

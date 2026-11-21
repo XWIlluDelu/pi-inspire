@@ -7,7 +7,6 @@ import { isJsonRecord } from "../shared/json-record";
 import {
   authenticatedFetch,
   BrowserPairingError,
-  BrowserUpgradeRequired,
 } from "./browser-auth";
 
 export class ApiError extends Error {
@@ -45,12 +44,12 @@ export class ApiTransportError extends Error {
   ) {
     super(
       outcomeUnknown
-        ? "INSΠRE could not confirm the result. This action may still complete. Check before trying again."
+        ? "Could not confirm that the action finished."
         : timedOut
           ? "The request timed out. Try again."
           : phase === "request"
-            ? "The INSΠRE address did not return a response"
-            : "The INSΠRE address returned an invalid response",
+            ? "Inspire did not respond."
+            : "Inspire returned an invalid response.",
     );
     this.name = "ApiTransportError";
   }
@@ -72,7 +71,7 @@ export async function applicationFetch(
   try {
     return await authenticatedFetch(input, init, transport);
   } catch (error) {
-    if (aborted(error) || error instanceof BrowserUpgradeRequired) throw error;
+    if (aborted(error)) throw error;
     if (error instanceof BrowserPairingError)
       throw new ApiError(401, error.message);
     throw new ApiTransportError("request");
@@ -114,8 +113,7 @@ async function errorBody(
     return isJsonRecord(decoded) ? decoded : null;
   } catch (error) {
     if (aborted(error)) throw error;
-    if (!(error instanceof SyntaxError))
-      throw new ApiTransportError("response");
+    if (!(error instanceof SyntaxError)) throw new ApiTransportError("response");
     return null;
   }
 }
@@ -199,9 +197,7 @@ export async function request<T>(
       if (init.body !== undefined && !headers.has("Content-Type"))
         headers.set("Content-Type", "application/json");
       const response = await applicationFetch(
-        path,
-        { ...init, signal, headers },
-        transport,
+        path, { ...init, signal, headers }, transport,
       );
       const identity = options.matchReceipt;
       if (!identity) {

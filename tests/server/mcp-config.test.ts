@@ -23,6 +23,7 @@ const fixture = (hookMarker: string) => ({
   mcpServers: {
     docs: {
       url: "https://user:password@example.invalid/private-token?key=url-secret",
+      args: ["unused-argument-secret"],
       headers: {
         Authorization: "Bearer header-secret",
         "X-Other": "other-secret",
@@ -247,36 +248,24 @@ describe("MCP file configuration", () => {
     expect(await readFile(userFile, "utf8")).toBe(invalid);
   });
 
-  it.each([
-    ["sse", { url: "file:///private-secret" }],
-    ["mixed", { command: "node", url: "https://example.invalid" }],
-    [
-      "oauth",
-      {
-        url: "https://example.invalid",
-        oauth: { callbackUrl: "https://evil.invalid/private-secret" },
-      },
-    ],
-    [
-      "oauth-port",
-      {
-        url: "https://example.invalid",
-        oauth: { callbackUrl: "http://localhost:1/callback", callbackPort: 2 },
-      },
-    ],
-  ])(
-    "rejects invalid edit %s without echoing submitted secrets",
-    async (name, values) => {
-      const before = await readFile(userFile, "utf8");
-      await expect(
-        edit({ scope: "user", name, operation: "add", values }),
-      ).rejects.toMatchObject({
+  it("rejects invalid connections and transport changes without echoing their values", async () => {
+    const update = (values: McpConfigEdit["values"]) =>
+      edit({ scope: "user", name: "docs", operation: "update", values });
+    const before = await readFile(userFile, "utf8");
+    for (const values of [
+      { url: "file:///private-secret" },
+      { command: "node" },
+      { url: null, command: "node" },
+      { oauth: { callbackUrl: "https://evil.invalid/private-secret" } },
+      { oauth: { callbackUrl: "http://localhost:1/callback", callbackPort: 2 } },
+    ]) {
+      await expect(update(values)).rejects.toMatchObject({
         status: 400,
         message: expect.not.stringContaining("private-secret"),
       });
-      expect(await readFile(userFile, "utf8")).toBe(before);
-    },
-  );
+    }
+    expect(await readFile(userFile, "utf8")).toBe(before);
+  });
 });
 
 it("scopes MCP requests to an open session and reveals only the reviewed connection", async () => {

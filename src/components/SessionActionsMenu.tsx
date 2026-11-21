@@ -12,6 +12,7 @@ import {
   runSessionAction,
   sessionActionAvailable,
   sessionActions,
+  type SessionInspection,
 } from "../session-actions";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
@@ -25,17 +26,17 @@ export function SessionActionsMenu({
   initialBranchSelection = false,
   sessionId,
   onRename,
-  onExport,
+  onInspect,
   onClose,
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
   initialBranchSelection?: boolean;
   sessionId: string;
   onRename: (sessionId: string, name: string) => void;
-  onExport: () => void;
+  onInspect: (kind: SessionInspection) => void;
   onClose: (restoreFocus?: boolean) => void;
 }) {
-  const { order, rename, clone, viewId, revision, readOnly, action, error } =
+  const { order, rename, clone, toolLoadout, viewId, revision, readOnly, action, error } =
     useAppState(
       (state) => ({
         order:
@@ -48,6 +49,7 @@ export function SessionActionsMenu({
         error: state.branchTreeError,
         rename: sessionActionAvailable("rename", state),
         clone: sessionActionAvailable("clone", state),
+        toolLoadout: sessionActionAvailable("tool-loadout", state),
       }),
       shallowEqual,
     );
@@ -75,13 +77,8 @@ export function SessionActionsMenu({
   useEffect(() => {
     if (!choosing || !viewId) return;
     const request = new AbortController();
-    void store
-      .readNativeHistory(
-        sessionId,
-        viewId,
-        { kind: "branches" },
-        request.signal,
-      )
+    void store.branches
+      .history(sessionId, viewId, { kind: "branches" }, request.signal)
       .then(
         (data) => {
           if (!request.signal.aborted && data)
@@ -106,7 +103,7 @@ export function SessionActionsMenu({
   const [announcement, setAnnouncement] = useState("");
   const reorder = useSessionActionReorder({
     order,
-    onChange: (next) => store.setPreference("sessionActionOrder", next),
+    onChange: (next) => store.preferences.set("sessionActionOrder", next),
     containerRef: list,
     onMove: (id, index) =>
       setAnnouncement(
@@ -175,8 +172,8 @@ export function SessionActionsMenu({
                   revision === null
                 )
                   return;
-                void store
-                  .navigateBranch(
+                void store.branches
+                  .navigate(
                     leaf.id,
                     readOnly ? "watch" : "switch",
                     {},
@@ -233,7 +230,9 @@ export function SessionActionsMenu({
                   role="menuitem"
                   ref={id === "switch-branch" ? switchAction : undefined}
                   disabled={
-                    id === "rename" ? !rename : id === "clone" && !clone
+                    (id === "rename" && !rename) ||
+                    (id === "clone" && !clone) ||
+                    (id === "tool-loadout" && !toolLoadout)
                   }
                   aria-disabled={copyId ? copying : undefined}
                   onClick={() => {
@@ -247,7 +246,7 @@ export function SessionActionsMenu({
                           void copy(sessionId, store.copyOwnership());
                       },
                       rename: onRename,
-                      export: onExport,
+                      inspect: onInspect,
                       closeMenu: onClose,
                     });
                   }}

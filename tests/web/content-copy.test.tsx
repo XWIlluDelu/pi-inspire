@@ -89,7 +89,9 @@ describe("owned content copying", () => {
 
   it("uses direct saved-image authority rather than projected inline data and preserves duplicates", async () => {
     const png = new Blob(["saved"], { type: "image/png" });
-    const read = vi.spyOn(store, "loadTranscriptImage").mockResolvedValue(png);
+    const read = vi
+      .spyOn(store.resources, "loadTranscriptImage")
+      .mockResolvedValue(png);
     const owner = { sessionId: "s1", viewId: "v1", projectionKey: "p1" };
     const signal = new AbortController().signal;
     const message = {

@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Check,
   Command,
+  Ellipsis,
   Folder,
   GitBranch,
   PanelLeft,
@@ -10,7 +11,6 @@ import {
 } from "lucide-react";
 import {
   memo,
-  type Ref,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -25,7 +25,7 @@ import {
 import { selectedRunState } from "../app-state";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { sessionPresentationName } from "../session-actions";
+import { type SessionInspection, sessionPresentationName } from "../session-actions";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
@@ -76,23 +76,23 @@ function StateChip({
 }
 
 function GitSummary() {
-  const { gitStatus, gitStatusError, changesVisible } = useAppState(
-    (state) => ({
-      gitStatus: state.gitStatus,
-      gitStatusError: state.gitStatusError,
-      // Changes already states the same authoritative count beside the list.
-      changesVisible: state.resourcesOpen && state.contextMode === "changes",
-    }),
-    shallowEqual,
-  );
-  const branch = gitHeadLabel(gitStatus);
-  const changes = gitChangeCount(gitStatus);
+  const { branch, changes, conflictCount, gitStatusError, changesVisible } =
+    useAppState(
+      (state) => ({
+        branch: gitHeadLabel(state.gitStatus),
+        changes: gitChangeCount(state.gitStatus),
+        conflictCount:
+          state.gitStatus?.kind === "repository"
+            ? state.gitStatus.conflicts
+            : 0,
+        gitStatusError: state.gitStatusError,
+        // Changes already states the same authoritative count beside the list.
+        changesVisible: state.resourcesOpen && state.contextMode === "changes",
+      }),
+      shallowEqual,
+    );
   if (!branch || changes === null) return null;
 
-  const conflictCount =
-    gitStatus?.kind === "repository"
-      ? gitStatus.files.filter((file) => file.conflict).length
-      : 0;
   const changeLabel = changes === 1 ? "1 change" : `${changes} changes`;
   const conflictLabel =
     conflictCount === 1 ? "1 conflict" : `${conflictCount} conflicts`;
@@ -130,9 +130,9 @@ function GitSummary() {
 }
 
 const SessionIdent = memo(function SessionIdent({
-  onExport,
+  onInspect,
 }: {
-  onExport: () => void;
+  onInspect: (kind: SessionInspection) => void;
 }) {
   const { sessionId, heading, cwd, projectDisplay, readOnly, branchRequest } =
     useAppState(
@@ -202,7 +202,10 @@ const SessionIdent = memo(function SessionIdent({
     saveInFlight.current = true;
     setSaving(true);
     try {
-      const saved = await store.renameSession(sessionId, name);
+      const saved = await store.sessionManagement.renameSession(
+        sessionId,
+        name,
+      );
       if (
         saved &&
         editRef.current === edit &&
@@ -299,7 +302,7 @@ const SessionIdent = memo(function SessionIdent({
           sessionId={sessionId}
           onClose={closeMenu}
           onRename={(_, name) => setEdit({ initial: name, name })}
-          onExport={onExport}
+          onInspect={onInspect}
         />
       ) : null}
       <div className="topbar__workspace-meta">
@@ -338,21 +341,19 @@ const SessionIdent = memo(function SessionIdent({
 export const AppTopbar = memo(function AppTopbar({
   narrowViewport,
   mobileNavOpen,
-  mobileNavToggleRef,
   settingsOpen,
   onToggleNavigation,
   onOpenCommandPalette,
-  onExportSession,
+  onInspectSession,
   onToggleSettings,
   onToggleResources,
 }: {
   narrowViewport: boolean;
   mobileNavOpen: boolean;
-  mobileNavToggleRef?: Ref<HTMLButtonElement>;
   settingsOpen: boolean;
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
-  onExportSession: () => void;
+  onInspectSession: (kind: SessionInspection) => void;
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
@@ -377,14 +378,13 @@ export const AppTopbar = memo(function AppTopbar({
     // Session changes already refresh Git in the store; remounting that
     // subscription would cancel and restart the same request.
     if (!state.observesRepository) return;
-    store.setGitSurfaceVisible("topbar-git", true);
-    return () => store.setGitSurfaceVisible("topbar-git", false);
+    store.git.setSurfaceVisible("topbar-git", true);
+    return () => store.git.setSurfaceVisible("topbar-git", false);
   }, [state.observesRepository]);
   return (
     <header className="topbar">
       {narrowViewport ? (
         <NavigationToggle
-          ref={mobileNavToggleRef}
           className="icon-button"
           onClick={onToggleNavigation}
           aria-label="Toggle navigation"
@@ -394,7 +394,7 @@ export const AppTopbar = memo(function AppTopbar({
           <PanelLeft size={15} aria-hidden />
         </NavigationToggle>
       ) : null}
-      <SessionIdent key={state.sessionId} onExport={onExportSession} />
+      <SessionIdent key={state.sessionId} onInspect={onInspectSession} />
       <div className="topbar__status" aria-live="polite">
         <StateChip
           runState={state.runState}
@@ -415,7 +415,7 @@ export const AppTopbar = memo(function AppTopbar({
                     : problem?.kind === "service-error"
                       ? "Host error"
                       : problem?.kind === "address-unreachable"
-                        ? "Address unavailable"
+                        ? "Unreachable"
                         : state.connection === "reconnecting"
                           ? "Reconnecting"
                           : "Connecting";
@@ -443,23 +443,23 @@ export const AppTopbar = memo(function AppTopbar({
           className="icon-button topbar__palette"
           onClick={() => onOpenCommandPalette()}
           aria-label="Open command palette"
-          title="Command palette (Ctrl+K)"
+          title={narrowViewport ? "Actions" : "Command palette (Ctrl+K)"}
         >
-          <Command size={15} aria-hidden />
+          {narrowViewport ? (
+            <Ellipsis size={17} aria-hidden />
+          ) : (
+            <Command size={15} aria-hidden />
+          )}
         </button>
-        {narrowViewport ? null : (
-          // Narrow layouts reach Settings from the navigation drawer and the
-          // command palette, leaving header width to the session identity.
-          <button
-            type="button"
-            className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
-            onClick={onToggleSettings}
-            aria-label="Settings"
-            title="Settings"
-          >
-            <SettingsIcon size={15} aria-hidden />
-          </button>
-        )}
+        <button
+          type="button"
+          className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
+          onClick={onToggleSettings}
+          aria-label="Settings"
+          title="Settings"
+        >
+          <SettingsIcon size={15} aria-hidden />
+        </button>
         <button
           type="button"
           className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}

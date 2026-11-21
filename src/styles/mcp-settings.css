@@ -1,7 +1,10 @@
-.settings__card > .mcp-config { padding: var(--space-3); }
+.settings__card > .mcp-config { padding: var(--space-3) var(--space-4); }
 /* Unlike Models rows, this shared component already has a padded container. */
-.mcp-config > .settings__error { padding: 0; }
+.mcp-config > .settings__error,
+.mcp-config .settings__card-message { padding: 0; }
 .mcp-config > .settings__error:not(:last-child) { margin-bottom: var(--space-2); }
+.mcp-config > .models-status { margin: 0 0 var(--space-3); }
+.mcp-file > .models-status { margin: 0; }
 .mcp-settings .models-form .settings-switch { align-self: flex-start; }
 .mcp-file { padding-block: var(--space-3); border-top: 1px solid var(--line); }
 .mcp-file:first-child { padding-top: 0; border-top: 0; }

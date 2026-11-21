@@ -1,12 +1,9 @@
-import { chmod, copyFile, cp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, glob, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
-/** Exercise the installed launcher with controllable Host and daemon entrypoints. */
-export async function preparePackagedLauncher(
-  root,
-  { host = "", terminal = "" } = {},
-) {
+/** Exercise the installed launcher with a controllable Host entrypoint. */
+export async function preparePackagedLauncher(root, { host = "" } = {}) {
   const build = join(root, "build", "server");
   const dist = join(root, "dist");
   const source = new URL("../../", import.meta.url);
@@ -16,27 +13,10 @@ export async function preparePackagedLauncher(
     writeFile(join(root, "package.json"), '{"type":"module"}'),
     writeFile(join(dist, "index.html"), ""),
     writeFile(join(build, "index.js"), host),
-    writeFile(join(build, "terminal-daemon-entry.js"), terminal),
-    ...[
-      "file-lock",
-      "instance-state",
-      "instance-control",
-      "launcher-restart",
-      "restart-submission",
-      "npm-command",
-      "platform-paths",
-      "platform-environment",
-      "process-tree",
-      "pi-processes",
-      "current-web-build",
-      "user-environment",
-    ].map((name) =>
-      copyFile(
-        new URL(`server/${name}.mjs`, source),
-        join(build, `${name}.mjs`),
-      ),
-    ),
   ]);
+  for await (const name of glob("*.mjs", { cwd: new URL("server/", source) })) {
+    await copyFile(new URL("server/" + name, source), join(build, name));
+  }
 }
 
 export async function freeLoopbackPort() {
@@ -89,9 +69,8 @@ import fs from "node:fs";
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FIXTURE_LOG, args.join(' ') + '\\n');
 const root = process.env.FIXTURE_ROOT;
-const terminal = args.includes('inspire-terminal.service');
-const unit = terminal ? 'inspire-terminal.service' : 'inspire-host.service';
-if (args.includes('inspire-host.service')) {
+const unit = 'inspire-host.service';
+if (args.includes(unit)) {
   if (['start', 'restart', 'enable'].includes(args[1])) fs.writeFileSync(root + '/started', '');
   if (['stop', 'disable'].includes(args[1])) {
     fs.rmSync(root + '/started', { force: true });
@@ -100,13 +79,13 @@ if (args.includes('inspire-host.service')) {
 }
 const oldExited = fs.existsSync(root + '/old-host-exited');
 const started = fs.existsSync(root + '/started');
-const active = terminal || !oldExited || started;
+const active = !oldExited || started;
 if (args[1] === 'show') console.log([
   'LoadState=loaded', 'FragmentPath=' + process.env.XDG_CONFIG_HOME + '/systemd/user/' + unit,
   'WorkingDirectory=' + root,
-  'ExecStart={ path=' + root + '/inspire ; argv[]=' + root + '/inspire' + (terminal ? ' terminal-daemon --root ' + root + ' --host 127.0.0.1 --port 4587' : '') + ' ; }',
+  'ExecStart={ path=' + root + '/inspire ; argv[]=' + root + '/inspire ; }',
   'ExecStartPost=' + (process.env.FIXTURE_OUTDATED ? '' : '{ path=' + root + '/inspire ; argv[]=' + root + '/inspire wait-ready ; }'),
-  'Wants=inspire-terminal.service', 'After=inspire-terminal.service', 'ActiveState=' + (active ? 'active' : 'inactive'), 'UnitFileState=enabled', 'SubState=running',
+  'ActiveState=' + (active ? 'active' : 'inactive'), 'UnitFileState=enabled', 'SubState=running',
   'InvocationID=' + (started ? 'b'.repeat(32) : 'a'.repeat(32))
 ].join('\\n'));
 `,

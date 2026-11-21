@@ -1,4 +1,4 @@
-export type ReceiptStorageIssue = "format" | "storage";
+type ReceiptStorageIssue = "format" | "storage";
 
 type ReceiptRead<T> =
   | { value: T; issue?: undefined }

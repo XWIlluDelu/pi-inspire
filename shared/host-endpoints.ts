@@ -28,9 +28,11 @@ import {
   type SessionHistoryPages,
   type SessionListResponse,
   THINKING_LEVELS,
+  type ToolLoadoutSnapshot,
 } from "./contracts.js";
 import type { HerdrEnhancementStatus } from "./herdr.js";
 import { historyQuerySchema } from "./history-query.js";
+import { hostOperationIdentitySchema } from "./host-operations.js";
 import {
   HOST_RESTART_PATH,
   type HostRestartStatus,
@@ -57,7 +59,7 @@ import {
   modelPreferencesPatchSchema,
 } from "./model-settings.js";
 import {
-  pushSubscriptionSchema,
+  taskAlertUpdateSchema,
   type TaskAlertSettings,
 } from "./notifications.js";
 import { preferencesPatchSchema } from "./preferences-schema.js";
@@ -73,6 +75,7 @@ import type {
   TerminalServiceSettings,
 } from "./terminal-contracts.js";
 import { terminalIdSchema } from "./terminal-operations.js";
+import { TOOL_LOADOUT_MAX_NAME_CHARS } from "./tool-loadout.js";
 import type {
   PresentationAdapterInfo,
   ToolPresentationConfiguration,
@@ -118,6 +121,7 @@ const sessionDeletionSchema = z.discriminatedUnion("scope", [
 const newSchema = z
   .object({
     cwd: z.string().min(1).max(4_096),
+    receipt: hostOperationIdentitySchema.optional(),
     createDirectory: z.boolean().optional(),
     name: z.string().max(160).optional(),
     model: z
@@ -238,6 +242,9 @@ const sessionCwdsSchema = z.object({
     .max(MAX_SESSION_CWD_HYDRATION_CWDS),
 });
 const sessionAddress = z.object({ sessionId: sessionIdField });
+const toolLoadoutAddress = sessionAddress
+  .extend({ viewId: z.string().min(1).max(256) })
+  .strict();
 const resourceResolveSchema = z
   .object({
     sessionId: sessionIdField,
@@ -283,6 +290,9 @@ const branchForkSchema = z
 const branchCloneSchema = branchForkSchema.extend({
   targetId: z.string().min(1).max(200).nullable(),
 });
+const workspaceForkSchema = branchForkSchema.omit({ targetId: true }).extend({
+  cwd: z.string().min(1).max(4_096),
+});
 const gitDiffSchema = z.object({
   sessionId: sessionIdField,
   pathId: z
@@ -325,23 +335,13 @@ const read = { mutation: false };
 
 const taskSettings = endpoint<TaskAlertSettings>();
 const quick = { timeoutMs: 10_000 };
-const taskUpdate = z
-  .strictObject({
-    mode: z.enum(["off", "title", "desktop"]).optional(),
-    grouping: z.enum(["session", "project"]).optional(),
-    subscription: pushSubscriptionSchema.nullable().optional(),
-  })
-  .refine(
-    (body) => Object.values(body).some((value) => value !== undefined),
-    "Provide a mode, subscription or grouping update",
-  );
 
 export const hostEndpoints = {
   taskAlertSettings: taskSettings("get", "/api/notifications", {}, quick),
   configureTaskAlerts: taskSettings(
     "put",
     "/api/notifications",
-    { body: taskUpdate },
+    { body: taskAlertUpdateSchema },
     quick,
   ),
   acknowledgeTaskAlert: ok(
@@ -413,6 +413,12 @@ export const hostEndpoints = {
     "post",
     "/api/branches/fork",
     { body: branchForkSchema },
+    longObservation,
+  ),
+  recoverWorkspaceFork: endpoint<BranchForkResponse>()(
+    "post",
+    "/api/branches/recover-workspace",
+    { body: workspaceForkSchema },
     longObservation,
   ),
   sessions: endpoint<SessionListResponse>()("get", "/api/sessions", {
@@ -549,6 +555,26 @@ export const hostEndpoints = {
   setThinkingLevel: modelSelection("post", "/api/control/thinking", {
     body: thinkingSchema,
   }),
+  cycleThinkingLevel: modelSelection("post", "/api/control/thinking-cycle", {
+    body: z.strictObject({ sessionId: sessionIdField }),
+  }),
+  toolLoadout: endpoint<ToolLoadoutSnapshot>()(
+    "get",
+    "/api/control/tool-loadout",
+    { query: toolLoadoutAddress },
+    read,
+  ),
+  setToolLoadout: endpoint<ToolLoadoutSnapshot>()(
+    "post",
+    "/api/control/tool-loadout",
+    {
+      body: toolLoadoutAddress.extend({
+        workerId: z.string().min(1).max(200),
+        name: z.string().min(1).max(TOOL_LOADOUT_MAX_NAME_CHARS),
+        active: z.boolean(),
+      }),
+    },
+  ),
   setRuntimeSetting: ok("post", "/api/control/runtime-setting", {
     body: z.strictObject({
       sessionId: sessionIdField,
@@ -564,7 +590,7 @@ export const hostEndpoints = {
     { query: fileListSchema },
   ),
   gitStatus: endpoint<GitStatusResponse>()("get", "/api/git/status", {
-    query: sessionAddress,
+    query: sessionAddress.extend({ view: z.literal("summary").optional() }),
   }),
   gitDiff: endpoint<GitDiffResponse>()(
     "post",

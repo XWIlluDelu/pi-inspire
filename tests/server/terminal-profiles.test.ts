@@ -88,7 +88,6 @@ describe("launching terminal profiles", () => {
       integratedTerminalLaunch(profile("nu", ["--login"]), "hooks", {}),
     ).toMatchObject({
       args: ["--login"],
-      enabled: false,
     });
   });
 

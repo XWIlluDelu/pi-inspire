@@ -12,11 +12,8 @@ import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 export type { PiCommand } from "../shared/commands";
 
 const INSPIRE_COMMANDS: PiCommand[] = PI_NATIVE_COMMANDS.map((command) => ({
-  name: command.name,
-  description: command.description,
+  ...command,
   source: "builtin",
-  execution: command.execution,
-  ...("argumentHint" in command ? { argumentHint: command.argumentHint } : {}),
 }));
 
 export type CaretCompletion =
@@ -257,25 +254,12 @@ export function resolveCommandInventory(
   for (const command of commands) {
     if (!byName.has(command.name)) byName.set(command.name, command);
   }
-  // A first-message composer can run inherited runtime resources and the
-  // Host-owned /compact prompt path, but browser-surface commands need
-  // an already selected session. Keep that reduced surface truthful.
-  if (!includeNativeCommands) {
-    // Do not advertise a colliding resource as runnable when this surface
-    // cannot execute its built-in owner yet.
-    for (const command of INSPIRE_COMMANDS) {
-      if (command.name !== "compact") byName.delete(command.name);
-    }
-    const compact = INSPIRE_COMMANDS.find(
-      (command) => command.name === "compact",
-    )!;
-    byName.set(compact.name, compact);
-    return [...byName.values()];
-  }
-  // The interactive client handles built-ins before AgentSession.prompt().
-  // RPC's resource dispatcher is a lower layer, not the TUI's precedence rule.
+  // New can dispatch /compact after creating the session. Other built-in
+  // names stay reserved even when their session controls are unavailable.
   for (const command of INSPIRE_COMMANDS) {
-    byName.set(command.name, command);
+    if (includeNativeCommands || command.name === "compact")
+      byName.set(command.name, command);
+    else byName.delete(command.name);
   }
   return [...byName.values()];
 }

@@ -49,10 +49,10 @@ export function AttachmentList({
                 item.recalledArtifact?.type === "image" && sessionId ? (
                   <TranscriptImage
                     sessionId={sessionId}
-                    viewId={item.recalledArtifact.viewId}
+                    viewId={item.recalledArtifact.scope.viewId}
                     projectionKey={transcriptProjectionKey(
-                      item.recalledArtifact.viewId,
-                      item.recalledArtifact.incarnation,
+                      item.recalledArtifact.scope.viewId,
+                      item.recalledArtifact.scope.incarnation,
                     )}
                     reference={item.recalledArtifact.reference}
                     name={item.fileName}

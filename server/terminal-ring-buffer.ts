@@ -1,94 +1,74 @@
-interface TerminalRingChunk {
-  start: number;
-  data: Buffer;
-}
+const BLOCK_BYTES = 64 * 1024;
 
-interface TerminalRingSlice {
-  offset: number;
-  data: Buffer;
-}
-
-/** A byte-exact trailing PTY history. Absolute offsets never rewind when old
- * chunks are evicted, so reconnecting clients can distinguish a fillable gap
- * from one that requires a terminal-state snapshot. */
+/** Retain PTY output by absolute byte offset. Fixed-size blocks keep the
+ * replay cost independent of how the PTY split its writes. */
 export class TerminalRingBuffer {
-  private readonly chunks: TerminalRingChunk[] = [];
-  private retainedBytes = 0;
-  private endOffset = 0;
+  private readonly blocks = new Map<number, Buffer>();
+  private readonly blockBytes: number;
+  private start = 0;
+  private end = 0;
 
   constructor(private readonly capacityBytes: number) {
     if (!Number.isSafeInteger(capacityBytes) || capacityBytes < 1)
       throw new Error("Terminal ring capacity must be a positive integer");
-  }
-
-  get firstOffset(): number {
-    return this.chunks[0]?.start ?? this.endOffset;
+    this.blockBytes = Math.min(BLOCK_BYTES, capacityBytes);
   }
 
   get nextOffset(): number {
-    return this.endOffset;
+    return this.end;
   }
 
-  append(value: Uint8Array): number {
-    const start = this.endOffset;
-    this.endOffset += value.byteLength;
-    if (!Number.isSafeInteger(this.endOffset))
+  append(data: Uint8Array): number {
+    const offset = this.end;
+    const end = offset + data.byteLength;
+    if (!Number.isSafeInteger(end))
       throw new Error("Terminal output exceeded the safe offset range");
-    if (value.byteLength === 0) return start;
+    this.start = Math.max(this.start, end - this.capacityBytes);
+    this.end = end;
 
-    const retained =
-      value.byteLength > this.capacityBytes
-        ? Buffer.from(value.subarray(value.byteLength - this.capacityBytes))
-        : Buffer.from(value);
-    const retainedStart = this.endOffset - retained.byteLength;
-    this.chunks.push({ start: retainedStart, data: retained });
-    this.retainedBytes += retained.byteLength;
-    this.trim();
-    return start;
+    for (const index of this.blocks.keys()) {
+      if (index >= Math.floor(this.start / this.blockBytes)) break;
+      this.blocks.delete(index);
+    }
+    for (let position = Math.max(offset, this.start); position < end; ) {
+      const index = Math.floor(position / this.blockBytes);
+      const within = position % this.blockBytes;
+      let block = this.blocks.get(index);
+      if (!block) {
+        block = Buffer.allocUnsafe(this.blockBytes);
+        this.blocks.set(index, block);
+      }
+      const count = Math.min(this.blockBytes - within, end - position);
+      block.set(
+        data.subarray(position - offset, position - offset + count),
+        within,
+      );
+      position += count;
+    }
+    return offset;
   }
 
   contains(offset: number): boolean {
     return (
-      Number.isSafeInteger(offset) &&
-      offset >= this.firstOffset &&
-      offset <= this.endOffset
+      Number.isSafeInteger(offset) && offset >= this.start && offset <= this.end
     );
   }
 
-  slicesFrom(offset: number): TerminalRingSlice[] | null {
+  slicesFrom(offset: number): { offset: number; data: Buffer }[] | null {
     if (!this.contains(offset)) return null;
-    if (offset === this.endOffset) return [];
-    const result: TerminalRingSlice[] = [];
-    for (const chunk of this.chunks) {
-      const end = chunk.start + chunk.data.byteLength;
-      if (end <= offset) continue;
-      const skipped = Math.max(0, offset - chunk.start);
-      result.push({
-        offset: chunk.start + skipped,
-        data: chunk.data.subarray(skipped),
-      });
+    const slices = [];
+    while (offset < this.end) {
+      const block = this.blocks.get(Math.floor(offset / this.blockBytes))!;
+      const within = offset % this.blockBytes;
+      const data = block.subarray(within, within + (this.end - offset));
+      slices.push({ offset, data });
+      offset += data.byteLength;
     }
-    return result;
+    return slices;
   }
 
   discardRetained(): void {
-    this.chunks.length = 0;
-    this.retainedBytes = 0;
-  }
-
-  private trim(): void {
-    while (this.retainedBytes > this.capacityBytes) {
-      const first = this.chunks[0];
-      if (!first) return;
-      const overflow = this.retainedBytes - this.capacityBytes;
-      if (first.data.byteLength <= overflow) {
-        this.chunks.shift();
-        this.retainedBytes -= first.data.byteLength;
-        continue;
-      }
-      first.start += overflow;
-      first.data = first.data.subarray(overflow);
-      this.retainedBytes -= overflow;
-    }
+    this.start = this.end;
+    this.blocks.clear();
   }
 }

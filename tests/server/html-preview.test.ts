@@ -19,7 +19,7 @@ describe("interactive HTML capabilities", () => {
   let fixture: Awaited<ReturnType<typeof hostApiFixture>>;
   let api: ReturnType<typeof resourceHttp>;
   let guest: ReturnType<typeof request>;
-  let context: ResourceContext & { messages: unknown[]; loadMessages?: never };
+  let context: ResourceContext;
   const html = "<h1>Loaded snapshot</h1><script>window.ready = true</script>";
   let source: string;
 
@@ -40,7 +40,8 @@ describe("interactive HTML capabilities", () => {
       viewId: "view-1",
       revision: 1,
       cwd,
-      messages: [],
+      loadHistoryImage: async () => null,
+      loadMessages: async () => [],
     };
     vi.spyOn(fixture.runtime, "resourceContext").mockImplementation(
       async () => context,
@@ -192,7 +193,7 @@ describe("interactive HTML capabilities", () => {
     await writeFile(join(directory, "sibling.css"), "body { color: teal }");
     context = {
       ...context,
-      messages: [
+      loadMessages: async () => [
         { role: "assistant", content: [{ type: "text", text: path }] },
       ],
     };
@@ -200,7 +201,7 @@ describe("interactive HTML capabilities", () => {
     const prefix = grant.url.slice(0, grant.url.lastIndexOf("/"));
     await guest.get(`${prefix}/sibling.css`).expect(200);
     await guest.get(`${prefix}/..%2fprivate.txt`).expect(403);
-    context = { ...context, revision: 2, messages: [] };
+    context = { ...context, revision: 2, loadMessages: async () => [] };
     await guest.get(grant.url).expect(403);
   });
 

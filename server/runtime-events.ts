@@ -15,7 +15,6 @@ import {
 import {
   boundedExtensionStatus,
   type ExtensionDisplay,
-  type ExtensionUiRequest,
   isBusyRunState,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
@@ -30,6 +29,7 @@ import { jsonRecord } from "../shared/json-record.js";
 import { structuralMessageIdentity } from "../shared/message-identity.js";
 import type { TaskOutcome } from "../shared/notifications.js";
 import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
+import { TOOL_LOADOUT_SUFFIX } from "../shared/tool-loadout.js";
 import {
   type ActivityTool,
   childCallFromEvent,
@@ -41,7 +41,11 @@ import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { exactPendingInput } from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
-import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
+import type { RuntimeBashController } from "./runtime-bash.js";
+import type { WorkerCheckpointReader } from "./runtime-worker-view.js";
+import type { RuntimeLiveTail } from "./runtime-live-tail.js";
+import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
+import { projectRuntimeValue } from "./safe-projection.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
 
 const STREAM_REVISION_FIELD = "__inspireStreamRevision";
@@ -73,26 +77,14 @@ const PI_STARTUP_RESPONSE_UI_ERROR =
   "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 
 interface RuntimeEventControllerHost {
-  updateBash(slot: RuntimeSlot, event: Record<string, unknown>): boolean;
+  bash: Pick<RuntimeBashController, "update">;
+  checkpoints: Pick<WorkerCheckpointReader, "observe" | "refresh">;
+  liveTail: Pick<
+    RuntimeLiveTail,
+    "activeAssistantOverlayMessage" | "updateOverlay"
+  >;
+  extensionUi: Pick<RuntimeExtensionUiController, "add">;
   finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void;
-  checkpoint(
-    slot: RuntimeSlot,
-    rpc: PiRpcProcess,
-    record: Record<string, unknown>,
-  ): boolean;
-  refreshCheckpoint(slot: RuntimeSlot): void;
-  activeAssistantOverlayMessage(slot: RuntimeSlot): unknown;
-  updateOverlay(
-    slot: RuntimeSlot,
-    message: unknown,
-    phase: "start" | "update" | "end",
-    delta?: ReducedAssistantDelta,
-  ): unknown;
-  addPendingExtensionUi(
-    slot: RuntimeSlot,
-    event: unknown,
-    rpc: PiRpcProcess,
-  ): ExtensionUiRequest | null;
   invalidateCatalog(): void;
   scheduleIdleWorkerEviction(): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
@@ -106,16 +98,11 @@ interface RuntimeEventControllerHost {
   ): ProjectionConflict;
   stopWriter(slot: RuntimeSlot): Promise<void>;
   logRuntimeError(sessionId: string, error: unknown, source?: string): void;
-  safeProjection(value: unknown): unknown;
 }
 
 /** Owns the Pi event boundary: persistence provenance is recorded before
  * browser projection, and lifecycle/UI events update exactly one runtime slot. */
 export class RuntimeEventController {
-  /** Once a terminal event starts an asynchronous reconciliation, later Pi
-   * events for that slot must retain wire order until the reconciliation
-   * boundary drains. */
-  private readonly orderedSlots = new WeakSet<RuntimeSlot>();
   private readonly argumentStreams = new WeakMap<
     PiRpcProcess,
     Map<number, ToolArgumentStream>
@@ -124,7 +111,7 @@ export class RuntimeEventController {
   constructor(private readonly host: RuntimeEventControllerHost) {}
 
   publishCheckpoint(slot: RuntimeSlot, publish: () => void): void {
-    if (this.orderedSlots.has(slot))
+    if (slot.eventTail)
       this.enqueueOrderedEvent(slot, publish, "worker_checkpoint");
     else publish();
   }
@@ -134,15 +121,13 @@ export class RuntimeEventController {
     task: () => Promise<void> | void,
     source: string,
   ): void {
-    this.orderedSlots.add(slot);
-    let tail: Promise<void>;
-    tail = slot.eventTail
+    const tail = (slot.eventTail ?? Promise.resolve())
       .then(task)
       .catch((error) => {
         this.host.logRuntimeError(slot.id, error, source);
       })
       .finally(() => {
-        if (slot.eventTail === tail) this.orderedSlots.delete(slot);
+        if (slot.eventTail === tail) slot.eventTail = null;
       });
     slot.eventTail = tail;
   }
@@ -229,7 +214,7 @@ export class RuntimeEventController {
         lines: [...widgetLines] as string[],
       };
     } else {
-      const projected = this.host.safeProjection(record);
+      const projected = projectRuntimeValue(record);
       const encoded = JSON.stringify(projected);
       const payload =
         Buffer.byteLength(encoded) <= MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES
@@ -269,7 +254,7 @@ export class RuntimeEventController {
         slot.toolActivity,
         record.parentToolCallId,
         childCallFromEvent(
-          this.host.safeProjection(record) as Record<string, unknown>,
+          projectRuntimeValue(record) as Record<string, unknown>,
         ),
       );
     const existing = slot.toolActivity[id];
@@ -319,8 +304,7 @@ export class RuntimeEventController {
           "assistant")
     )
       this.argumentStreams.delete(rpc);
-    // Pi 0.86 system loadouts/checkpoints stay host-side, including live events
-    // and the aggregate agent_end payload, without becoming overlay messages.
+    // System loadouts and checkpoints stay out of the live overlay.
     if (
       (record.type === "message_start" ||
         record.type === "message_update" ||
@@ -328,15 +312,7 @@ export class RuntimeEventController {
       isSystemMessage(record.message)
     )
       return;
-    let forwardedEvent: unknown =
-      record.type === "agent_end" && Array.isArray(record.messages)
-        ? {
-            ...record,
-            messages: record.messages.filter(
-              (message) => !isSystemMessage(message),
-            ),
-          }
-        : event;
+    let forwardedEvent = event;
     if (
       record.type === "message_start" ||
       record.type === "message_update" ||
@@ -347,7 +323,8 @@ export class RuntimeEventController {
           typeof record.message === "object" &&
           !Array.isArray(record.message),
       );
-      const previousMessage = this.host.activeAssistantOverlayMessage(slot);
+      const previousMessage =
+        this.host.liveTail.activeAssistantOverlayMessage(slot);
       let message = record.message;
       if (record.type === "message_update" && !suppliedCompleteMessage) {
         const delta = record.assistantMessageEvent as
@@ -412,7 +389,7 @@ export class RuntimeEventController {
                 ? Number(previousRevision) + 1
                 : 0
             : null;
-        const projectedMessage = this.host.updateOverlay(
+        const projectedMessage = this.host.liveTail.updateOverlay(
           slot,
           streamRevision === null
             ? message
@@ -467,22 +444,24 @@ export class RuntimeEventController {
         // The authoritative tool end can be large and needs normal redaction /
         // projection bounds. Send its one complete replacement, not the raw
         // ToolCall duplicated inside an AssistantMessageEvent.
-        const { assistantMessageEvent: _rawDelta, ...metadata } = record;
+        const {
+          assistantMessageEvent: rawDelta,
+          message: _nativeMessage,
+          ...metadata
+        } = record;
         forwardedEvent = {
           ...metadata,
-          ...(incremental
-            ? { assistantMessageEvent: record.assistantMessageEvent }
-            : {}),
-          message: projectedMessage,
-          ...(toolActivity ? { toolActivity } : {}),
-          ...(streamRevision === null ? {} : { streamRevision }),
           ...(incremental && streamMessageKey
             ? {
-                streamDelta: true,
+                type: "message_update_batch",
+                assistantMessageEvents: [rawDelta],
+                sourceEventCount: 1,
                 streamMessageKey,
                 streamTextLength: assistantStreamTextLength(projectedMessage),
               }
-            : {}),
+            : { message: projectedMessage }),
+          ...(toolActivity ? { toolActivity } : {}),
+          ...(streamRevision === null ? {} : { streamRevision }),
         };
       }
     }
@@ -501,7 +480,7 @@ export class RuntimeEventController {
       case "bash_execution_update":
         // Only the matching id-tagged native request owns these deltas. Do not
         // expose raw unbounded chunks from unrelated extension executions.
-        this.host.updateBash(slot, record);
+        this.host.bash.update(slot, record);
         return;
       case "extension_ui_request": {
         if (
@@ -526,7 +505,7 @@ export class RuntimeEventController {
             return;
           slot.extensionStatuses = {};
           slot.extensionDisplays = [];
-          this.host.refreshCheckpoint(slot);
+          this.host.checkpoints.refresh(slot);
           forwardedEvent = {
             type: "extension_ui_request",
             id: record.id,
@@ -538,7 +517,7 @@ export class RuntimeEventController {
           break;
         }
         const owned = { ...record, sessionId: slot.id };
-        const pending = this.host.addPendingExtensionUi(slot, owned, rpc);
+        const pending = this.host.extensionUi.add(slot, owned, rpc);
         const statusMethod = record.method === "setStatus";
         this.updateExtensionStatus(slot, owned);
         const displayChanged = this.updateExtensionDisplay(slot, owned);
@@ -718,7 +697,7 @@ export class RuntimeEventController {
       record.type === "agent_settled" ||
       (record.type === "message_end" && !isBusyRunState(slot.runState))
     )
-      this.host.refreshCheckpoint(slot);
+      this.host.checkpoints.refresh(slot);
   }
 
   private rejectUnsupportedStartupUi(
@@ -727,7 +706,6 @@ export class RuntimeEventController {
     record: Record<string, unknown>,
   ): boolean {
     if (
-      slot.ready ||
       slot.startupPhase !== "starting" ||
       record.type !== "extension_ui_request"
     )
@@ -753,6 +731,9 @@ export class RuntimeEventController {
     event: unknown,
     record: Record<string, unknown>,
   ): void {
+    // Message and tool events already project these bodies. Persistence
+    // checkpoints and agent_settled own the browser's final state.
+    if (record.type === "turn_end" || record.type === "agent_end") return;
     // Artifact identity uses the exact wire boundary, before async projection
     // ordering or response fences can advance.
     const pendingInput =
@@ -768,7 +749,7 @@ export class RuntimeEventController {
     )
       slot.manualCompaction.aborted = record.aborted === true;
     if (record.type === "entry_appended") {
-      if (!isBusyRunState(slot.runState)) this.host.refreshCheckpoint(slot);
+      if (!isBusyRunState(slot.runState)) this.host.checkpoints.refresh(slot);
       return;
     }
     const handle = () =>
@@ -817,7 +798,7 @@ export class RuntimeEventController {
         },
         "terminal_event_failed",
       );
-    } else if (this.orderedSlots.has(slot)) {
+    } else if (slot.eventTail) {
       this.enqueueOrderedEvent(
         slot,
         () => {
@@ -850,10 +831,11 @@ export class RuntimeEventController {
         `${slot.bridge.statusKey}${PROVIDER_AUTH_SUFFIX}`,
         `${slot.bridge.statusKey}${RETRY_STATE_SUFFIX}`,
         `${slot.bridge.statusKey}${PENDING_IMAGE_SUFFIX}`,
+        `${slot.bridge.statusKey}${TOOL_LOADOUT_SUFFIX}`,
       ].includes(record.statusKey as string)
     )
       return;
-    if (this.host.checkpoint(slot, rpc, record)) return;
+    if (this.host.checkpoints.observe(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     this.dispatchNativeEvent(slot, rpc, event, record);
   }

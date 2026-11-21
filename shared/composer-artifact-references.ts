@@ -1,7 +1,7 @@
 export const COMPOSER_HISTORY_IMAGE_REFERENCE =
-  /^pi-history-image:\/\/([^/]+)\/(\d+)$/;
+  /^pi-history-image:\/\/([^/]+)\/(0|[1-9]\d*)$/;
 export const COMPOSER_HISTORY_FILE_REFERENCE =
-  /^pi-history-file:\/\/([^/]+)\/(\d+)$/;
+  /^pi-history-file:\/\/([^/]+)\/(0|[1-9]\d*)$/;
 
 export function composerArtifactReference(
   kind: "image" | "file",

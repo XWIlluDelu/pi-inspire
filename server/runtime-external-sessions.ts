@@ -1,3 +1,4 @@
+import { isPiRpcOutcomeUnknown } from "./pi-rpc.js";
 import type {
   ModelCatalog as NativeModelCatalog,
   ModelSelection as NativeModelSelection,
@@ -9,11 +10,7 @@ import {
   type PromptRequest,
 } from "../shared/contracts.js";
 import type { TaskOutcome } from "../shared/notifications.js";
-import {
-  type AttachmentStore,
-  addAttachmentContext,
-  resolveProjectFiles,
-} from "./attachments.js";
+import type { AttachmentStore } from "./attachments.js";
 import {
   type AttachmentEnd,
   type ConnectExternalSession,
@@ -24,8 +21,8 @@ import {
 } from "./external-session.js";
 import { requestError } from "./request-error.js";
 import {
-  preparePromptArtifacts,
-  resolveComposerHistoryArtifacts,
+  preparePiPrompt,
+  stagePromptInput,
 } from "./runtime-composer-artifacts.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
@@ -50,11 +47,6 @@ interface ExternalSessionHost {
   log(slot: RuntimeSlot, error: unknown): void;
   released(slot: RuntimeSlot): void;
   followLeaf(slot: RuntimeSlot, leafId: string | null): void;
-  renewView(slot: RuntimeSlot): void;
-  /** Whether a leaf still continues this view's branch. */
-  corresponds(slot: RuntimeSlot, leafId: string | null): boolean;
-  /** A confirmed leaf at or after the selected position. */
-  continues(slot: RuntimeSlot, leafId: string | null): boolean;
 }
 
 /** Conversation access to externally owned sessions, deliberately outside the
@@ -226,9 +218,9 @@ export class RuntimeExternalSessions {
       slot.id,
       slot.sessionPath,
       (leaf) => {
-        if (this.host.continues(slot, leaf)) return "continues";
+        if (slot.continuesView(leaf)) return "continues";
         if (
-          this.host.corresponds(slot, leaf) ||
+          slot.sharesBranch(leaf) ||
           (leaf !== null && !slot.projection?.entry(leaf))
         )
           return "possible";
@@ -245,7 +237,7 @@ export class RuntimeExternalSessions {
     if (
       "ended" in state ||
       (idleOnly && state.activity !== "idle") ||
-      !this.host.continues(slot, state.leafId) ||
+      !slot.continuesView(state.leafId) ||
       this.closed ||
       !this.host.current(slot) ||
       slot.process
@@ -260,7 +252,7 @@ export class RuntimeExternalSessions {
       selectionRevision: 0,
     };
     this.connections.set(slot, connection);
-    this.host.renewView(slot);
+    slot.renewView();
     // Attached Pi accepts input: the view is no longer read-only.
     if (slot.readOnlyReason === "external-active") slot.readOnlyReason = null;
     this.applyState(slot, connection, state, true);
@@ -316,7 +308,7 @@ export class RuntimeExternalSessions {
     if (mode === "restart" && "ended" in state && state.ended === "unreachable")
       throw requestError("The attached Pi could not confirm its state.", 409);
     connection.latestRead = read;
-    if ("ended" in state || !this.host.corresponds(slot, state.leafId)) {
+    if ("ended" in state || !slot.sharesBranch(state.leafId)) {
       this.end(
         slot,
         "ended" in state ? state.ended : "left-branch",
@@ -463,7 +455,7 @@ export class RuntimeExternalSessions {
     const duringWork = isBusyRunState(slot.runState);
     if (duringWork && reason === "exited") this.host.taskOutcome(slot, "ended");
     this.detach(slot);
-    this.host.renewView(slot);
+    slot.renewView();
     if (slot.runState !== "failed")
       slot.runState = slot.conflict ? "conflict" : "idle";
     this.host.emit(slot, {
@@ -476,11 +468,15 @@ export class RuntimeExternalSessions {
     this.host.released(slot);
   }
 
-  bindPrompt(slot: RuntimeSlot) {
+  bindPrompt(
+    slot: RuntimeSlot,
+    request: PromptRequest,
+    epoch: number,
+    assertView: () => void,
+  ) {
     const connection = this.connections.get(slot);
-    if (!connection) return undefined;
-    return (request: PromptRequest, epoch: number, assertView: () => void) =>
-      this.prompt(slot, connection, request, epoch, assertView);
+    if (connection)
+      return () => this.prompt(slot, connection, request, epoch, assertView);
   }
 
   private async prompt(
@@ -524,45 +520,22 @@ export class RuntimeExternalSessions {
         { code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE" },
       );
     const originalIds = request.attachmentIds ?? [];
-    const prepared = await this.attachments.resolveForPrompt(originalIds);
-    const copied: string[] = [];
-    let delivered = false;
-    let uncertain = false;
+    const input = await stagePromptInput(slot, request, this.attachments);
+    let copied: string[] = [];
+    let outcome: "rejected" | "accepted" | "unknown" = "rejected";
     try {
-      const history = await resolveComposerHistoryArtifacts(
+      const { fullMessage, images } = await preparePiPrompt(
         slot,
         request,
+        message,
+        input,
         this.attachments,
-      );
-      const selected = await resolveProjectFiles(
-        slot.cwd,
-        request.projectFiles,
-      );
-      const artifacts = await preparePromptArtifacts(
-        slot,
-        request,
-        prepared,
-        selected,
-        history,
       );
       // The receiver may outlive a lost receipt. Its copies have a separate
       // lifetime from the editor's original upload handles.
-      const transportImages = await this.attachments.prepareTransportImages(
-        artifacts.images,
-      );
-      copied.push(...transportImages.map((image) => image.id));
-      const files = artifacts.files.filter((file) => file.kind === "file");
-      const images = transportImages.map(({ path, mimeType }) => ({
-        path,
-        mimeType,
-      }));
-      const fullMessage = addAttachmentContext(
-        message,
-        files,
-        artifacts.projectFiles,
-      );
-      if (!fullMessage && images.length === 0)
-        throw requestError("Message or attachment is required", 400);
+      const transportImages =
+        await this.attachments.prepareTransportImages(images);
+      copied = transportImages.map((image) => image.id);
       const beforeSend = () => {
         assertView();
         if (
@@ -588,19 +561,19 @@ export class RuntimeExternalSessions {
           fullMessage,
           request.behavior,
           beforeSend,
-          images.length ? images : undefined,
+          transportImages.length
+            ? transportImages.map(({ path, mimeType }) => ({ path, mimeType }))
+            : undefined,
           connection.state.leafId,
         );
-        delivered = true;
+        outcome = "accepted";
         if (this.connections.get(slot) === connection) {
           await this.host
             .reconcile(slot, false)
             .catch((error) => this.host.log(slot, error));
         }
       } catch (error) {
-        uncertain = Boolean(
-          (error as { outcomeUnknown?: boolean })?.outcomeUnknown,
-        );
+        if (isPiRpcOutcomeUnknown(error)) outcome = "unknown";
         if (
           this.connections.get(slot) === connection &&
           slot.runState === "queued"
@@ -613,10 +586,12 @@ export class RuntimeExternalSessions {
         connection.sending -= 1;
       }
     } finally {
-      if (uncertain) {
+      if (outcome === "unknown") {
         this.attachments.restageUncertainPrompt(originalIds, copied);
-      } else if (delivered) {
-        await this.attachments.releaseConsumed([...originalIds, ...copied]);
+      } else if (outcome === "accepted") {
+        await this.attachments
+          .releaseConsumed([...originalIds, ...copied])
+          .catch((error) => this.host.log(slot, error));
       } else {
         this.attachments.restage([...originalIds, ...copied]);
         await Promise.allSettled(

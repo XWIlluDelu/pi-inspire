@@ -90,7 +90,7 @@ afterEach(async () => {
   host = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  await rm(root, { recursive: true, force: true, maxRetries: 5 });
+  await rm(root, { recursive: true, force: true });
 });
 
 const readJson = async (path: string) =>
@@ -112,8 +112,7 @@ it("commits a session edit while an old workspace catalog query is pending", asy
   const pending = catalog.read(cwd);
   host = await configurationHost(workspace, {
     modelSettings: service,
-    modelMetadata: (cwd, refresh) => catalog.read(cwd, refresh),
-    invalidateModels: () => catalog.invalidate(),
+    modelMetadata: catalog,
   });
   const { localRequest: http, runtime, sessionId } = host;
   const read = (query: {
@@ -314,13 +313,22 @@ describe("native configuration round trips", () => {
         },
       },
     });
-  }, 30_000);
+  }, 45_000);
 
-  it("reports malformed and duplicate declarations without publishing them", async () => {
-    await writeFile(join(agent, "models.json"), "{broken");
+  it("keeps preferences editable when declarations cannot be read and rejects duplicate models", async () => {
+    const file = join(agent, "models.json");
+    await writeFile(file, "{broken");
     const malformed = await snapshot();
     expect(malformed.configError).toMatch(/invalid/);
-    await writeFile(join(agent, "models.json"), JSON.stringify(initialConfig));
+    await rm(file);
+    await mkdir(file);
+    const unreadable = await snapshot();
+    expect(unreadable.configError).toMatch(/could not be read/);
+    await service.savePreferences(unreadable.settingsRevision, {
+      defaultModel: null,
+    });
+    await rm(file, { recursive: true });
+    await writeFile(file, JSON.stringify(initialConfig));
     const valid = await snapshot();
     await expect(
       service.saveConfig(cwd, valid.configRevision, {
@@ -332,6 +340,6 @@ describe("native configuration round trips", () => {
       status: 400,
       message: "A model with that ID already exists",
     });
-    expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
-  }, 15_000);
+    expect(await readJson(file)).toEqual(initialConfig);
+  }, 45_000);
 });

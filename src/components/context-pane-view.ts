@@ -13,20 +13,23 @@ export type ContextPaneView = Pick<
   | "resourceTabs"
   | "resourceStanding"
   | "workspaceQuery"
-  | "workspaceLoadingDirs"
-  | "workspaceSearchLoading"
   | "cwd"
   | "gitStatus"
   | "gitStatusError"
   | "gitStatusPending"
   | "gitDiff"
-> & { transcriptViewId: string | null; transcriptRevision: number };
+> & {
+  transcriptViewId: string | null;
+  transcriptIncarnation: string | null;
+  transcriptRevision: number;
+};
 
 export function selectContextPaneView(state: AppState): ContextPaneView {
   return {
     transportGeneration: state.transportGeneration,
     sessionId: state.sessionId,
     transcriptViewId: state.view.viewId,
+    transcriptIncarnation: state.view.incarnation,
     transcriptRevision: state.view.revision,
     resourcesOpen: state.resourcesOpen,
     contextMode: state.contextMode,
@@ -34,8 +37,6 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     resourceTabs: state.resourceTabs,
     resourceStanding: state.resourceStanding,
     workspaceQuery: state.workspaceQuery,
-    workspaceLoadingDirs: state.workspaceLoadingDirs,
-    workspaceSearchLoading: state.workspaceSearchLoading,
     cwd: state.cwd,
     gitStatus: state.gitStatus,
     gitStatusError: state.gitStatusError,

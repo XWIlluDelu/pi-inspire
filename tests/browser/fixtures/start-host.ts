@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, join } from "node:path";
 import { executablePathDirectories } from "../../../server/platform-environment.mjs";
 import { prepareWorkbenchEnvironment } from "../../fixtures/workbench-environment.js";
 
-const root = resolve(process.env.INSPIRE_BROWSER_FIXTURE_ROOT!);
-const cwd = resolve(process.env.INSPIRE_BROWSER_FIXTURE_WORKSPACE!);
+const [root, cwd] = process.argv.slice(2);
+if (!root || !cwd)
+  throw new Error("Browser fixture requires home and workspace directories");
 const image = (
   await readFile(
     join(cwd, "tests/browser/fixtures/file-previews/training curve.png"),

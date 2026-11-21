@@ -31,13 +31,11 @@ import { resultChildCalls } from "../shared/tool-activity.js";
 import { userMessageContent } from "../shared/user-message.js";
 import {
   type ComposerHistoryFileNameResolver,
-  type ComposerHistoryMessage,
   projectComposerHistoryPage,
 } from "./composer-history.js";
 import { samePersistedJson } from "./persisted-json.js";
 import {
   buildContextEntries,
-  buildSessionContext,
   CURRENT_SESSION_VERSION,
   migrateSessionEntries,
   sessionEntryToContextMessages,
@@ -55,7 +53,6 @@ import {
 import {
   appendModelSelection,
   type BranchModelSelection,
-  branchModelSelection,
   selectedBranchModel,
 } from "./session-model-selection.js";
 import {
@@ -65,9 +62,12 @@ import {
   branchEntryContent,
   branchEntryText,
   branchMessageSource,
+  branchAncestors,
   projectHistoryPoint,
   projectSessionTree,
   indexSessionEntries,
+  latestSessionRouteLeaf,
+  sessionRouteIndex,
 } from "./session-tree.js";
 
 export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
@@ -93,13 +93,11 @@ interface Candidate {
   previousTailFingerprint: string | null;
   header: SessionHeader | null;
   entries: SessionEntry[];
-  entriesById: Map<string, SessionEntry>;
+  /** Byte offset where the entries scan began. */
+  start: number;
 }
 
-export type InitialMaterializationAttestation =
-  | "partial"
-  | "complete"
-  | "mismatch";
+type InitialMaterializationAttestation = "partial" | "complete" | "mismatch";
 
 export interface ProjectionReconcileResult {
   changed: boolean;
@@ -123,80 +121,15 @@ export interface ProjectionReconcileResult {
   previousTailVerified: boolean;
 }
 
-export type ProjectionReconcileHandler = (
+type ProjectionReconcileHandler = (
   result: ProjectionReconcileResult,
 ) => Promise<void>;
 
-export interface ProjectionEntryTarget {
+interface ProjectionEntryTarget {
   id: string;
   parentId: string | null;
   type: string;
   role?: string;
-}
-
-export interface SessionProjectionView {
-  readonly sessionId: string;
-  readonly path: string;
-  readonly revision: number;
-  readonly fingerprint: string;
-  readonly incarnation: string | null;
-  readonly health: ProjectionHealth;
-  readonly messages: readonly unknown[];
-  readonly model: unknown;
-  selectedModel(virtualModels: readonly ModelOption[]): unknown;
-  readonly thinkingLevel: string;
-  readonly leafId: string | null;
-  /** Whether `other` is an ancestor of `leafId`, `leafId` itself, or one of
-   * its continuations in the saved tree. */
-  onSameLine(leafId: string | null, other: string | null): boolean;
-  continues(leafId: string | null, from: string | null): boolean;
-  /** The most recently saved entry continuing `leafId`, or `leafId`. */
-  latestContinuation(leafId: string | null): string | null;
-  /** Branch ends, most recently saved first. */
-  readonly tailEntryId: string | null;
-  /** Stable only while the projection still addresses the same filesystem object. */
-  readonly sourceIdentity: string | null;
-  /** Exact stat version used to reject any pre-start disk movement. */
-  readonly sourceVersion: string | null;
-  readonly committedBytes: number;
-  readonly uncommittedBytes: number;
-  attestInitialMaterialization(
-    workerEntries: readonly SessionEntry[],
-  ): InitialMaterializationAttestation;
-  suspendReconciliation(): Promise<void>;
-  resumeReconciliation(): void;
-  /** The Host consumes each observation inside the read FIFO, before the next read. */
-  setReconcileHandler(handler: ProjectionReconcileHandler): void;
-  latestPage(
-    overlay?: readonly unknown[],
-    effectiveLeafId?: string | null,
-    viewId?: string,
-    entryTurns?: ReadonlyMap<string, string>,
-  ): TranscriptPage;
-  historyPage<Q extends SessionHistoryQuery>(
-    query: Q,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-    cwd?: string,
-    fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): SessionHistoryPages[Q["kind"]];
-  branchImage(id: string, index: number): { data: Buffer; mimeType: string };
-  editableText(id: string, maxChars: number): string;
-  entry(id: string): ProjectionEntryTarget | null;
-  /** Committed append suffix after an operation's admitted durable tail. */
-  entriesAfter(tailEntryId: string | null): readonly SessionEntry[];
-  persistedEntryMatches(entry: SessionEntry): boolean;
-  userText(id: string, maxChars: number): string;
-  userImages(id: string): Array<{ data: string; mimeType: string }>;
-  viewMessages(effectiveLeafId?: string | null): readonly unknown[];
-  /** Retained USER entries on this branch, independent of model compaction. */
-  composerHistoryMessages(
-    effectiveLeafId?: string | null,
-  ): readonly ComposerHistoryMessage[];
-  reconcile(force?: boolean): Promise<ProjectionReconcileResult>;
-  /** Host startup attestation only: reconcile while ordinary readers are suspended. */
-  reconcileSuspended(force?: boolean): Promise<ProjectionReconcileResult>;
-  close(): Promise<void>;
 }
 
 function fingerprintOfSpan(
@@ -225,99 +158,62 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
   }
 }
 
-/** System prompts/tool declarations remain canonical Pi state, not transcript
- * rows. Keep the SDK's original per-entry index for stable message identities,
- * including summaries returned after a compaction's system checkpoint. */
-function transcriptEntryMessages(entry: SessionEntry) {
-  const source =
-    entry.type === "compaction" &&
-    entry.details &&
-    typeof entry.details === "object" &&
-    "source" in entry.details &&
-    typeof entry.details.source === "string"
-      ? entry.details.source
-      : undefined;
-  return sessionEntryToContextMessages(entry).flatMap((message, index) =>
-    message.role === "system"
-      ? []
-      : [
-          {
-            ...message,
-            __inspireMessageId: `${entry.id}:${index}`,
-            __inspireEntryId: entry.id,
-            ...(source && message.role === "compactionSummary"
-              ? { __inspireCompactionSource: source }
-              : {}),
-          },
-        ],
-  );
-}
-
-function contextMessages(
-  entries: SessionEntry[],
+/** Pi places the latest compaction first, then its kept prefix and the
+ * entire suffix after it. Put the summary back at that boundary for display. */
+function transcriptEntries(
   leafId: string | null,
   byId: Map<string, SessionEntry>,
-): unknown[] {
-  const contextEntries = buildContextEntries(entries, leafId, byId);
-  // Pi prepends the latest summary for model consumption. A transcript must
-  // retain the same selected entries, but show the compaction where it happened.
-  // Persisted append order is authoritative even with skewed/equal timestamps;
-  // membership from Pi excludes discarded context and unrelated branches.
-  let transcriptEntries = contextEntries;
-  if (contextEntries[0]?.type === "compaction") {
-    const included = new Set(contextEntries.map((entry) => entry.id));
-    transcriptEntries = entries.filter((entry) => included.has(entry.id));
+) {
+  const entries = buildContextEntries([], leafId, byId);
+  const summary = entries[0];
+  if (summary?.type === "compaction") {
+    entries.shift();
+    const child = entries.findIndex((entry) => entry.parentId === summary.id);
+    entries.splice(child < 0 ? entries.length : child, 0, summary);
   }
-  return appendContextMessages([], transcriptEntries);
+  return entries;
 }
 
 function appendContextMessages(
-  previous: readonly unknown[],
+  previous: unknown[],
   entries: readonly SessionEntry[],
 ): unknown[] {
-  let turnOrdinal = -1;
-  let turnId: string | null = null;
-  for (let index = previous.length - 1; index >= 0; index -= 1) {
-    const value = previous[index];
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const record = value as Record<string, unknown>;
-    if (
-      Number.isSafeInteger(record.__inspireUserTurnIndex) &&
-      typeof record.__inspireUserTurnId === "string"
-    ) {
-      turnOrdinal = record.__inspireUserTurnIndex as number;
-      turnId = record.__inspireUserTurnId;
-      break;
-    }
-  }
-  const appended = entries.flatMap(transcriptEntryMessages).map((message) => {
-    if (message.role === "user") {
-      turnOrdinal += 1;
-      turnId = message.__inspireMessageId;
-    }
-    return {
-      ...message,
-      ...(turnId !== null
-        ? {
-            __inspireUserTurnId: turnId,
-            __inspireUserTurnIndex: turnOrdinal,
-          }
-        : {}),
-    };
-  });
-  return [...previous, ...appended];
-}
-
-function appendedThinkingLevel(
-  currentThinkingLevel: string,
-  entries: readonly SessionEntry[],
-): string {
-  let thinkingLevel = currentThinkingLevel;
+  const last = jsonRecord(previous.at(-1));
+  let turnOrdinal = Number(last?.__inspireUserTurnIndex ?? -1);
+  let turnId = last?.__inspireUserTurnId;
+  let messages = previous;
   for (const entry of entries) {
-    if (entry.type === "thinking_level_change")
-      thinkingLevel = entry.thinkingLevel;
+    const source =
+      entry.type === "compaction"
+        ? jsonRecord(entry.details)?.source
+        : undefined;
+    // Keep Pi's per-entry indices even when a system checkpoint precedes a summary.
+    for (const [index, message] of sessionEntryToContextMessages(
+      entry,
+    ).entries()) {
+      if (message.role === "system") continue;
+      if (messages === previous) messages = previous.slice();
+      const id = `${entry.id}:${index}`;
+      if (message.role === "user") {
+        turnOrdinal++;
+        turnId = id;
+      }
+      messages.push({
+        ...message,
+        __inspireMessageId: id,
+        __inspireEntryId: entry.id,
+        ...(typeof source === "string" &&
+        source &&
+        message.role === "compactionSummary"
+          ? { __inspireCompactionSource: source }
+          : {}),
+        // Pi messages may carry extension fields; these coordinates belong to the projection.
+        __inspireUserTurnId: turnId,
+        __inspireUserTurnIndex: turnId === undefined ? undefined : turnOrdinal,
+      });
+    }
   }
-  return thinkingLevel;
+  return messages;
 }
 
 function isLinearAppend(
@@ -326,31 +222,19 @@ function isLinearAppend(
 ): boolean {
   let parentId = currentLeafId;
   for (const entry of entries) {
-    if (entry.parentId !== parentId) return false;
+    if (entry.parentId !== parentId || entry.type === "compaction")
+      return false;
     parentId = entry.id;
   }
-  return !entries.some((entry) => entry.type === "compaction");
+  return true;
 }
 
-function changesComposerHistory(entry: SessionEntry): boolean {
-  return (
+function composerInputMessage(entry: SessionEntry) {
+  if (
     entry.type === "message" &&
     (entry.message.role === "user" || entry.message.role === "bashExecution")
-  );
-}
-
-function composerHistoryAnchor(
-  entries: ReadonlyMap<string, SessionEntry>,
-  leafId: string | null,
-): string | null {
-  let id = leafId;
-  while (id !== null) {
-    const entry = entries.get(id);
-    if (!entry) break;
-    if (changesComposerHistory(entry)) return id;
-    id = entry.parentId;
-  }
-  return null;
+  )
+    return entry.message;
 }
 
 interface BoundedTranscriptItem {
@@ -434,9 +318,6 @@ function boundedTranscriptItem(
           : {}),
         ...(typeof sourceRecord.__inspireTurnId === "string"
           ? { __inspireTurnId: sourceRecord.__inspireTurnId }
-          : {}),
-        ...(sourceRecord.__inspireUnconfirmed === true
-          ? { __inspireUnconfirmed: true }
           : {}),
         ...(typeof sourceRecord.__inspireSettled === "boolean"
           ? { __inspireSettled: sourceRecord.__inspireSettled }
@@ -565,7 +446,6 @@ class TranscriptPageBuilder<Page> {
 
   constructor(
     private readonly shell: (boundary: number, messages: unknown[]) => Page,
-    private readonly reservedBytes = 0,
   ) {}
 
   get length(): number {
@@ -582,7 +462,7 @@ class TranscriptPageBuilder<Page> {
       Number(this.messages.length > 0);
     if (
       bytes + Buffer.byteLength(JSON.stringify(this.shell(boundary, []))) >
-      TRANSCRIPT_PAGE_MAX_BYTES - this.reservedBytes
+      TRANSCRIPT_PAGE_MAX_BYTES
     )
       return false;
     this.messages.push(item.value);
@@ -634,7 +514,7 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
   );
 }
 
-function signedCursor(payloadValue: Record<string, unknown>): string {
+function signedCursor(payloadValue: ParsedCursor): string {
   const payload = Buffer.from(JSON.stringify(payloadValue)).toString(
     "base64url",
   );
@@ -656,50 +536,23 @@ interface ParsedCursor {
 }
 
 function parseCursor(cursor: string): ParsedCursor {
-  const [payload, supplied] = cursor.split(".");
-  if (!payload || !supplied)
-    throw requestError("Transcript cursor is invalid", 400);
-  const expected = createHmac("sha256", CURSOR_KEY).update(payload).digest();
-  let actual: Buffer;
-  try {
-    actual = Buffer.from(supplied, "base64url");
-  } catch {
-    throw requestError("Transcript cursor is invalid", 400);
-  }
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw requestError("Transcript cursor is invalid", 400);
-  }
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as Record<string, unknown>;
+  const [payload, supplied, extra] = cursor.split(".");
+  if (payload && supplied && extra === undefined) {
+    const expected = createHmac("sha256", CURSOR_KEY)
+      .update(payload)
+      .digest("base64url");
+    const signature = Buffer.from(supplied);
     if (
-      typeof parsed.sessionId !== "string" ||
-      typeof parsed.incarnation !== "string" ||
-      !Number.isSafeInteger(parsed.sourceGeneration) ||
-      !Number.isSafeInteger(parsed.revision) ||
-      !Number.isSafeInteger(parsed.before) ||
-      Number(parsed.before) < 0 ||
-      (parsed.effectiveLeafId !== null &&
-        typeof parsed.effectiveLeafId !== "string") ||
-      typeof parsed.viewId !== "string" ||
-      !parsed.viewId ||
-      (parsed.kind !== "native-before" && parsed.kind !== "native-after")
-    )
-      throw new Error("invalid");
-    return {
-      kind: parsed.kind,
-      sessionId: parsed.sessionId,
-      incarnation: parsed.incarnation,
-      sourceGeneration: Number(parsed.sourceGeneration),
-      revision: Number(parsed.revision),
-      before: Number(parsed.before),
-      effectiveLeafId: parsed.effectiveLeafId,
-      viewId: parsed.viewId,
-    };
-  } catch {
-    throw requestError("Transcript cursor is invalid", 400);
+      signature.length === expected.length &&
+      timingSafeEqual(signature, Buffer.from(expected))
+    ) {
+      // Only signedCursor can produce a payload for this process-lifetime key.
+      return JSON.parse(
+        Buffer.from(payload, "base64url").toString("utf8"),
+      ) as ParsedCursor;
+    }
   }
+  throw requestError("Transcript cursor is invalid", 400);
 }
 
 function healthError(error: unknown): ProjectionHealth {
@@ -714,7 +567,7 @@ export interface SessionProjectionReadHooks {
 /** Read queries over native entries, independent of any filesystem source. */
 class SessionEntryIndex {
   readonly sessionId: string;
-  readonly path: string;
+  protected currentPath: string;
   protected currentRevision = 0;
   readonly incarnation = randomBytes(18).toString("base64url");
   protected appendFromRevision = 0;
@@ -725,13 +578,12 @@ class SessionEntryIndex {
   };
   protected currentThinkingLevel = "off";
   protected currentLeafId: string | null = null;
-  protected currentEntries: SessionEntry[] = [];
+  protected currentEntries: readonly SessionEntry[] = [];
   protected currentEntriesById = new Map<string, SessionEntry>();
   protected currentHistoryAnchor: string | null = null;
   protected historySourceGeneration = 0;
   private historyCache?: {
     leafId: string | null;
-    revision: number;
     messages: unknown[];
     entries: Map<string, number>;
     turns: number[];
@@ -741,7 +593,11 @@ class SessionEntryIndex {
     private readonly fileNameForPath?: ComposerHistoryFileNameResolver,
   ) {
     this.sessionId = session.id;
-    this.path = resolve(session.path);
+    this.currentPath = resolve(session.path);
+  }
+
+  get path(): string {
+    return this.currentPath;
   }
 
   get revision(): number {
@@ -767,10 +623,48 @@ class SessionEntryIndex {
     return this.currentEntries.at(-1)?.id ?? null;
   }
 
-  protected publishEntries(
-    entries: SessionEntry[],
-    byId: Map<string, SessionEntry>,
+  /** Validate the incoming suffix before touching the index, and publish the
+   * rows and metadata together. Unsealed checkpoints only advance the index. */
+  protected applyEntries(
+    incoming: readonly SessionEntry[],
+    kind: "append" | "rewrite",
+    retainPrefix: boolean,
+    requestedLeaf?: string | null,
+    publishLeaf = true,
+  ): boolean {
+    const prefix = retainPrefix ? this.currentEntriesById : undefined;
+    const added = indexSessionEntries(incoming, prefix);
+    const entries = !retainPrefix
+      ? incoming
+      : incoming.length === 0
+        ? this.currentEntries
+        : this.currentEntries.concat(incoming);
+    const leafId = requestedLeaf === undefined
+      ? (entries.at(-1)?.id ?? null)
+      : requestedLeaf;
+    if (leafId !== null && !added.has(leafId) && !prefix?.has(leafId))
+      throw requestError("The Pi checkpoint refers to an unknown leaf", 409);
+    const byId = prefix ?? added;
+    if (prefix) for (const [id, entry] of added) prefix.set(id, entry);
+    try {
+      const replacesRows = publishLeaf && this.publishEntries(
+        leafId,
+        byId,
+        retainPrefix ? incoming : entries.slice(this.currentEntries.length),
+        kind,
+      );
+      this.currentEntries = entries;
+      this.currentEntriesById = byId;
+      return replacesRows;
+    } catch (error) {
+      if (prefix) for (const id of added.keys()) prefix.delete(id);
+      throw error;
+    }
+  }
+
+  private publishEntries(
     leafId: string | null,
+    byId: Map<string, SessionEntry>,
     suffix: readonly SessionEntry[],
     kind: ProjectionReconcileResult["kind"],
   ): boolean {
@@ -779,9 +673,11 @@ class SessionEntryIndex {
       isLinearAppend(this.currentLeafId, suffix) &&
       (suffix.at(-1)?.id ?? this.currentLeafId) === leafId;
     const previousMessages = this.currentMessages;
-    const messages = linear
-      ? appendContextMessages(previousMessages, suffix)
-      : contextMessages(entries, leafId, byId);
+    const visible = linear ? suffix : transcriptEntries(leafId, byId);
+    const messages = appendContextMessages(
+      linear ? previousMessages : [],
+      visible,
+    );
     const replacesRows =
       kind === "rewrite" ||
       (!linear &&
@@ -791,52 +687,42 @@ class SessionEntryIndex {
               jsonRecord(row)?.__inspireMessageId !==
               jsonRecord(messages[index])?.__inspireMessageId,
           )));
-    if (linear) {
-      this.currentModelSelection = appendModelSelection(
-        this.currentModelSelection,
-        suffix,
-      );
-      this.currentThinkingLevel = appendedThinkingLevel(
-        this.currentThinkingLevel,
-        suffix,
-      );
-      for (const entry of suffix)
-        if (changesComposerHistory(entry)) this.currentHistoryAnchor = entry.id;
-    } else {
-      const thinkingLevel = buildSessionContext(
-        entries,
-        leafId,
-        byId,
-      ).thinkingLevel;
-      this.currentModelSelection = branchModelSelection(byId, leafId);
-      this.currentThinkingLevel = thinkingLevel;
-      this.currentHistoryAnchor = composerHistoryAnchor(byId, leafId);
-    }
-    this.currentEntries = entries;
-    this.currentEntriesById = byId;
+    // Compaction can conceal model and thinking settings earlier on this branch.
+    const branch =
+      !linear && visible.some((entry) => entry.type === "compaction")
+        ? [...branchAncestors(byId, leafId)].reverse()
+        : visible;
+    const modelSelection = appendModelSelection(
+      linear ? this.currentModelSelection : { change: null, fallback: null },
+      branch,
+    );
+    const thinking = branch.findLast(
+      (entry) => entry.type === "thinking_level_change",
+    );
+    const historyAnchor =
+      branch.findLast(composerInputMessage)?.id ??
+      (linear ? this.currentHistoryAnchor : null);
+    this.currentModelSelection = modelSelection;
+    if (thinking) this.currentThinkingLevel = thinking.thinkingLevel;
+    else if (!linear) this.currentThinkingLevel = "off";
+    this.currentHistoryAnchor = historyAnchor;
     this.currentLeafId = leafId;
     this.currentMessages = messages;
+    this.historyCache = undefined;
     this.currentRevision += 1;
     if (replacesRows) this.appendFromRevision = this.currentRevision;
     return replacesRows;
   }
 
+  /** The most recently saved entry continuing this leaf. */
   latestContinuation(leafId: string | null): string | null {
     if (leafId === null) return this.tailEntryId;
     if (leafId === this.tailEntryId || !this.currentEntriesById.has(leafId))
       return leafId;
-    const descendants = new Set([leafId]);
-    let latest = leafId;
-    // Parents precede children in the validated file, so one pass classifies
-    // each entry and the last match is the latest saved continuation.
-    for (const entry of this.currentEntries) {
-      if (entry.parentId === null || !descendants.has(entry.parentId)) continue;
-      descendants.add(entry.id);
-      latest = entry.id;
-    }
-    return latest;
+    return latestSessionRouteLeaf(this.currentEntries, leafId);
   }
 
+  /** Whether either leaf is on the other's saved ancestry. */
   onSameLine(leafId: string | null, other: string | null): boolean {
     return this.continues(leafId, other) || this.continues(other, leafId);
   }
@@ -866,14 +752,13 @@ class SessionEntryIndex {
     };
   }
 
+  /** Committed append suffix after an operation's admitted durable tail. */
   entriesAfter(tailEntryId: string | null): readonly SessionEntry[] {
-    const index =
-      tailEntryId === null
-        ? -1
-        : this.currentEntries.findLastIndex(
-            (entry) => entry.id === tailEntryId,
-          );
-    if (tailEntryId !== null && index < 0)
+    if (tailEntryId === null) return this.currentEntries;
+    const index = this.currentEntries.findLastIndex(
+      (entry) => entry.id === tailEntryId,
+    );
+    if (index < 0)
       throw requestError("Session persistence boundary no longer exists", 409);
     return this.currentEntries.slice(index + 1);
   }
@@ -945,7 +830,12 @@ class SessionEntryIndex {
         : {}),
       ...(pointLeaf !== undefined
         ? {
-            node: projectHistoryPoint(this.currentEntries, entry, pointLeaf),
+            node: projectHistoryPoint(
+              this.currentEntries,
+              entry,
+              this.continues(pointLeaf, entry.id),
+              entry.id === pointLeaf,
+            ),
             totalChars: text.length,
           }
         : {}),
@@ -977,55 +867,96 @@ class SessionEntryIndex {
     ) {
       throw requestError("Effective branch leaf does not exist", 409);
     }
-    return contextMessages(
-      this.currentEntries,
-      effectiveLeafId,
-      this.currentEntriesById,
+    return appendContextMessages(
+      [],
+      transcriptEntries(effectiveLeafId, this.currentEntriesById),
     );
   }
 
-  composerHistoryMessages(
-    effectiveLeafId: string | null = this.currentLeafId,
-  ): readonly ComposerHistoryMessage[] {
+  /** Preserve the displayed image number from the chronological recall list. */
+  historyImage(id: string, part: number, leaf: string | null) {
+    const entry = this.currentEntriesById.get(id);
     if (
-      effectiveLeafId !== null &&
-      !this.currentEntriesById.has(effectiveLeafId)
+      entry?.type !== "message" ||
+      entry.message.role !== "user" ||
+      jsonRecord(entry.message)?.display === false ||
+      !this.continues(leaf, id)
     )
-      throw requestError("Effective branch leaf does not exist", 409);
-    const messages: ComposerHistoryMessage[] = [];
-    let id = effectiveLeafId;
-    while (id !== null) {
-      const entry = this.currentEntriesById.get(id)!;
-      if (
-        entry.type === "message" &&
-        (entry.message.role === "user" ||
-          entry.message.role === "bashExecution")
-      ) {
-        messages.push({
-          ...entry.message,
-          __inspireHistoryEntryId: entry.id,
-        });
-      }
-      id = entry.parentId;
+      return null;
+    const block = Array.isArray(entry.message.content)
+      ? entry.message.content[part]
+      : undefined;
+    if (block?.type !== "image") return null;
+    let messageIndex = this.viewMessages(leaf).length;
+    for (const ancestor of branchAncestors(
+      this.currentEntriesById,
+      entry.parentId,
+    ))
+      if (composerInputMessage(ancestor)) messageIndex++;
+    return { block, messageIndex };
+  }
+
+  /** Retained user entry on this branch, independent of model compaction. */
+  historyUserContent(id: string, leafId: string | null): unknown {
+    const message = this.currentEntriesById.get(id);
+    if (
+      message?.type !== "message" ||
+      message.message.role !== "user" ||
+      !this.continues(leafId, id)
+    )
+      throw requestError("A recalled attachment is no longer available", 409);
+    return message.message.content;
+  }
+
+  private *recentComposerMessages(leaf: string | null) {
+    for (const entry of branchAncestors(this.currentEntriesById, leaf)) {
+      const message = composerInputMessage(entry);
+      if (message) yield { ...message, __inspireHistoryEntryId: entry.id };
     }
-    return messages.reverse();
   }
 
   latestPage(
-    overlay: readonly unknown[] = [],
+    overlay: readonly { message: unknown }[] = [],
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
     entryTurns?: ReadonlyMap<string, string>,
   ): TranscriptPage {
     const persisted = this.viewMessages(effectiveLeafId);
-    const messages = overlay.length ? [...persisted, ...overlay] : persisted;
-    return this.buildPage(
-      messages,
-      persisted.length,
-      effectiveLeafId,
+    const identity = {
+      sessionId: this.sessionId,
+      revision: this.revision,
       viewId,
-      entryTurns,
-    );
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+    };
+    const builder = new TranscriptPageBuilder((start, messages) => ({
+      ...identity,
+      messages,
+      hasOlder: start > 0,
+    }));
+    let start = persisted.length + overlay.length;
+    while (start > 0 && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const saved = index < persisted.length;
+      const message = saved
+        ? persisted[index]
+        : overlay[index - persisted.length]!.message;
+      const raw = jsonRecord(message);
+      const entryId = raw?.__inspireEntryId;
+      const turn =
+        typeof entryId === "string" ? entryTurns?.get(entryId) : undefined;
+      const item = boundedTranscriptItem(
+        turn ? { ...raw, __inspireTurnId: turn } : message,
+        saved ? index : undefined,
+        this.fileNameForPath,
+      );
+      if (!builder.add(index, item)) break;
+      start = index;
+    }
+    if (builder.length === 0 && start > 0) oversizedTranscriptItem();
+    return builder.page(start, true);
   }
 
   private historyCursor(
@@ -1127,7 +1058,12 @@ class SessionEntryIndex {
           incarnation: this.incarnation,
           durableLeafId: this.currentLeafId,
           effectiveLeafId,
-          ...projectSessionTree(this.currentEntries, effectiveLeafId, query),
+          ...projectSessionTree(
+            this.currentEntries,
+            this.currentEntriesById,
+            effectiveLeafId,
+            query,
+          ),
         };
       case "branches":
         return this.branchLeaves(effectiveLeafId);
@@ -1149,21 +1085,19 @@ class SessionEntryIndex {
     }
   }
 
+  branchEntries(leafId: string | null): SessionEntry[] {
+    return [...branchAncestors(this.currentEntriesById, leafId)].reverse();
+  }
+
   private nativeHistory(leafId: string | null) {
-    if (
-      this.historyCache?.leafId === leafId &&
-      this.historyCache.revision === this.revision
-    )
-      return this.historyCache;
-    const path: SessionEntry[] = [];
-    for (let id = leafId; id !== null; ) {
-      const entry = this.currentEntriesById.get(id);
-      if (!entry)
-        throw requestError("The selected branch no longer exists", 409);
-      path.push(entry);
-      id = entry.parentId;
-    }
-    const messages = appendContextMessages([], path.reverse());
+    if (this.historyCache?.leafId === leafId) return this.historyCache;
+    const messages =
+      leafId === this.currentLeafId &&
+      !this.currentMessages.some(
+        (row) => jsonRecord(row)?.role === "compactionSummary",
+      )
+        ? this.currentMessages
+        : appendContextMessages([], this.branchEntries(leafId));
     const entries = new Map<string, number>();
     const turns: number[] = [];
     messages.forEach((message, index) => {
@@ -1174,7 +1108,6 @@ class SessionEntryIndex {
     });
     return (this.historyCache = {
       leafId,
-      revision: this.revision,
       messages,
       entries,
       turns,
@@ -1252,40 +1185,48 @@ class SessionEntryIndex {
   private branchLeaves(
     currentLeafId: string | null,
   ): SessionHistoryPages["branches"] {
-    const entries = this.currentEntries;
-    const parents = new Set(entries.map((entry) => entry.parentId));
-    const ends = entries.filter((entry) => !parents.has(entry.id)).reverse();
+    const routes = sessionRouteIndex(this.currentEntries);
     const excerpt = (leaf: SessionEntry): string => {
-      const seen = new Set<string>();
-      let id: string | null = leaf.id;
-      while (id !== null && !seen.has(id)) {
-        seen.add(id);
-        const entry = this.currentEntriesById.get(id);
-        if (!entry) break;
+      for (const entry of branchAncestors(this.currentEntriesById, leaf.id)) {
         if (entry.type === "message" && entry.message.role === "user") {
           const text = branchEntryText(entry).replace(/\s+/gu, " ").trim();
           return text.length > 80 ? `${text.slice(0, 79)}…` : text;
         }
-        id = entry.parentId;
       }
       return "";
     };
-    return {
-      total: ends.length,
-      leaves: ends.slice(0, 30).map((leaf) => ({
-        id: leaf.id,
-        excerpt: excerpt(leaf),
-        updatedAt: leaf.timestamp,
-        isCurrent: leaf.id === currentLeafId,
-      })),
-    };
+    const leaves: SessionHistoryPages["branches"]["leaves"] = [];
+    for (
+      let i = this.currentEntries.length - 1;
+      i >= 0 && leaves.length < 30;
+      i--
+    ) {
+      const leaf = this.currentEntries[i]!;
+      if (!routes.has(leaf.id))
+        leaves.push({
+          id: leaf.id,
+          excerpt: excerpt(leaf),
+          updatedAt: leaf.timestamp,
+          isCurrent: leaf.id === currentLeafId,
+        });
+    }
+    return { total: this.currentEntries.length - routes.size, leaves };
   }
 
   private composerHistoryVersion(effectiveLeafId: string | null): string {
-    const anchor =
-      effectiveLeafId === this.currentLeafId
-        ? this.currentHistoryAnchor
-        : composerHistoryAnchor(this.currentEntriesById, effectiveLeafId);
+    let anchor = this.currentHistoryAnchor;
+    if (effectiveLeafId !== this.currentLeafId) {
+      anchor = null;
+      for (const entry of branchAncestors(
+        this.currentEntriesById,
+        effectiveLeafId,
+      )) {
+        if (composerInputMessage(entry)) {
+          anchor = entry.id;
+          break;
+        }
+      }
+    }
     // Entry ancestry is immutable during append. A rewrite may reuse IDs with
     // changed content, so it starts a new history epoch even at the same leaf.
     return JSON.stringify([this.historySourceGeneration, anchor]);
@@ -1299,7 +1240,7 @@ class SessionEntryIndex {
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
-      this.composerHistoryMessages(effectiveLeafId),
+      this.recentComposerMessages(effectiveLeafId),
       {
         sessionId: this.sessionId,
         revision: this.revision,
@@ -1313,46 +1254,6 @@ class SessionEntryIndex {
       fileNameForPath,
     );
   }
-
-  private buildPage(
-    source: readonly unknown[],
-    persistedLength: number,
-    effectiveLeafId: string | null,
-    viewId: string,
-    entryTurns?: ReadonlyMap<string, string>,
-  ): TranscriptPage {
-    const identity = {
-      sessionId: this.sessionId,
-      revision: this.revision,
-      viewId,
-      incarnation: this.incarnation,
-      appendFromRevision: this.appendFromRevision,
-      effectiveLeafId,
-      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
-    };
-    const builder = new TranscriptPageBuilder((start, messages) => ({
-      ...identity,
-      messages,
-      hasOlder: start > 0,
-    }));
-    let start = source.length;
-    while (start > 0 && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
-      const index = start - 1;
-      const raw = jsonRecord(source[index]);
-      const entryId = raw?.__inspireEntryId;
-      const turn =
-        typeof entryId === "string" ? entryTurns?.get(entryId) : undefined;
-      const item = boundedTranscriptItem(
-        turn ? { ...raw, __inspireTurnId: turn } : source[index],
-        index < persistedLength ? index : undefined,
-        this.fileNameForPath,
-      );
-      if (!builder.add(index, item)) break;
-      start = index;
-    }
-    if (builder.length === 0 && source.length > 0) oversizedTranscriptItem();
-    return builder.page(start, true);
-  }
 }
 
 export class WorkerEntryIndex extends SessionEntryIndex {
@@ -1362,28 +1263,12 @@ export class WorkerEntryIndex extends SessionEntryIndex {
     publishLeaf = true,
   ): boolean {
     if (entries.length === 0 && leafId === this.currentLeafId) return false;
-    const byId = entries.length
-      ? indexSessionEntries(entries, this.currentEntriesById)
-      : this.currentEntriesById;
-    if (leafId !== null && !byId.has(leafId))
-      throw requestError("The Pi checkpoint refers to an unknown leaf", 409);
-    const all = entries.length
-      ? [...this.currentEntries, ...entries]
-      : this.currentEntries;
-    if (!publishLeaf) {
-      this.currentEntriesById = byId;
-      this.currentEntries = all;
-      return false;
-    }
-    this.publishEntries(all, byId, leafId, entries, "append");
-    return true;
+    this.applyEntries(entries, "append", true, leafId, publishLeaf);
+    return publishLeaf;
   }
 }
 
-export class SessionProjection
-  extends SessionEntryIndex
-  implements SessionProjectionView
-{
+export class SessionProjection extends SessionEntryIndex {
   private currentHealth: ProjectionHealth = { status: "ok" };
   private currentFailureStatus: number | null = null;
   private currentFailureCode: string | undefined;
@@ -1400,8 +1285,7 @@ export class SessionProjection
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private hintReading = false;
   private hintDirty = false;
-  private reconciliationResume: Promise<void> | null = null;
-  private resolveReconciliationResume: (() => void) | null = null;
+  private reconciliationResume: PromiseWithResolvers<void> | null = null;
   private closed = false;
   /** Pi reserves a path for a new session but delays creating the JSONL.
    * Only new-session ownership may enter this state; it remains active across
@@ -1498,6 +1382,7 @@ export class SessionProjection
       ? `${this.currentIdentity.dev}:${this.currentIdentity.ino}`
       : null;
   }
+  /** Exact stat version used to fence movement before worker startup. */
   get sourceVersion(): string | null {
     const value = this.currentIdentity;
     return value ? sessionSourceVersion(value) : null;
@@ -1539,11 +1424,7 @@ export class SessionProjection
     return this.currentUncommittedBytes;
   }
   async suspendReconciliation(): Promise<void> {
-    if (!this.reconciliationResume) {
-      this.reconciliationResume = new Promise<void>((resolveResume) => {
-        this.resolveReconciliationResume = resolveResume;
-      });
-    }
+    this.reconciliationResume ??= Promise.withResolvers<void>();
     if (this.watchTimer) clearTimeout(this.watchTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.watchTimer = null;
@@ -1553,9 +1434,24 @@ export class SessionProjection
     await this.reconcileTail;
   }
 
+  /** The published hard link must address the same complete bytes we indexed in staging. */
+  async adoptPublishedFork(path: string): Promise<void> {
+    const identity = this.sourceIdentity;
+    const fingerprint = this.fingerprint;
+    this.currentPath = resolve(path);
+    await this.reconcileSuspended(true);
+    if (
+      this.health.status !== "ok" ||
+      this.sourceIdentity !== identity ||
+      this.fingerprint !== fingerprint ||
+      this.uncommittedBytes !== 0
+    )
+      throw new Error("Published fork destination failed revalidation");
+    this.resumeReconciliation();
+  }
+
   resumeReconciliation(): void {
-    this.resolveReconciliationResume?.();
-    this.resolveReconciliationResume = null;
+    this.reconciliationResume?.resolve();
     this.reconciliationResume = null;
     if (!this.closed && !this.watcher && !this.pollTimer) this.startWatching();
   }
@@ -1627,10 +1523,11 @@ export class SessionProjection
   }
 
   async reconcile(force = false): Promise<ProjectionReconcileResult> {
-    while (this.reconciliationResume) await this.reconciliationResume;
+    while (this.reconciliationResume) await this.reconciliationResume.promise;
     return this.enqueueReconcile(force, true);
   }
 
+  /** Startup attestation while ordinary readers are suspended. */
   reconcileSuspended(force = false): Promise<ProjectionReconcileResult> {
     // Startup attestation consumes its result itself while ordinary readers wait.
     return this.enqueueReconcile(force, false);
@@ -1740,14 +1637,10 @@ export class SessionProjection
             previousTailVerified)
             ? "append"
             : "rewrite";
-        replacesRows = this.publishEntries(
+        replacesRows = this.applyEntries(
           candidate.entries,
-          candidate.entriesById,
-          candidate.entries.at(-1)?.id ?? null,
-          kind === "append"
-            ? candidate.entries.slice(this.currentEntries.length)
-            : [],
           kind,
+          candidate.start > 0,
         );
         this.currentHeader = candidate.header;
         this.currentFingerprint = candidate.fingerprint;
@@ -1909,11 +1802,6 @@ export class SessionProjection
         >;
         if (header && !prefix) migrateSessionEntries(mutable);
         const suffix = (prefix ? mutable : mutable.slice(1)) as SessionEntry[];
-        const entries = prefix ? [...this.currentEntries, ...suffix] : suffix;
-        const entriesById = indexSessionEntries(
-          suffix,
-          prefix ? this.currentEntriesById : undefined,
-        );
         return {
           identity: document.source,
           fingerprint: header
@@ -1933,8 +1821,8 @@ export class SessionProjection
             scan.end - committed,
           ),
           header,
-          entries,
-          entriesById,
+          entries: suffix,
+          start,
         };
       } finally {
         await document.close();
@@ -1946,8 +1834,7 @@ export class SessionProjection
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.resolveReconciliationResume?.();
-    this.resolveReconciliationResume = null;
+    this.reconciliationResume?.resolve();
     this.reconciliationResume = null;
     if (this.watchTimer) clearTimeout(this.watchTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);

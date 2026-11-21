@@ -1,16 +1,12 @@
-import {
-  ACTIVITY_FOLD_VISIBILITIES,
-  type InspirePreferences,
-  TOOL_VISIBILITY_PREFERENCES,
-  VISIBILITY_PREFERENCES,
-} from "../shared/contracts";
+import type { InspirePreferences } from "../shared/contracts";
 
 function preferenceOptions<const Value extends string>(
   values: readonly Value[],
-  label: (value: Value) => string = (value) =>
-    value === "dynamic" ? "Adaptive" : value[0]!.toUpperCase() + value.slice(1),
 ) {
-  return values.map((value) => ({ value, label: label(value) }));
+  return values.map((value) => ({
+    value,
+    label: value[0]!.toUpperCase() + value.slice(1),
+  }));
 }
 
 export const preferenceChoices = {
@@ -22,7 +18,7 @@ export const preferenceChoices = {
     settingsOnly: true,
     label: "Content text size",
     description: "Applies to messages, input, code and previews.",
-    options: preferenceOptions(["compact", "comfortable", "large"]),
+    options: preferenceOptions(["large", "comfortable", "compact"]),
   },
   readingWidth: {
     settingsOnly: true,
@@ -75,29 +71,6 @@ export const preferenceChoices = {
         actionLabel: "continue previous session",
       },
     ],
-  },
-  thinkingVisibility: {
-    label: "Reasoning detail",
-    paletteLabel: "Reasoning details",
-    description: "How much model thinking to show.",
-    options: preferenceOptions(VISIBILITY_PREFERENCES),
-  },
-  toolVisibility: {
-    label: "Tool activity",
-    description: "Detail shown for each tool call.",
-    options: preferenceOptions(TOOL_VISIBILITY_PREFERENCES),
-  },
-  activityFoldVisibility: {
-    label: "Activity groups",
-    options: preferenceOptions(ACTIVITY_FOLD_VISIBILITIES).map((option) => ({
-      ...option,
-      description: {
-        dynamic: "Opens with live activity and closes when it settles.",
-        expanded: "Opens the first activity page.",
-        compact: "Opens the latest activity page.",
-        collapsed: "Shows the group summary until opened.",
-      }[option.value],
-    })),
   },
 } as const satisfies {
   [Key in keyof InspirePreferences]?: {

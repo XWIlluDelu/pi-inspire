@@ -1,6 +1,5 @@
 import {
   mkdir,
-  mkdtemp,
   realpath,
   rm,
   symlink,
@@ -10,10 +9,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
-import {
-  browserFixtureProjects,
-  browserWorkspace,
-} from "./fixtures/workspace.mjs";
+import { browserWorkspace, createBrowserProject } from "./fixtures/workspace.mjs";
 import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import { imageFile } from "./support/images";
@@ -42,7 +38,7 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 900 });
-  const root = await mkdtemp(join(browserFixtureProjects, "welcome-model-"));
+  const root = await createBrowserProject("model-");
   const cwd = await realpath(root);
   await mkdir(join(cwd, ".pi/extensions"), { recursive: true });
   const extension = pathToFileURL(
@@ -88,7 +84,10 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
   const model = page.getByRole("button", { name: "Model", exact: true });
   const thinking = page.getByLabel("Thinking level", { exact: true });
   await expect(model).toHaveText("project router");
-  await expect(model).toHaveAttribute("title", "Use workspace model defaults");
+  await expect(model).toHaveAttribute(
+    "title",
+    "Use workspace model defaults",
+  );
   await expect(thinking).toContainText("Low");
   const message = firstInput(page);
   const project = page.getByRole("textbox", { name: "Project directory" });
@@ -126,7 +125,8 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
     const started = creation(page);
     await startButton(page).click();
     const response = await started;
-    expect(response.request().postDataJSON()).toEqual({
+    const { receipt: _receipt, ...options } = response.request().postDataJSON();
+    expect(options).toEqual({
       cwd,
       model: { provider: "project-router", id: "auto" },
       thinkingLevel: "high",
@@ -153,13 +153,12 @@ test("New resolves trusted model defaults and sends explicit then inherited nati
       );
     }
   }
-  await page.unrouteAll({ behavior: "wait" });
 });
 
 test("a new mixed draft sends the original canonical project file and image", async ({
   page,
 }) => {
-  const root = await mkdtemp(join(browserFixtureProjects, "welcome-input-"));
+  const root = await createBrowserProject("input-");
   const original = join(root, "original"),
     replacement = join(root, "replacement");
   const link = join(root, "selected");
@@ -209,9 +208,8 @@ test("a new mixed draft sends the original canonical project file and image", as
     (response) => response.url().endsWith("/api/prompt") && response.ok(),
   );
   await startButton(page).click();
-  expect((await started).request().postDataJSON()).toEqual({
-    cwd: await realpath(original),
-  });
+  const { receipt: _receipt, ...options } = (await started).request().postDataJSON();
+  expect(options).toEqual({ cwd: await realpath(original) });
   expect((await prompted).request().postDataJSON()).toMatchObject({
     message: "Review the first image and project file",
     projectFiles: [file],

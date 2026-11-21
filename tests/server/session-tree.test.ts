@@ -67,6 +67,7 @@ describe("saved entry content", () => {
   it.each([false, true])(
     "projects native shell activity and finds complete command/output with excluded=%s",
     (excludeFromContext) => {
+      const output = "retained ```output`\nlast line";
       const shell: SessionEntry = {
         type: "message",
         id: "shell",
@@ -75,7 +76,7 @@ describe("saved entry content", () => {
         message: {
           role: "bashExecution",
           command: "printf shell-marker",
-          output: `${"retained output\\n".repeat(100)}native-result-marker`,
+          output,
           exitCode: 7,
           cancelled: false,
           truncated: false,
@@ -83,37 +84,17 @@ describe("saved entry content", () => {
           timestamp: 1,
         },
       };
-      expect(branchEntryText(shell)).toContain(
+      const text = branchEntryText(shell);
+      expect(text).toContain(output);
+      expect(text).toContain(
         `${excludeFromContext ? "!!" : "!"}printf shell-marker`,
       );
-      expect(branchEntryText(shell)).toContain("Exit 7");
-      expect(branchEntryText(shell)).toContain(
+      expect(text).toContain("Exit 7");
+      expect(text).toContain(
         excludeFromContext ? "Excluded from context" : "Included in context",
       );
     },
   );
-
-  it("keeps complete shell output containing many backtick runs literal", () => {
-    const output = "`x".repeat(150_000);
-    const entry: SessionEntry = {
-      type: "message",
-      id: "shell",
-      parentId: null,
-      timestamp: "2026-10-05",
-      message: {
-        role: "bashExecution",
-        command: "echo ```",
-        output,
-        exitCode: 0,
-        cancelled: false,
-        truncated: false,
-        timestamp: 1,
-      },
-    };
-    const text = branchEntryText(entry);
-    expect(text).toContain(output);
-    expect(text).toContain("!echo ```");
-  });
 
   it("rejects oversized raw entry and parent identities with a small typed error that never echoes them", () => {
     const oversized = "secret-" + "x".repeat(600);

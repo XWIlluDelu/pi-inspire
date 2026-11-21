@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEVELOPMENT_BROWSER_BUILD } from "../shared/browser-build.mjs";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { createInspireServer } from "./app.js";
 import {
@@ -10,7 +9,7 @@ import {
   takeoverCandidate,
 } from "./attach-control.js";
 import { AttachmentStore } from "./attachments.js";
-import { openBrowser } from "./browser-opener.js";
+import { openBrowser } from "./browser-opener.mjs";
 import {
   defaultDiagnosticLogPath,
   nullDiagnosticLogger,
@@ -27,6 +26,7 @@ import { hostRestartBackend } from "./host-restart-backend.js";
 import {
   completeInstanceShutdown,
   consumeStopRequest,
+  hostListener,
   INSTANCE_STATE_VERSION,
   type InstanceState,
   instanceUrl,
@@ -44,7 +44,6 @@ import { McpConfigService } from "./mcp-config.js";
 import { ModelMetadataCatalog } from "./model-metadata.js";
 import { ModelSettingsService } from "./model-settings.js";
 import { resolvePiInstallationIdentity } from "./pi-installation.js";
-import type { PiRpcProcess } from "./pi-rpc.js";
 import {
   DefaultPackageManager,
   getAgentDir,
@@ -54,20 +53,25 @@ import {
 } from "./pi-runtime.js";
 import { PiSessionActivity } from "./pi-session-activity.js";
 import { probePiUpdate } from "./pi-update-checker.js";
+import {
+  installationKey,
+  inspireStateDirectory,
+} from "./platform-paths.mjs";
 import { PreferencesStore } from "./preferences.js";
 import {
   nativeOAuthDescriptors,
   ProviderAuthService,
 } from "./provider-auth.js";
 import { ResourceStore } from "./resources.js";
-import { RuntimeController, type RuntimeWorkerStatus } from "./runtime.js";
+import { RuntimeController } from "./runtime.js";
 import { createHostSessionCatalog } from "./session-catalog.js";
-import {
-  connectExistingTerminalDaemon,
-  launchTerminalDaemon,
-} from "./terminal-daemon-launcher.js";
-import { TerminalConnection } from "./terminal-service.js";
+import { TerminalHistoryStore } from "./terminal-history-store.js";
 import { TerminalSessionManager } from "./terminal-session-manager.js";
+import { ensureTerminalShellIntegration } from "./terminal-shell-integration.js";
+import {
+  readTerminalState,
+  TerminalStateWriter,
+} from "./terminal-state-store.js";
 import {
   defaultToolPresentationConfigPath,
   ToolPresentationConfigStore,
@@ -94,13 +98,7 @@ const packageJson = JSON.parse(
   repository?: string | { url?: string };
 };
 
-const host = process.env.INSPIRE_HOST ?? "127.0.0.1";
-if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
-  throw new Error("Inspire binds to loopback only in the local release");
-}
-const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
-if (!Number.isInteger(port) || port < 1 || port > 65_535)
-  throw new Error("INSPIRE_PORT must be a valid TCP port");
+const { host, port } = hostListener();
 const token = await resolveAccessToken(
   process.env.INSPIRE_TOKEN,
   defaultAccessTokenPath(root, host, port),
@@ -179,34 +177,27 @@ const attachControl: AttachControlRegistry = new AttachControlRegistry(
 const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
   createProcess: (options) => herdr.createProcess(options),
   diagnostics,
-})
-  .setModelMetadataCatalog(modelMetadata)
-  .setExternalSessionConnector(
-    async (sessionId, sessionFile, match, idleOnly) => {
-      const instance = takeoverCandidate(
-        await attachControl.forSession(sessionId, sessionFile, {
-          includeStale: idleOnly,
-        }),
-        match,
-        idleOnly,
-      );
-      return instance
-        ? new AttachControlConnection(attachControl, instance)
-        : null;
-    },
-  )
-  .setExternalSessionTerminator((sessionId, sessionFile) =>
+  modelMetadata,
+  connectExternalSession: async (sessionId, sessionFile, match, idleOnly) => {
+    const instance = takeoverCandidate(
+      await attachControl.forSession(sessionId, sessionFile, {
+        includeStale: idleOnly,
+      }),
+      match,
+      idleOnly,
+    );
+    return instance
+      ? new AttachControlConnection(attachControl, instance)
+      : null;
+  },
+  stopExternalSession: (sessionId, sessionFile) =>
     attachControl.stopSession(sessionId, sessionFile),
-  )
-  .setExternalSessionPresence((sessionId, sessionFile, fresh, isAncestor) =>
+  externalLeaves: (sessionId, sessionFile, fresh, isAncestor) =>
     attachControl.branchLeaves(sessionId, sessionFile, {
       observe: !fresh,
       isAncestor,
     }),
-  )
-  .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
-    herdr.updateWorkerStatus(rpc, status);
-  });
+});
 const sessionActivity = new PiSessionActivity({
   catalog,
   registry: attachControl,
@@ -224,22 +215,51 @@ const toolPresentations = new ToolPresentationConfigStore(
 );
 const resources = new ResourceStore();
 const git = new GitInspectionService();
-const connectTerminal = () =>
-  connectExistingTerminalDaemon({ root, host, port });
-const terminal = new TerminalConnection(
-  connectTerminal,
-  process.env.INSPIRE_TERMINAL_IN_PROCESS === "1"
-    ? new TerminalSessionManager()
-    : await launchTerminalDaemon({ root, host, port }).catch((error) => {
-        diagnostics.record("warning", "terminal_daemon_unavailable", {
-          errorName: error instanceof Error ? error.name : typeof error,
-        });
-        console.error(
-          `Terminal service unavailable: ${error instanceof Error ? error.message : "Terminal service unavailable"}`,
-        );
-        return null;
-      }),
+const terminalStatePath =
+  process.env.INSPIRE_TERMINAL_STATE_PATH ||
+  join(
+    inspireStateDirectory(),
+    "terminals",
+    `${installationKey(root, host, port)}.json`,
+  );
+const reportTerminalError = (error: unknown): void => {
+  console.error(error instanceof Error ? error.message : String(error));
+};
+const terminalHistory = new TerminalHistoryStore(
+  `${terminalStatePath}.history`,
+  reportTerminalError,
 );
+let shellIntegrationDirectory: string | undefined =
+  `${terminalStatePath}.shell`;
+try {
+  await ensureTerminalShellIntegration(shellIntegrationDirectory);
+} catch (error) {
+  shellIntegrationDirectory = undefined;
+  reportTerminalError(error);
+}
+let persistTerminalChanges = true;
+let terminalStateWriter: TerminalStateWriter | null = null;
+const terminal = new TerminalSessionManager({
+  history: terminalHistory,
+  shellIntegrationDirectory,
+  onChange: () => {
+    if (persistTerminalChanges) terminalStateWriter?.schedule();
+  },
+});
+terminalStateWriter = new TerminalStateWriter(
+  terminalStatePath,
+  () => terminal.exportState(),
+  reportTerminalError,
+);
+const previousTerminalState = await readTerminalState(terminalStatePath).catch(
+  (error) => {
+    reportTerminalError(error);
+    return null;
+  },
+);
+if (previousTerminalState) {
+  await terminal.restoreState(previousTerminalState).catch(reportTerminalError);
+}
 const modelRuntime = await ModelRuntime.create({
   refreshOnCreate: false,
 }).catch((error) => {
@@ -279,22 +299,17 @@ const application = createInspireServer({
   piVersion: piInstallation.version,
   getHerdrStatus: () => herdr.status(),
   maintenanceRestart,
-  activeHerdrMode: herdr.enhancedWorkersEnabled,
   hostRestart: new HostRestartController(
     runtime,
     hostRestartBackend(root, {
       enabled: true,
       systemdEnabled: host === "127.0.0.1" && port === 4587,
-      includeHerdr: herdr.enhancedWorkersEnabled,
       restart: () =>
         shutdown("launcher-owned Host restart", HOST_RESTART_EXIT_CODE),
     }),
   ),
   updateCoordinator,
-  bootstrapModels: () => modelMetadata.peek(process.cwd())?.models ?? [],
-  invalidateModels: () => modelMetadata.invalidate(),
-  modelMetadata: (cwd: string, refresh?: boolean) =>
-    modelMetadata.read(cwd, refresh),
+  modelMetadata,
   modelSettings: new ModelSettingsService(),
   mcpConfig: new McpConfigService(),
   providerAuth: modelRuntime
@@ -306,11 +321,6 @@ const application = createInspireServer({
       )
     : undefined,
   distDir,
-  requireBrowserBuild: true,
-  developmentBrowserBuild:
-    process.env.INSPIRE_DEV_HOST === "1"
-      ? DEVELOPMENT_BROWSER_BUILD
-      : undefined,
 });
 
 const statePath = process.env.INSPIRE_STATE_PATH;
@@ -329,6 +339,8 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   console.log(`Shutting down after ${reason}…`);
   diagnostics.record("info", "host_stopping", { reason, requestedExitCode });
   try {
+    persistTerminalChanges = false;
+    await terminalStateWriter?.flush();
     await application.close();
     if (statePublication) await statePublication;
   } catch (error) {
@@ -420,7 +432,7 @@ async function announceStarted(): Promise<void> {
     console.log(`  ${url}\n`);
   }
   if (process.env.INSPIRE_OPEN === "1") {
-    openBrowser(url, (error) => {
+    void openBrowser(url).catch((error: Error) => {
       diagnostics.record("warning", "browser_open_failed", {
         errorName: error.name,
         errorCode: (error as NodeJS.ErrnoException).code,

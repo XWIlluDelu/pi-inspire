@@ -1,23 +1,20 @@
 import type { PendingRecovery } from "../../shared/contracts";
 import type { PendingOperationRequest } from "../../shared/host-operations";
 import { type Api, ApiError, ApiTransportError } from "../api";
-import {
-  deferredReceipt,
-  inputRejection,
-  ReceiptRead,
-} from "../operation-observer";
+import { deferredReceipt, inputRejection, ReceiptRead } from "../operation-observer";
 
 interface Handoff {
   intent: string;
   request: PendingOperationRequest;
   observation: ReceiptRead<Api, boolean>;
+  feedback: boolean;
   confirmed?: PendingRecovery;
   completion: ReturnType<typeof deferredReceipt<boolean>>;
 }
 interface PendingRecoveryHost {
   api(): Api | null;
   authorityId(): string | null;
-  restore(sessionId: string, recovery: PendingRecovery): boolean;
+  restore(sessionId: string, recovery: PendingRecovery, feedback: boolean): boolean;
   handleAuthFailure(): void;
 }
 
@@ -34,6 +31,7 @@ export class PendingRecoveryController {
     sessionId: string,
     action: PendingOperationRequest["action"],
     expectedViewId?: string,
+    feedback = true,
   ): Promise<boolean> {
     const authorityId = this.host.authorityId();
     const api = this.host.api();
@@ -58,8 +56,10 @@ export class PendingRecoveryController {
         operationId: crypto.randomUUID(),
       },
       observation: new ReceiptRead(),
+      feedback,
       completion: deferredReceipt<boolean>(),
     };
+    handoff.feedback ||= feedback;
     this.handoffs.set(intent, handoff);
     this.resume(handoff);
     return this.observe(handoff, api, previous ? "observe" : "start");
@@ -79,16 +79,10 @@ export class PendingRecoveryController {
         try {
           return await api.pendingOperation(request, "start");
         } catch (error) {
-          if (
-            !current() ||
-            inputRejection(error, request) ||
-            !(
-              error instanceof ApiTransportError ||
-              (error instanceof ApiError &&
-                (error.outcomeUnknown || error.status >= 500))
-            )
-          )
-            throw error;
+          if (!current() || inputRejection(error, request) || !(
+            error instanceof ApiTransportError ||
+            (error instanceof ApiError && (error.outcomeUnknown || error.status >= 500))
+          )) throw error;
         }
       }
       return api.pendingOperation(request);
@@ -114,7 +108,9 @@ export class PendingRecoveryController {
         return false;
       this.handoffs.delete(intent);
       try {
-        complete(this.host.restore(sessionId, handoff.confirmed));
+        complete(
+          this.host.restore(sessionId, handoff.confirmed, handoff.feedback),
+        );
       } catch (error) {
         reject(error);
       }

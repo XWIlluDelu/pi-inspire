@@ -223,7 +223,7 @@ export function TranscriptImage({
 }) {
   const loadImage = useCallback(
     (signal: AbortSignal) =>
-      store.loadTranscriptImage(
+      store.resources.loadTranscriptImage(
         sessionId,
         viewId,
         projectionKey,
@@ -253,7 +253,7 @@ export function HistoryImage({
 }) {
   const [attempt, setAttempt] = useState(0);
   const loadImage = useCallback(
-    (signal: AbortSignal) => store.readBranchImage(targetId, index, signal),
+    (signal: AbortSignal) => store.branches.readImage(targetId, index, signal),
     [targetId, index, attempt],
   );
   return (

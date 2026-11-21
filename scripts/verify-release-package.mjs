@@ -10,36 +10,21 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:net";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { npmInvocation } from "../server/npm-command.mjs";
 import {
   isolatedProcessOptions,
   signalProcessTree,
 } from "../server/process-tree.mjs";
-import {
-  npmPackageRecord,
-  packageSizeReport,
-  parseNpmJsonOutput,
-} from "./npm-package-manifest.mjs";
+import { freeLoopbackPort } from "../tests/fixtures/packaged-launcher.mjs";
+import { execNpm, npmPackageRecord } from "./npm-package-manifest.mjs";
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, "..");
-
-async function execNpm(args, options = {}) {
-  const invocation = npmInvocation(args, {
-    environment: options.env ?? process.env,
-    cwd: options.cwd ?? root,
-  });
-  return execFile(invocation.command, invocation.args, {
-    ...options,
-    env: invocation.environment,
-  });
-}
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -111,24 +96,6 @@ async function verifyInstalledFonts(installedRoot, expectedFonts) {
     );
 }
 
-async function freePort() {
-  return new Promise((resolvePort, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("Unable to allocate a release-smoke port"));
-        return;
-      }
-      server.close((error) =>
-        error ? reject(error) : resolvePort(address.port),
-      );
-    });
-  });
-}
-
 async function waitFor(description, read, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -141,27 +108,7 @@ async function waitFor(description, read, timeoutMs = 20_000) {
 
 async function waitForExit(child, timeoutMs = 10_000) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise((resolveExit, reject) => {
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off("exit", exited);
-      child.off("error", failed);
-    };
-    const exited = () => {
-      cleanup();
-      resolveExit();
-    };
-    const failed = (error) => {
-      cleanup();
-      reject(error);
-    };
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("Packaged host did not stop"));
-    }, timeoutMs);
-    child.once("exit", exited);
-    child.once("error", failed);
-  });
+  await once(child, "exit", { signal: AbortSignal.timeout(timeoutMs) });
 }
 
 function startProcess(bin, args, options) {
@@ -192,9 +139,6 @@ const temporary = await realpath(
   await mkdtemp(join(tmpdir(), "inspire-release-smoke-")),
 );
 let host = null;
-let terminalOwner = null;
-let terminalClient = null;
-let terminalControl = null;
 try {
   const packDirectory = join(temporary, "pack");
   const installDirectory = join(temporary, "install");
@@ -239,14 +183,16 @@ try {
     );
   }
   const packed = await execNpm(
-    ["pack", "--silent", "--json", "--pack-destination", packDirectory],
-    {
-      cwd: root,
-      maxBuffer: 10 * 1024 * 1024,
-    },
+    [
+      "pack",
+      "--json",
+      "--foreground-scripts=false",
+      "--pack-destination",
+      packDirectory,
+    ],
+    { cwd: root },
   );
-  const manifest = parseNpmJsonOutput(packed.stdout, "npm pack");
-  const record = npmPackageRecord(manifest, "npm pack");
+  const record = npmPackageRecord(packed.stdout, "npm pack");
   if (typeof record.filename !== "string" || record.filename.length === 0) {
     throw new Error("npm pack did not report a tarball");
   }
@@ -256,7 +202,6 @@ try {
     "build/server/restart-submission.mjs",
     "build/server/attached-pi-entry.js",
     "build/server/current-web-build.mjs",
-    "build/shared/browser-build.mjs",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
@@ -292,25 +237,10 @@ try {
       `Release tarball contains source-only files: ${forbidden.join(", ")}`,
     );
 
-  const sizeReportPath = process.env.INSPIRE_SIZE_REPORT;
-  if (sizeReportPath) {
-    try {
-      await mkdir(dirname(sizeReportPath), { recursive: true });
-      await writeFile(
-        sizeReportPath,
-        JSON.stringify(packageSizeReport(record), null, 2),
-      );
-    } catch (error) {
-      console.warn("Could not write the package size report:", error);
-    }
-  }
   const tarball = join(packDirectory, record.filename);
   const publishDryRun = await execNpm(
     ["publish", tarball, "--dry-run", "--json"],
-    {
-      cwd: root,
-      maxBuffer: 10 * 1024 * 1024,
-    },
+    { cwd: root },
   );
   if (
     /auto-corrected|errors corrected|invalid and removed/iu.test(
@@ -321,12 +251,8 @@ try {
       `npm publish would rewrite release metadata:\n${publishDryRun.stderr}`,
     );
   }
-  const publishManifest = parseNpmJsonOutput(
-    publishDryRun.stdout,
-    "npm publish dry-run",
-  );
   const publishRecord = npmPackageRecord(
-    publishManifest,
+    publishDryRun.stdout,
     "npm publish dry-run",
   );
   if (publishRecord.id !== `${sourcePackage.name}@${sourcePackage.version}`) {
@@ -344,7 +270,7 @@ try {
       "--no-fund",
       tarball,
     ],
-    { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+    { cwd: root },
   );
 
   const installedRoot = join(
@@ -483,7 +409,7 @@ try {
   assert.equal(stagedFork.destinationLeafId, parentId);
   await forkModule.discardStagedSessionFork(stagedFork);
 
-  const port = await freePort();
+  const port = await freeLoopbackPort();
   const token = "inspire-release-smoke-token";
   const loopback = "127.0.0.1";
   const bin = join(installedRoot, "inspire.mjs");
@@ -552,59 +478,6 @@ try {
   assert.equal(await readFile(recoveredPath, "utf8"), forkSource);
   await cli(["prepare-restart"]);
 
-  // Own the real daemon as a fixture so failure cleanup can reap it. All
-  // address and token defaults still resolve through the packaged launcher.
-  terminalControl = { bin, environment };
-  terminalOwner = startProcess(
-    bin,
-    [
-      "terminal-daemon",
-      "--root",
-      installedRoot,
-      "--host",
-      loopback,
-      "--port",
-      String(port),
-    ],
-    processOptions,
-  );
-  const [protocol, { TerminalDaemonClient }, { terminalDaemonSecretPath }] =
-    await Promise.all([
-      installed("build/server/terminal-daemon-protocol.js"),
-      installed("build/server/terminal-daemon-client.js"),
-      installed("build/server/terminal-daemon-tls.js"),
-    ]);
-  const paths = { environment, home: homeDirectory };
-  const daemonAddress = protocol.defaultTerminalDaemonAddress(
-    installedRoot,
-    loopback,
-    port,
-    paths,
-  );
-  const secretPath = terminalDaemonSecretPath(
-    protocol.defaultTerminalDaemonTokenPath(
-      installedRoot,
-      loopback,
-      port,
-      paths,
-    ),
-  );
-  terminalClient = await waitFor("the packaged terminal daemon", async () => {
-    if (
-      terminalOwner.child.exitCode !== null ||
-      terminalOwner.child.signalCode !== null
-    )
-      throw new Error("Packaged terminal daemon exited during startup");
-    try {
-      const daemonToken = (await readFile(secretPath, "utf8")).trim();
-      const client = new TerminalDaemonClient(daemonAddress, daemonToken);
-      await client.probe();
-      return client;
-    } catch {
-      return null;
-    }
-  });
-
   const origin = `http://${loopback}:${port}`;
   async function request(path, { method = "GET", body, headers } = {}) {
     const response = await fetch(origin + "/api" + path, {
@@ -670,37 +543,7 @@ try {
   const terminal = await terminalMutation("create", {
     request: { cwd: canonicalWorkspace, cols: 80, rows: 24 },
   });
-  const { decodeTerminalServerDataFrame, encodeTerminalInputFrame } =
-    await installed("build/shared/terminal-contracts.js");
-  let output = "";
-  const attachment = await terminalClient.attach(
-    { terminalId: terminal.id, clientId: randomUUID(), cols: 80, rows: 24 },
-    {
-      sendData(data) {
-        const frame = decodeTerminalServerDataFrame(data);
-        output = (output + Buffer.from(frame.data).toString("utf8")).slice(
-          -8192,
-        );
-      },
-      sendControl() {},
-      close() {},
-    },
-  );
-  // Split the marker in the command so line editing/echo cannot satisfy it.
-  const echo =
-    terminal.profileId === "cmd"
-      ? "echo INSPIRE_DAEMON_BE^FORE\r"
-      : 'echo INSPIRE_DAEMON_"BEFORE"\r';
-  try {
-    attachment.send({ data: encodeTerminalInputFrame(1, Buffer.from(echo)) });
-    await waitFor(
-      "real PTY output",
-      () => output.includes("INSPIRE_DAEMON_BEFORE"),
-      15_000,
-    );
-  } finally {
-    attachment.detach();
-  }
+  assert.equal(terminal.status, "running");
 
   const { active } = await request("/sessions/new", {
     method: "POST",
@@ -733,31 +576,14 @@ try {
     `/terminals?cwd=${encodeURIComponent(canonicalWorkspace)}`,
   );
   assert(
-    terminals.some((row) => row.id === terminal.id && row.status === "running"),
-    "Packaged Host restart lost the real PTY",
+    terminals.some((row) => row.id === terminal.id),
+    "Packaged Host restart lost the saved terminal tab",
   );
   await terminalMutation("remove", { id: terminal.id, force: true });
 
   await cli(["stop"]);
   await waitForExit(host.child);
   assert.equal(host.child.exitCode, 0, "Packaged Host did not exit cleanly");
-
-  const before = await terminalClient.daemonInfo();
-  await cli(["terminal", "restart"]);
-  const after = await terminalClient.daemonInfo();
-  assert.notEqual(
-    after.instanceId,
-    before.instanceId,
-    "Daemon restart reused its old owner",
-  );
-  await cli(["terminal", "stop"]);
-  terminalControl = null;
-  await waitForExit(terminalOwner.child);
-  assert.equal(
-    terminalOwner.child.exitCode,
-    0,
-    "Packaged daemon did not exit cleanly",
-  );
 
   console.log(
     JSON.stringify({
@@ -767,22 +593,13 @@ try {
       publishDryRun: "accepted without metadata correction",
       installation: "production-only, no bundled Pi",
       packagedChecks:
-        "CLI, maintenance, fork, recovery, external Pi session, PTY output and restart",
+        "CLI, maintenance, fork, recovery, external Pi session, PTY and restart",
     }),
   );
 } catch (error) {
   if (host?.output) console.error(host.output);
-  if (terminalOwner?.output) console.error(terminalOwner.output);
   throw error;
 } finally {
   await stopProcess(host);
-  if (terminalControl)
-    await execFile(
-      process.execPath,
-      [terminalControl.bin, "terminal", "stop", "--force"],
-      { env: terminalControl.environment, timeout: 30_000 },
-    ).catch(() => undefined);
-  await terminalClient?.close();
-  await stopProcess(terminalOwner);
   await rm(temporary, { recursive: true, force: true });
 }

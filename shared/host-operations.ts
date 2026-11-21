@@ -3,7 +3,11 @@ import {
   COMPOSER_HISTORY_FILE_REFERENCE,
   COMPOSER_HISTORY_IMAGE_REFERENCE,
 } from "./composer-artifact-references.js";
-import type { PendingRecovery, UploadedAttachment } from "./contracts.js";
+import type {
+  ActiveSnapshot,
+  PendingRecovery,
+  UploadedAttachment,
+} from "./contracts.js";
 import {
   MAX_ATTACHMENTS,
   MAX_PROJECT_FILES,
@@ -116,6 +120,7 @@ export interface HostOperationError {
 }
 
 export type HostOperationResults = {
+  create: ActiveSnapshot;
   prompt: null;
   recover: PendingRecovery;
   abort: PendingRecovery;
@@ -179,9 +184,7 @@ export function matchOperationReceipt(
       typeof error.message === "string" &&
       typeof error.status === "number" &&
       (httpStatus === undefined ||
-        (httpStatus >= 400 &&
-          httpStatus === error.status &&
-          error.message.length > 0))
+        (httpStatus >= 400 && httpStatus === error.status && error.message.length > 0))
     )
       return value as MatchedReceipt;
   }

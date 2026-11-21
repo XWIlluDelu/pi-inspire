@@ -8,7 +8,7 @@ import {
 } from "../../server/composer-history.js";
 import { ResourceStore } from "../../server/resources.js";
 import { resolveComposerHistoryArtifacts } from "../../server/runtime-composer-artifacts.js";
-import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import { RuntimeSlot } from "../../server/runtime-slot.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import {
   composerArtifactReference,
@@ -50,19 +50,19 @@ const image = (mimeType: string) => ({
 it("retains newest-first user prompts and drops only consecutive duplicate entries", () => {
   expect(
     composerHistoryEntries([
-      user("one-first", "  one  "),
+      user("one-again", "one"),
+      user("blank", "   "),
+      user("two-repeat", "two parts"),
+      user("two-first", [
+        { type: "text", text: "two" },
+        { type: "text", text: " parts" },
+      ]),
       {
         __inspireHistoryEntryId: "answer",
         role: "assistant",
         content: "not a prompt",
       },
-      user("two-first", [
-        { type: "text", text: "two" },
-        { type: "text", text: " parts" },
-      ]),
-      user("two-repeat", "two parts"),
-      user("blank", "   "),
-      user("one-again", "one"),
+      user("one-first", "  one  "),
     ]),
   ).toEqual(
     ["one", "two parts", "one"].map((text) => ({
@@ -74,17 +74,12 @@ it("retains newest-first user prompts and drops only consecutive duplicate entri
 });
 
 it("skips projection of artifacts outside the retained prompt limit", () => {
-  const obsolete = {
-    ...user("obsolete", ""),
-    get content(): string {
-      throw new Error("Obsolete artifacts should not be projected");
-    },
-  };
-  const recent = Array.from(
-    { length: MAX_COMPOSER_HISTORY_ENTRIES + 1 },
-    (_, index) => user(String(index), `recent-${index}`),
-  );
-  const history = composerHistoryEntries([obsolete, ...recent]);
+  function* recent() {
+    for (let index = MAX_COMPOSER_HISTORY_ENTRIES; index >= 0; index--)
+      yield user(String(index), `recent-${index}`);
+    throw new Error("Obsolete prompts should not be visited");
+  }
+  const history = composerHistoryEntries(recent());
   expect(history).toHaveLength(MAX_COMPOSER_HISTORY_ENTRIES);
   expect(history[0]?.text).toBe(`recent-${MAX_COMPOSER_HISTORY_ENTRIES}`);
   expect(history.at(-1)?.text).toBe("recent-1");
@@ -100,9 +95,9 @@ it("recalls mixed and image-only prompts with original artifact coordinates and 
     image("image/png"),
   ]);
   const history = composerHistoryEntries([
-    mixed,
-    user("image-first", [image("image/webp")]),
     user("image-repeat", [image("image/webp")]),
+    user("image-first", [image("image/webp")]),
+    mixed,
   ]);
   expect(history).toHaveLength(2);
   expect(history[0]).toMatchObject({
@@ -163,7 +158,7 @@ it("recalls file-only prompts by readable Host names and keeps equal text with d
           [],
         ),
       ),
-    ],
+    ].reverse(),
     workspace,
     (path) => (path === stored ? "report.pdf" : null),
   );
@@ -213,6 +208,7 @@ it("pages exact entries under one history identity and the serialized byte bound
     (_, index) => `${index}:${"\0".repeat(10_000)}`,
   );
   const messages = texts.map((text, index) => user(String(index), text));
+  messages.reverse();
   let page = projectComposerHistoryPage(messages, owner);
   const historyId = page.historyId;
   expect(page.nextStart).not.toBeNull();
@@ -244,6 +240,7 @@ it("accepts canonical history coordinates and rejects a different resource names
     "pi-history-image://%zz/0",
     "pi-history-image://%75ser/0",
     "pi-history-image://user/-1",
+    "pi-history-image://user/01",
     "pi-history-image://user/9007199254740992",
   ]) {
     expect(parseComposerArtifactReference("image", invalid)).toBeNull();
@@ -296,17 +293,13 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
   const record = { ...sessionRecord(id, cwd), path };
   let projection = await SessionProjection.open(record);
   const resources = new ResourceStore();
-  const slot = {
-    id,
-    cwd,
-    viewId: "view-original",
-    workerView: null,
-    projection,
-  } as unknown as RuntimeSlot;
+  const slot = new RuntimeSlot(id, cwd);
+  slot.projection = projection;
+  slot.viewId = "view-original";
   const page = () =>
     projection.historyPage(
       { kind: "composer", start: 0 },
-      slot.viewLeafId ?? projection.leafId,
+      slot.effectiveLeaf,
       slot.viewId,
       cwd,
     );
@@ -316,7 +309,7 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
     historyArtifacts: {
       viewId: slot.viewId,
       incarnation: projection.incarnation,
-      effectiveLeafId: slot.viewLeafId ?? projection.leafId,
+      effectiveLeafId: slot.effectiveLeaf,
       imageReferences: entry.images.map((image) => image.reference),
       fileReferences: entry.files.map((file) => file.reference),
     },
@@ -386,10 +379,9 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
       viewId: slot.viewId,
       revision: projection.revision,
       cwd,
-      messages: [
-        ...projection.viewMessages(),
-        ...projection.composerHistoryMessages(),
-      ],
+      loadMessages: async () => projection.viewMessages(),
+      loadHistoryImage: async (entry: string, part: number) =>
+        projection.historyImage(entry, part, projection.leafId),
     };
     for (const [reference, expected] of [
       [recalled.images[0]!.reference, "original image"],
@@ -422,6 +414,11 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
     ]);
     await expect(restage(request(page().entries[1]!))).resolves.toMatchObject({
       projectFiles: [projectFile],
+    });
+    slot.viewLeafId = null;
+    expect(page().entries).toEqual([]);
+    await expect(restage(request(recalled))).rejects.toMatchObject({
+      status: 409,
     });
   } finally {
     await projection.close();

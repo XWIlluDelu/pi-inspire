@@ -10,12 +10,11 @@ import type {
   StageSessionForkRequest,
 } from "./session-fork.js";
 import { SessionDocumentReader } from "./session-jsonl.js";
-import { indexSessionEntries } from "./session-tree.js";
 
-export interface ForkWorkerInput extends StageSessionForkRequest {
+export type ForkWorkerInput = StageSessionForkRequest & {
   stagingDir: string;
   sdkEntryPath: string;
-}
+};
 
 export type ForkWorkerReply =
   | Omit<StagedSessionFork, "destinationPath">
@@ -67,22 +66,38 @@ async function copy(request: ForkWorkerInput): Promise<ForkWorkerReply> {
     )
       throw changed();
     migrateSessionEntries(entries);
-    indexSessionEntries(entries.slice(1) as SessionEntry[]);
-    const source = SessionManager.inMemory(scan.header.cwd, undefined, entries);
-    const target =
-      request.targetId === null ? null : source.getEntry(request.targetId);
-    if (
-      (request.targetId !== null &&
-        (!target || target.parentId !== request.targetParentId)) ||
-      (request.mode !== "clone" &&
-        (target?.type !== "message" || target.message.role !== "user"))
-    )
-      throw requestError("The selected fork point is no longer available", 409);
-    const endpoint =
-      request.mode === "clone" ? request.targetId : request.targetParentId;
-    const destination =
-      endpoint === null ? SessionManager.inMemory(source.getCwd()) : source;
-    if (endpoint !== null) destination.createBranchedSession(endpoint);
+    let destination: ReturnType<typeof SessionManager.inMemory>;
+    if (request.mode === "recover") {
+      // Seed Pi with the full attested tree and let it create the new header.
+      destination = SessionManager.inMemory(
+        request.destinationCwd,
+        undefined,
+        entries.slice(1) as SessionEntry[],
+      );
+    } else {
+      const source = SessionManager.inMemory(
+        scan.header.cwd,
+        undefined,
+        entries,
+      );
+      const target =
+        request.targetId === null ? null : source.getEntry(request.targetId);
+      if (
+        (request.targetId !== null &&
+          (!target || target.parentId !== request.targetParentId)) ||
+        (request.mode !== "clone" &&
+          (target?.type !== "message" || target.message.role !== "user"))
+      )
+        throw requestError(
+          "The selected fork point is no longer available",
+          409,
+        );
+      const endpoint =
+        request.mode === "clone" ? request.targetId : request.targetParentId;
+      destination =
+        endpoint === null ? SessionManager.inMemory(source.getCwd()) : source;
+      if (endpoint !== null) destination.createBranchedSession(endpoint);
+    }
     const header = destination.getHeader();
     if (!header) throw new Error("Pi did not supply a branch header");
     const stagedPath = join(
@@ -91,12 +106,13 @@ async function copy(request: ForkWorkerInput): Promise<ForkWorkerReply> {
     );
     const output = await open(stagedPath, "wx", 0o600);
     try {
-      const lines = [
-        JSON.stringify({ ...header, parentSession: request.sourcePath }) + "\n",
-      ];
-      for (const entry of destination.getEntries())
-        lines.push(JSON.stringify(entry) + "\n");
-      await output.writeFile(lines);
+      function* lines() {
+        yield JSON.stringify({ ...header, parentSession: request.sourcePath }) +
+          "\n";
+        for (const entry of destination.getEntries())
+          yield JSON.stringify(entry) + "\n";
+      }
+      await output.writeFile(lines());
     } finally {
       await output.close();
     }
@@ -105,8 +121,6 @@ async function copy(request: ForkWorkerInput): Promise<ForkWorkerReply> {
       stagedPath,
       stagingDir: request.stagingDir,
       destinationId: header.id,
-      cwd: destination.getCwd(),
-      parentSessionPath: request.sourcePath,
       sessionName: destination.getSessionName(),
       destinationLeafId: destination.getLeafId(),
     };

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   copyFile,
   mkdir,
@@ -14,7 +14,9 @@ import { promisify } from "node:util";
 import { brotliCompress, constants, gzip } from "node:zlib";
 import {
   CURRENT_WEB_ASSETS_MANIFEST,
+  currentWebBuild,
   isCompressibleStaticAsset,
+  WEB_ASSET_GENERATIONS,
 } from "../server/current-web-build.mjs";
 
 const brotli = promisify(brotliCompress);
@@ -56,15 +58,21 @@ async function regularFiles(root, relativePath = "") {
     if (entry.isDirectory()) files.push(...(await regularFiles(root, child)));
     else if (entry.isFile()) files.push(child);
   }
-  return files.sort();
+  return files;
 }
 
-function digest(content) {
-  return createHash("sha256").update(content).digest("hex");
+async function publishAtomically(destination, write) {
+  await mkdir(dirname(destination), { recursive: true });
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await write(temporary);
+    await rename(temporary, destination);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function publishFile(source, destination, skipMatchingContent = false) {
-  await mkdir(dirname(destination), { recursive: true });
   if (skipMatchingContent) {
     const [sourceInfo, destinationInfo] = await Promise.all([
       stat(source),
@@ -78,29 +86,25 @@ async function publishFile(source, destination, skipMatchingContent = false) {
       if (sourceContent.equals(destinationContent)) return;
     }
   }
-  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await copyFile(source, temporary);
-    await rename(temporary, destination);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
+  await publishAtomically(destination, (temporary) =>
+    copyFile(source, temporary),
+  );
 }
 
-async function publishManifest(path, value) {
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(value)}\n`);
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
-}
-
-/** Publish all current assets before switching the index, then clean old files. */
-export async function publishWebBuild(stagingDirectory, distDirectory) {
+/** Publish assets before switching the index and keep recent lazy chunks available. */
+export async function publishWebBuild(
+  stagingDirectory,
+  distDirectory,
+  { retainPrevious = true } = {},
+) {
   const stagingRoot = join(stagingDirectory, "assets");
-  const stagedAssets = await regularFiles(stagingRoot);
+  const assetPrefix = `assets${sep}`;
+  const stagedFiles = await regularFiles(stagingDirectory);
+  const stagedAssets = stagedFiles
+    .filter((path) => path.startsWith(assetPrefix))
+    .map((path) => path.slice(assetPrefix.length));
+  if (!stagedAssets.length || !stagedFiles.includes("index.html"))
+    throw new Error("The client build must produce an index and assets");
   const encodedAssets = await precompressAssets(stagingRoot, stagedAssets);
   const stagingAssets = [
     ...new Set([...stagedAssets, ...encodedAssets]),
@@ -114,14 +118,11 @@ export async function publishWebBuild(stagingDirectory, distDirectory) {
     );
   }
 
-  const stagedFiles = await regularFiles(stagingDirectory);
   for (const relativePath of stagedFiles) {
     if (
       relativePath === "index.html" ||
       relativePath === CURRENT_WEB_ASSETS_MANIFEST ||
-      relativePath.startsWith(
-        `assets${process.platform === "win32" ? "\\" : "/"}`,
-      )
+      relativePath.startsWith(assetPrefix)
     )
       continue;
     await publishFile(
@@ -130,25 +131,28 @@ export async function publishWebBuild(stagingDirectory, distDirectory) {
     );
   }
 
-  const stagedIndex = await readFile(join(stagingDirectory, "index.html"));
+  const assets = stagingAssets.map((path) => path.split(sep).join("/"));
+  const generations = [assets];
+  if (retainPrevious) {
+    const manifest = await currentWebBuild(distDirectory)();
+    for (const previous of manifest?.generations ?? []) {
+      if (previous.length === assets.length &&
+          previous.every((path, index) => path === assets[index])) continue;
+      generations.push(previous);
+      if (generations.length === WEB_ASSET_GENERATIONS) break;
+    }
+  }
+  await publishAtomically(
+    join(distDirectory, CURRENT_WEB_ASSETS_MANIFEST),
+    (temporary) => writeFile(temporary, `${JSON.stringify({ version: 3, generations })}\n`),
+  );
   await publishFile(
     join(stagingDirectory, "index.html"),
     join(distDirectory, "index.html"),
   );
-  const indexDigest = digest(stagedIndex);
-  await publishManifest(join(distDirectory, CURRENT_WEB_ASSETS_MANIFEST), {
-    version: 2,
-    indexDigest,
-    buildId:
-      stagedIndex
-        .toString("utf8")
-        .match(/src="\/assets\/(index-[^"/]+\.js)"/u)?.[1] ?? indexDigest,
-    assets: stagingAssets.map((path) => path.split(sep).join("/")),
-  });
-
   const current = new Set([
     ...stagedFiles,
-    ...stagingAssets.map((path) => join("assets", path)),
+    ...generations.flat().map((path) => join("assets", path)),
     CURRENT_WEB_ASSETS_MANIFEST,
   ]);
   let cleanupFailures = 0;
@@ -157,7 +161,7 @@ export async function publishWebBuild(stagingDirectory, distDirectory) {
     try {
       await rm(join(distDirectory, relativePath), { force: true });
     } catch {
-      // The current manifest excludes old files even when Windows still has one open.
+      // Files still open on Windows remain outside the published manifest.
       cleanupFailures += 1;
     }
   }

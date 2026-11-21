@@ -17,9 +17,6 @@ async function openReview(page: Page, adapter?: boolean) {
     {
       theme: "light",
       palette: "chimonanthus",
-      toolVisibility: "hidden",
-      thinkingVisibility: "hidden",
-      activityFoldVisibility: "collapsed",
     },
     adapter
       ? [{ id: "review", name: "Review renderer", enabled: true }]

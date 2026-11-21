@@ -110,21 +110,16 @@ test.describe("phone session actions", () => {
       });
       await page.reload();
       await openSettings(page);
-      await page
-        .getByRole("button", { name: "Conversation", exact: true })
-        .tap();
-      const reasoning = page.getByRole("combobox", {
-        name: "Reasoning detail",
-      });
-      await reasoning.tap();
-      const choices = page.getByRole("listbox", { name: "Reasoning detail" });
+      await page.getByRole("button", { name: "Behavior", exact: true }).tap();
+      const launch = page.getByRole("combobox", { name: "On launch" });
+      await launch.tap();
+      const choices = page.getByRole("listbox", { name: "On launch" });
       const current = choices.getByRole("option", { selected: true });
       const row = (await current.boundingBox())!;
       const popup = (await choices.boundingBox())!;
       expect(row.width).toBeCloseTo(popup.width, 0);
       await current.tap({ position: { x: row.width - 8, y: row.height / 2 } });
       await expect(choices).toBeHidden();
-      await page.getByRole("button", { name: "Behavior", exact: true }).tap();
       const copyGrip = page.getByRole("button", {
         name: "Reorder Copy session ID",
       });
@@ -170,7 +165,7 @@ test.describe("phone session actions", () => {
       await touch.detach();
       await expect
         .poll(savedOrder)
-        .toEqual(["rename", "copy-id", "clone", "export", "switch-branch"]);
+        .toEqual(["rename", "copy-id", "clone", "export", "switch-branch", "tool-loadout"]);
 
       await page.reload();
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -184,6 +179,7 @@ test.describe("phone session actions", () => {
         "Clone current branch",
         "Export session…",
         "Switch branch…",
+        "Tool Loadout…",
       ]);
       await menu.getByRole("menuitem", { name: "Copy session ID" }).tap();
       await expect(
@@ -193,6 +189,8 @@ test.describe("phone session actions", () => {
         sessionId,
       );
       await page.keyboard.press("End");
+      await expect(menu.getByRole("menuitem", { name: "Tool Loadout…" })).toBeFocused();
+      await page.keyboard.press("ArrowUp");
       await expect(
         menu.getByRole("menuitem", { name: "Switch branch…" }),
       ).toBeFocused();

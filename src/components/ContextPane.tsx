@@ -8,9 +8,9 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fencedMarkdown } from "../../shared/markdown-fence";
 import { resourceReferenceLabel } from "../../shared/resource-references";
+import { showsGitDetails } from "../controllers/git-controller";
 import { gitChangeCount } from "../git-presentation";
 import { appendDraftBlock } from "../reader-quote";
-import { inspectedFileTab } from "../resource-preview";
 import { type ResourceRow, resourceRows } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
@@ -26,6 +26,11 @@ import { PiLoader } from "./PiLoader";
 import { WorkspaceDock } from "./WorkspaceDock";
 
 const NO_RECENT_FILES: ResourceRow[] = [];
+const CONTEXT_MODES = [
+  { mode: "files", label: "Files", Icon: Folder },
+  { mode: "changes", label: "Changes", Icon: GitCompareArrows },
+  { mode: "history", label: "History", Icon: History },
+] as const;
 
 export const ContextPane = memo(function ContextPane({
   isModal = false,
@@ -60,10 +65,7 @@ export const ContextPane = memo(function ContextPane({
     error?: string;
   } | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
-  const historyReading = useMemo(
-    () => store.historyReadingState(),
-    [sessionId, cwd],
-  );
+  const historyReading = useMemo(() => store.historyReadingState(), [sessionId, cwd]);
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
   const changesScrollTop = useMemo(() => ({ current: 0 }), [sessionId, cwd]);
@@ -97,10 +99,11 @@ export const ContextPane = memo(function ContextPane({
     resourcePage.owner.transcriptViewId === transcriptViewId
       ? resourcePage.rows
       : NO_RECENT_FILES;
-  const browsingFiles =
+  const showingRecentFiles =
     state.resourcesOpen &&
     state.contextMode === "files" &&
-    fileInspection.kind === "browse";
+    fileInspection.kind === "browse" &&
+    !state.workspaceQuery.trim();
   const currentResourcePage = resourcePage?.owner === resourceOwner;
   const loadResources = useCallback(async () => {
     resourceRequest.current?.abort();
@@ -108,7 +111,9 @@ export const ContextPane = memo(function ContextPane({
     resourceRequest.current = request;
     setResourceRead({ owner: resourceOwner });
     try {
-      const response = await store.loadSessionResources(request.signal);
+      const response = await store.resources.loadSessionResources(
+        request.signal,
+      );
       if (request.signal.aborted) return;
       if (response)
         setResourcePage({
@@ -131,11 +136,16 @@ export const ContextPane = memo(function ContextPane({
   }, [resourceOwner]);
 
   useEffect(() => {
-    if (browsingFiles && sessionId && transcriptViewId && !currentResourcePage)
+    if (
+      showingRecentFiles &&
+      sessionId &&
+      transcriptViewId &&
+      !currentResourcePage
+    )
       void loadResources();
     return () => resourceRequest.current?.abort();
   }, [
-    browsingFiles,
+    showingRecentFiles,
     currentResourcePage,
     loadResources,
     sessionId,
@@ -145,23 +155,19 @@ export const ContextPane = memo(function ContextPane({
   useEffect(() => {
     // Keep the last rows visible while the new list is loading. Only probe
     // the references confirmed for the current transcript and transport.
-    if (!browsingFiles || !currentResourcePage) return;
-    void store.probeResources(
+    if (!showingRecentFiles || !currentResourcePage) return;
+    const request = new AbortController();
+    void store.resources.probeResources(
       recentRows.map((row) => row.reference ?? row.label),
+      request.signal,
     );
-  }, [browsingFiles, currentResourcePage, recentRows]);
+    return () => request.abort();
+  }, [showingRecentFiles, currentResourcePage, recentRows]);
 
-  useEffect(() => () => store.cancelResourceProbes(), []);
-
-  const gitDetailView =
-    state.resourcesOpen &&
-    (state.contextMode === "changes" ||
-      (state.contextMode === "files" &&
-        (fileInspection.kind === "browse" ||
-          inspectedFileTab(state)?.view === "changes")));
+  const gitDetailView = showsGitDetails(state);
   useEffect(() => {
-    store.setGitSurfaceVisible("resources-pane", gitDetailView);
-    return () => store.setGitSurfaceVisible("resources-pane", false);
+    store.git.setSurfaceVisible("resources-pane", gitDetailView);
+    return () => store.git.setSurfaceVisible("resources-pane", false);
   }, [gitDetailView]);
 
   const handleTerminalOpenFile = useCallback((reference: string) => {
@@ -203,7 +209,7 @@ export const ContextPane = memo(function ContextPane({
   );
 
   const handleTerminalCommandComplete = useCallback(
-    () => void store.refreshGitStatus(),
+    () => void store.git.refreshStatus(),
     [],
   );
 
@@ -235,15 +241,17 @@ export const ContextPane = memo(function ContextPane({
     setManualRefresh(request);
     try {
       if (state.contextMode === "files") {
-        store.cancelResourceProbes();
+        if (showingRecentFiles) store.resources.cancelProbes();
         await Promise.all([
-          store.refreshWorkspaceBrowser(),
-          fileInspection.kind === "browse"
+          store.workspace.refresh(),
+          showingRecentFiles
             ? loadResources()
-            : store.refreshFileTab(),
+            : activeFile
+              ? store.refreshFileTab()
+              : undefined,
         ]);
       } else {
-        await store.refreshGitStatus();
+        await store.git.refreshStatus();
       }
     } finally {
       setManualRefresh((current) => (current === request ? null : current));
@@ -269,17 +277,7 @@ export const ContextPane = memo(function ContextPane({
   });
   const tools = (
     <div className="ctx__tools">
-      {(["files", "changes", "history"] as const).map((mode) => {
-        const label = {
-          files: "Files",
-          changes: "Changes",
-          history: "History",
-        }[mode];
-        const Icon = {
-          files: Folder,
-          changes: GitCompareArrows,
-          history: History,
-        }[mode];
+      {CONTEXT_MODES.map(({ mode, label, Icon }) => {
         const selected =
           state.contextMode === mode && (mode !== "files" || !activeFile);
         const changesCount =
@@ -306,6 +304,9 @@ export const ContextPane = memo(function ContextPane({
             }}
           >
             <Icon size={16} aria-hidden />
+            <span className="ctx__mode-label" aria-hidden="true">
+              {label}
+            </span>
             {changesCount > 0 ? (
               <span className="ctx__mode-count" aria-hidden="true">
                 {changesCount > 99 ? "99+" : changesCount}
@@ -316,7 +317,7 @@ export const ContextPane = memo(function ContextPane({
       })}
       <button
         type="button"
-        className="icon-button"
+        className="icon-button ctx__tool-gap"
         aria-label="New terminal"
         title="New terminal"
         disabled={!state.cwd}
@@ -380,14 +381,9 @@ export const ContextPane = memo(function ContextPane({
         <ChangesPane state={state} browseScrollTop={changesScrollTop} />
       </div>
     ) : state.contextMode === "history" ? (
-      <div
-        className="ctx__content"
-        id="context-history-content"
-        role="tabpanel"
-        aria-label="History"
-      >
+      <div className="ctx__content" id="context-history-content" role="tabpanel" aria-label="History">
         <BranchTree
-          key={`${sessionId}:${transcriptViewId}`}
+          key={JSON.stringify([sessionId, cwd, transcriptViewId, state.transcriptIncarnation])}
           readingState={historyReading}
           refreshKey={historyRefresh}
           onContextChange={isModal ? onClose : undefined}

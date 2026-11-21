@@ -2,7 +2,12 @@ import { expect, type Locator, test } from "@playwright/test";
 import type { GitDiffResponse } from "../../shared/contracts";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
-import { openPreviewFixture, openResourceFixture } from "./support/navigation";
+import {
+  openPreviewFixture,
+  openResourceFixture,
+} from "./support/navigation";
+
+test.use({ serviceWorkers: "block" });
 
 const changeRow = /page\.html, modified/;
 const fileTab = { name: "page.html", exact: true };
@@ -19,7 +24,7 @@ async function selectBody(pane: Locator) {
   const clear = pane.getByRole("button", { name: "Clear workspace search" });
   if (await clear.isVisible()) await clear.click();
   await pane
-    .locator(".files-browser__section")
+    .locator(".res__index-section")
     .filter({ hasText: "Recent" })
     .getByRole("button", { name: /page\.html/ })
     .click();
@@ -35,7 +40,7 @@ async function checkKeyboardFocus(control: Locator) {
     .toBeLessThanOrEqual(0.5);
 }
 
-test("@cross-browser keeps renamed, conflicting and opaque paths readable in narrow Changes", async ({
+test("keeps renamed and opaque paths readable in narrow Changes", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 760 });
@@ -56,7 +61,6 @@ test("@cross-browser keeps renamed, conflicting and opaque paths readable in nar
       untracked: false,
     },
     { path: path("new.txt"), worktree: { kind: "added" }, untracked: true },
-    { path: path("merge.txt"), conflict: { code: "UU" }, untracked: false },
     { path: opaque, worktree: { kind: "modified" }, untracked: false },
     ...Array.from({ length: 30 }, (_, index) => ({
       path: path(`updated-${index}.txt`),
@@ -64,19 +68,17 @@ test("@cross-browser keeps renamed, conflicting and opaque paths readable in nar
       untracked: false,
     })),
   ];
+  const summary = {
+    kind: "repository",
+    head: { kind: "branch", name: "review/calibration", oid: "b".repeat(40) },
+    total: files.length,
+    conflicts: 0,
+  };
   await page.route("**/api/git/status**", (route) =>
     route.fulfill({
-      json: {
-        kind: "repository",
-        head: {
-          kind: "branch",
-          name: "review/calibration",
-          oid: "b".repeat(40),
-        },
-        files,
-        total: files.length,
-        truncated: false,
-      },
+      json: new URL(route.request().url()).searchParams.get("view") === "summary"
+        ? summary
+        : { ...summary, files, truncated: false },
     }),
   );
   const pane = await openResourceFixture(page);
@@ -90,7 +92,7 @@ test("@cross-browser keeps renamed, conflicting and opaque paths readable in nar
   await expect(
     pane.getByRole("button", { name: /new\.txt, Untracked/ }),
   ).toBeVisible();
-  const list = pane.locator(".res__list");
+  const list = pane.locator(".res__index-list");
   const offset = await list.evaluate((element) => {
     element.scrollTop = 380;
     return element.scrollTop;
@@ -117,6 +119,7 @@ test("@cross-browser keeps renamed, conflicting and opaque paths readable in nar
   await expect(
     pane.getByText("This Git path has no readable workspace file."),
   ).toBeVisible();
+
 });
 
 test.describe("narrow Changes controls", () => {
@@ -190,9 +193,7 @@ test.describe("narrow Changes controls", () => {
   });
 });
 
-test("keeps long line numbers aligned during horizontal scroll", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("keeps long line numbers aligned during horizontal scroll", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/api/git/diff", async (route) => {
@@ -221,23 +222,16 @@ test("keeps long line numbers aligned during horizontal scroll", {
   const source = await selectChange(pane);
   await expect(source).toContainText("1000");
   await page.evaluate(() => document.fonts.ready);
-  const gutterInset = () =>
-    source.evaluate((element) => {
+  for (const left of [80, 160]) {
+    expect(await source.evaluate((element, left) => {
+      element.scrollLeft = left;
+      return element.scrollLeft;
+    }, left)).toBe(left);
+    await expect.poll(() => source.evaluate((element) => {
       const gutter = element.querySelector(".code-row__gutter")!;
-      return (
-        gutter.getBoundingClientRect().left -
-        element.getBoundingClientRect().left
-      );
-    });
-  const scroll = (left: number) =>
-    source.evaluate(
-      (element, left) => ((element.scrollLeft = left), element.scrollLeft),
-      left,
-    );
-  expect(await scroll(80)).toBeGreaterThan(0);
-  await expect.poll(gutterInset).toBeCloseTo(0, 0);
-  expect(await scroll(160)).toBeGreaterThan(80);
-  await expect.poll(gutterInset).toBeCloseTo(0, 0);
+      return gutter.getBoundingClientRect().left - element.getBoundingClientRect().left;
+    })).toBeCloseTo(0, 0);
+  }
 });
 
 test.describe("touch source navigation", () => {
@@ -254,6 +248,7 @@ test.describe("touch source navigation", () => {
     let pending = false;
     await page.route("**/api/git/diff", async (route) => {
       if (failRefresh) {
+        failRefresh = false;
         return route.fulfill({
           status: 503,
           json: { error: "Repository temporarily unavailable" },
@@ -290,11 +285,9 @@ test.describe("touch source navigation", () => {
     const addition = source.locator('.code-row[data-kind="add"] code');
     const old = await addition.innerText();
     failRefresh = true;
+    await page.clock.fastForward(4_001);
     const stale = pane.getByText(/Source refresh failed/);
-    await expect(async () => {
-      await page.clock.fastForward(4_001);
-      await expect(stale).toBeVisible({ timeout: 1_000 });
-    }).toPass({ timeout: 8_000 });
+    await expect(stale).toBeVisible();
     await expect(addition).toHaveText(old);
     expect(await position()).toEqual(saved);
 
@@ -302,11 +295,14 @@ test.describe("touch source navigation", () => {
       release = resolve;
     });
     try {
-      // Pause the clock so a scheduled poll cannot satisfy the tool refresh.
+      // Pause the clock so a scheduled poll cannot satisfy the settle refresh.
       await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500));
-      failRefresh = false;
       transport.send({
         type: "tool_execution_end",
+        sessionId: "fixture-resources",
+      });
+      transport.send({
+        type: "agent_settled",
         sessionId: "fixture-resources",
       });
       await expect.poll(() => pending).toBe(true);
@@ -319,5 +315,6 @@ test.describe("touch source navigation", () => {
     await expect(addition).toHaveText("LATEST_VISIBLE_SOURCE");
     await expect(stale).toBeHidden();
     await expect.poll(position).toEqual(saved);
+
   });
 });

@@ -15,7 +15,7 @@ it("runs Task Board actions from Pi inventory without consuming the draft or cro
   const host = await act(createComposerFixture);
   await act(async () => {
     store.drafts.setText("s1", "UNFINISHED DRAFT");
-    await store.addFiles([
+    await store.composer.addFiles([
       new File(["draft"], "draft.txt", { type: "text/plain" }),
     ]);
   });

@@ -19,12 +19,10 @@ import {
   useLayoutEffect,
   useMemo,
 } from "react";
-import type { VisibilityPreference } from "../../shared/contracts";
 import {
   fileResourceReference,
-  isLocalResourceReference,
   isResourceReferenceText,
-  isToolResourceArgumentKey,
+  toolFileArguments,
 } from "../../shared/resource-references";
 import { type ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
@@ -76,17 +74,14 @@ import { TranscriptSearchReveal } from "./transcript-search";
 
 import { useActivityCloseDelay } from "./use-activity-close-delay";
 
-type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
-
 const CardInspectionContext = createContext<(() => void) | undefined>(
   undefined,
 );
 
 interface CardProps {
   accessibleLabel?: string;
-  animate?: boolean;
   describedBy?: string;
-  defaultVisibility: StaticVisibility;
+  defaultExpanded?: boolean;
   className: string;
   icon: React.ReactNode;
   label: React.ReactNode;
@@ -103,7 +98,7 @@ interface CardProps {
 }
 
 export function CollapsibleCard({
-  defaultVisibility,
+  defaultExpanded = false,
   className,
   icon,
   label,
@@ -118,7 +113,6 @@ export function CollapsibleCard({
   describedBy,
   id,
   revealOnSearch = false,
-  animate = false,
   children,
 }: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
@@ -131,15 +125,11 @@ export function CollapsibleCard({
   useLayoutEffect(() => {
     if (revealOnSearch && search !== null) setOverride(true);
   }, [revealOnSearch, search, setOverride]);
-  if (defaultVisibility === "hidden") return null;
-  const open = override ?? defaultVisibility === "expanded";
+  const open = override ?? defaultExpanded;
   const bodyId = id ?? generatedId;
   const disclosureLabel = `${open ? "Collapse" : "Expand"} ${toggleLabel}`;
   return (
-    <section
-      className={`card ${className}`}
-      data-dynamic={animate || undefined}
-    >
+    <section className={`card ${className}`}>
       <ActivityHeader
         className="card__header"
         copy={
@@ -163,13 +153,7 @@ export function CollapsibleCard({
           title={disclosureLabel}
           onClick={() => setOverride(!open)}
         >
-          <span className="card__chevron">
-            <ChevronRight
-              size={14}
-              className={open ? "chev chev--open" : "chev"}
-              aria-hidden
-            />
-          </span>
+          <ChevronRight size={14} className="card__chevron chev" aria-hidden />
           <span className="card__icon">{icon}</span>
           <span className="card__label">{label}</span>
           {status && <span className="card__status">{status}</span>}
@@ -189,11 +173,9 @@ export function CollapsibleCard({
 
 export function ThinkingCard({
   text,
-  visibility,
   dynamicActive,
 }: {
   text: string;
-  visibility: VisibilityPreference;
   dynamicActive: boolean;
 }) {
   // Stored thinking can carry terminal color sequences; clean only here, at
@@ -207,23 +189,14 @@ export function ThinkingCard({
   );
   const hasContent = Boolean(clean.trim()) || presentation !== null;
   const dynamicOpen = useActivityCloseDelay(
-    visibility === "dynamic" && dynamicActive && hasContent,
+    dynamicActive && hasContent,
     1800,
     600,
   );
-  const resolvedVisibility: StaticVisibility =
-    !hasContent && visibility !== "hidden"
-      ? "collapsed"
-      : visibility === "dynamic"
-        ? dynamicOpen
-          ? "expanded"
-          : "collapsed"
-        : visibility;
   return (
     <CollapsibleCard
-      defaultVisibility={resolvedVisibility}
+      defaultExpanded={hasContent && dynamicOpen}
       className="card--thinking"
-      animate={visibility === "dynamic"}
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
       toggleLabel="Thinking"
@@ -270,8 +243,7 @@ const pendingToolText: Record<ToolStatus, string> = {
 };
 
 type ContentBlock =
-  | Exclude<ToolPresentationBlock, { type: "diff" }>
-  | (Extract<ToolPresentationBlock, { type: "diff" }> & { lines: DiffLine[] })
+  | ToolPresentationBlock
   | { type: "result"; text: string; error?: boolean }
   | { type: "live"; label: string; text: string; truncated: boolean }
   | { type: "inspection"; data: object }
@@ -295,29 +267,6 @@ function toolSummary(call: ToolCallContent): string {
     if (typeof first === "string") return first;
   }
   return "";
-}
-
-/** String tool arguments that carry a local file reference, in argument order. */
-function toolFileArguments(
-  call: ToolCallContent,
-): Array<{ key: string; value: string }> {
-  const args = call.arguments;
-  if (!args || typeof args !== "object") return [];
-  const found: Array<{ key: string; value: string }> = [];
-  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
-    if (!isToolResourceArgumentKey(key)) continue;
-    const values =
-      typeof value === "string"
-        ? [value]
-        : Array.isArray(value)
-          ? value.filter((item): item is string => typeof item === "string")
-          : [];
-    for (const candidate of values) {
-      if (isLocalResourceReference(candidate))
-        found.push({ key, value: candidate });
-    }
-  }
-  return found;
 }
 
 /** A file reference retains its complete action and accessible name while its
@@ -358,7 +307,7 @@ function FileRefButton({
 }
 
 function fallbackSummary(call: ToolCallContent): ToolPresentationSummary {
-  const reference = toolFileArguments(call)[0]?.value;
+  const reference = toolFileArguments(call.arguments).next().value?.value;
   if (reference)
     return { parts: [{ kind: "resource", text: reference, reference }] };
   const text = toolSummary(call);
@@ -486,7 +435,7 @@ function rawResultBlocks(result: ChatMessage): ContentBlock[] {
   const output = toolResultText(result);
   const diff = !result.isError ? parseUnifiedDiff(output) : null;
   const blocks: ContentBlock[] = [];
-  if (diff) blocks.push({ type: "diff", text: output, lines: diff });
+  if (diff) blocks.push({ type: "diff", lines: diff });
   else if (output)
     blocks.push({
       type: "result",
@@ -830,11 +779,7 @@ function renderToolBlock(block: ContentBlock) {
     case "terminal":
       return (
         <ToolActivityText
-          text={
-            block.type === "terminal"
-              ? stripTerminalSequences(block.text)
-              : block.text
-          }
+          text={block.text}
           label={
             block.type === "result"
               ? "Result text"
@@ -858,18 +803,7 @@ function presentationBlocks(
   presentation: ToolPresentation,
 ): ContentBlock[] | null {
   try {
-    const source = presentation.blocks();
-    if (!source) return null;
-    const result: ContentBlock[] = [];
-    for (const block of source) {
-      if (block.type !== "diff") result.push(block);
-      else {
-        const lines = parseUnifiedDiff(block.text);
-        if (!lines) return null;
-        result.push({ ...block, lines });
-      }
-    }
-    return result;
+    return presentation.blocks();
   } catch {
     return null;
   }
@@ -927,11 +861,14 @@ function ToolActivityText(props: React.ComponentProps<typeof ActivityText>) {
 }
 
 function ArgumentReader({ call }: { call: ToolCallContent }) {
-  const items = toolFileArguments(call).map(({ key, value }) => ({
-    label: key,
-    value,
-    resourceRef: value,
-  }));
+  const items = Array.from(
+    toolFileArguments(call.arguments),
+    ({ key, value }) => ({
+      label: key,
+      value,
+      resourceRef: value,
+    }),
+  );
   return (
     <>
       {items.length > 0 && renderToolBlock({ type: "properties", items })}
@@ -975,9 +912,9 @@ function ToolDetails({
     : codemode && !call && result
       ? codeModeResultBlocks(result)
       : null;
-  const blocks = formatted ?? (result ? rawResultBlocks(result) : []);
+  let blocks: ContentBlock[] = formatted ?? (result ? rawResultBlocks(result) : []);
   if (preview)
-    blocks.push({ type: "live", label: "Output (live preview)", ...preview });
+    blocks = [...blocks, { type: "live", label: "Output (live preview)", ...preview }];
   const hasCalls = calls && (calls.calls.length > 0 || !calls.complete);
   const inspect = useContext(CardInspectionContext);
   const inlineArgs = !result && !codemode && !calls;
@@ -1104,14 +1041,10 @@ export function ToolCard({
   result,
   activity,
   live = false,
-  visibility,
-  dynamic,
-  dynamicActive,
+  dynamicActive = false,
 }: {
   activity?: ActivityTool;
   live?: boolean;
-  visibility: StaticVisibility;
-  dynamic?: boolean;
   dynamicActive?: boolean;
 } & (
   | { call: ToolCallContent; result?: ChatMessage }
@@ -1121,9 +1054,7 @@ export function ToolCard({
   const owner = useContext(TranscriptImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
   const dynamicOpen = useActivityCloseDelay(
-    Boolean(
-      dynamic && dynamicActive && status !== "success" && status !== "failure",
-    ),
+    Boolean(dynamicActive && status !== "success" && status !== "failure"),
     1500,
     500,
   );
@@ -1143,11 +1074,8 @@ export function ToolCard({
   return (
     <ToolArgumentPreviewContext value={call?.__inspireToolCall}>
       <CollapsibleCard
-        defaultVisibility={
-          dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
-        }
+        defaultExpanded={dynamicOpen}
         className="card--tool"
-        animate={dynamic}
         icon={toolIcon(name)}
         label={
           <code className="card__tool-name">
@@ -1241,11 +1169,9 @@ export function genericContentTitle(item: object): string | null {
 
 export function GenericCard({
   item,
-  visibility,
   title: suppliedTitle,
 }: {
   item: object;
-  visibility: StaticVisibility;
   title?: string;
 }) {
   const title = suppliedTitle ?? genericContentTitle(item);
@@ -1254,7 +1180,6 @@ export function GenericCard({
   const type = typeof record.type === "string" ? record.type : "";
   return (
     <CollapsibleCard
-      defaultVisibility={visibility}
       className="card--generic"
       icon={<Package size={14} aria-hidden />}
       label={<span className="card__generic-title">{title}</span>}
@@ -1276,7 +1201,7 @@ export function GenericCard({
 
 /** Tool identity is part of the annotation grammar: the glyph carries the
  * tool type so a settled batch of cards or tiles scans without reading. */
-export function toolIcon(name: string): React.ReactNode {
+function toolIcon(name: string): React.ReactNode {
   switch (name.toLowerCase()) {
     case "read":
       return <FileText size={14} aria-hidden />;

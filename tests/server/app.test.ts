@@ -35,7 +35,7 @@ describe("Host HTTP workflows", () => {
     await Promise.all([
       writeFile(
         join(temporary, "preferences.json"),
-        JSON.stringify({ theme: "dark", toolVisibility: "invalid" }),
+        JSON.stringify({ theme: "dark", desktopSendKey: "invalid" }),
       ),
       writeFile(
         join(temporary, "tool-presentations.json"),
@@ -53,9 +53,9 @@ describe("Host HTTP workflows", () => {
     ]);
     const { body } = await local.get("/api/bootstrap").expect(200);
     expect(body).toMatchObject({
-      preferences: { theme: "dark", toolVisibility: "dynamic" },
+      preferences: { theme: "dark", desktopSendKey: "enter" },
       preferencesWarning: expect.stringMatching(
-        /toolVisibility.*left unchanged/u,
+        /desktopSendKey.*left unchanged/u,
       ),
       toolPresentations: { mappings: { example: "user.example.tool" } },
     });
@@ -153,8 +153,7 @@ describe("Host HTTP workflows", () => {
       .send({ sessionId: address.sessionId, command: "compact" })
       .expect(401);
     await guest.get("/api/branches/image").query(image).expect(401);
-    await local
-      .post("/api/control/native-command")
+    await local.post("/api/control/native-command")
       .send({ sessionId: address.sessionId, command: "unknown" })
       .expect(400);
     await local

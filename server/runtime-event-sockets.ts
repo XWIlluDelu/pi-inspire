@@ -3,15 +3,11 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../shared/assistant-stream.js";
-import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import {
   isSessionRuntimeStatus,
   MAX_SESSION_ID_CHARS,
 } from "../shared/contracts.js";
-import {
-  maintainBrowserSockets,
-  terminateUpgradedSockets,
-} from "./browser-socket-lifecycle.js";
+import { maintainBrowserSockets, terminateUpgradedSockets } from "./browser-socket-lifecycle.js";
 import type { RuntimeController } from "./runtime.js";
 import type {
   NotificationPrincipal,
@@ -34,7 +30,6 @@ interface RuntimeEventSocketOptions {
   updateCoordinator: Pick<UpdateCoordinator, "status" | "subscribe">;
   authorityId: string;
   heartbeatIntervalMs: number;
-  currentBrowserBuild?(): Promise<string | undefined>;
   taskNotifications?: Pick<TaskNotifications, "attach">;
 }
 
@@ -45,7 +40,6 @@ export function createRuntimeEventSockets({
   updateCoordinator,
   authorityId,
   heartbeatIntervalMs,
-  currentBrowserBuild,
   taskNotifications,
 }: RuntimeEventSocketOptions) {
   const websocket = new WebSocketServer({
@@ -75,7 +69,6 @@ export function createRuntimeEventSockets({
     principal?: NotificationPrincipal;
     unsubscribe?: () => void;
     backgroundStatuses: Map<string, string>;
-    browserBuild: string | null;
   };
   const peers = new Map<WebSocket, Peer>();
   const setDetailInterest = (peer: Peer, interest: DetailInterest) => {
@@ -96,9 +89,9 @@ export function createRuntimeEventSockets({
     events: unknown[];
     latest: Record<string, unknown>;
     approximateBytes: number;
+    timer: ReturnType<typeof setTimeout>;
   }
   let pendingStreamBatch: PendingStreamBatch | null = null;
-  let streamBatchTimer: ReturnType<typeof setTimeout> | null = null;
   const forgetSocket = (socket: WebSocket): void => {
     const peer = peers.get(socket);
     if (!peer) return;
@@ -138,12 +131,8 @@ export function createRuntimeEventSockets({
     }
   };
   const stopHeartbeat = maintainBrowserSockets(
-    peers,
-    heartbeatIntervalMs,
-    currentBrowserBuild,
-    (peer) => !peer.backlog,
-    sendBounded,
-    forgetSocket,
+    peers, heartbeatIntervalMs,
+    (peer) => !peer.backlog, sendBounded, forgetSocket,
   );
 
   const queueOrSend = (socket: WebSocket, peer: Peer, frame: EventFrame) => {
@@ -198,27 +187,16 @@ export function createRuntimeEventSockets({
     }
   };
   const flushStreamBatch = (): void => {
-    if (streamBatchTimer) clearTimeout(streamBatchTimer);
-    streamBatchTimer = null;
     const pending = pendingStreamBatch;
-    pendingStreamBatch = null;
     if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingStreamBatch = null;
     const batch = {
       ...pending.latest,
-      type: "message_update_batch",
-      assistantMessageEvent: undefined,
       assistantMessageEvents: compactToolArgumentEvents(pending.events),
       sourceEventCount: pending.events.length,
     };
     publish(encode(batch), "established", String(pending.latest.sessionId));
-  };
-  const scheduleStreamBatch = (): void => {
-    if (streamBatchTimer) return;
-    streamBatchTimer = setTimeout(
-      flushStreamBatch,
-      STREAM_EVENT_BATCH_INTERVAL_MS,
-    );
-    streamBatchTimer.unref();
   };
   // Preserve global operation ownership and outcomes, never their bodies.
   const globalLifecycle = new Set([
@@ -332,40 +310,27 @@ export function createRuntimeEventSockets({
       );
       return;
     }
+    const frame = encode(event, sequence, sessionId, background);
+    if (!frame || frame.bytes > MAX_RUNTIME_EVENT_BYTES) {
+      publish(frame, "all", sessionId);
+      return;
+    }
     if (
-      !record ||
-      record.type !== "message_update" ||
-      record.streamDelta !== true ||
       !sessionId ||
+      record?.type !== "message_update_batch" ||
       typeof record.streamMessageKey !== "string" ||
-      record.assistantMessageEvent === undefined
+      record.sourceEventCount !== 1 ||
+      !Array.isArray(record.assistantMessageEvents) ||
+      record.assistantMessageEvents.length !== 1
     ) {
-      const frame = encode(event, sequence, sessionId, background);
-      if (frame && frame.bytes <= MAX_RUNTIME_EVENT_BYTES) flushStreamBatch();
+      flushStreamBatch();
       publish(frame, "all", sessionId);
       return;
     }
 
-    const { message: _, streamDelta: __, ...compact } = record;
-    const delta = encode(
-      {
-        ...compact,
-        type: "message_update_batch",
-        assistantMessageEvent: undefined,
-        assistantMessageEvents: [record.assistantMessageEvent],
-        sourceEventCount: 1,
-      },
-      sequence,
-      sessionId,
-      background,
-    );
-    if (!delta || delta.bytes > MAX_RUNTIME_EVENT_BYTES) {
-      publish(delta, "all", sessionId);
-      return;
-    }
     // An addressed join can capture the middle of a coalesced batch.
     // Buffer fragments individually so the snapshot sequence can cut within it.
-    publish(delta, "joining", sessionId);
+    publish(frame, "joining", sessionId);
     if (
       ![...peers].some(
         ([socket, peer]) =>
@@ -378,8 +343,11 @@ export function createRuntimeEventSockets({
     if (
       pendingStreamBatch &&
       (pendingStreamBatch.key !== key ||
+        typeof pendingStreamBatch.latest.streamRevision !== "number" ||
+        pendingStreamBatch.latest.streamRevision + 1 !==
+          record.streamRevision ||
         pendingStreamBatch.events.length >= MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
-        pendingStreamBatch.approximateBytes + delta.bytes >
+        pendingStreamBatch.approximateBytes + frame.bytes >
           MAX_RUNTIME_EVENT_BYTES)
     )
       flushStreamBatch();
@@ -387,14 +355,17 @@ export function createRuntimeEventSockets({
       pendingStreamBatch = {
         key,
         events: [],
-        latest: compact,
+        latest: record,
         approximateBytes: 0,
+        timer: setTimeout(
+          flushStreamBatch,
+          STREAM_EVENT_BATCH_INTERVAL_MS,
+        ).unref(),
       };
     }
-    pendingStreamBatch.events.push(record.assistantMessageEvent);
-    pendingStreamBatch.latest = compact;
-    pendingStreamBatch.approximateBytes += delta.bytes;
-    scheduleStreamBatch();
+    pendingStreamBatch.events.push(record.assistantMessageEvents[0]);
+    pendingStreamBatch.latest = record;
+    pendingStreamBatch.approximateBytes += frame.bytes;
   };
   const unsubscribeUpdateStatus = updateCoordinator.subscribe((status) =>
     publishRuntimeEvent({ type: "update_status", updateStatus: status }),
@@ -526,18 +497,12 @@ export function createRuntimeEventSockets({
   }
 
   return {
-    rejectUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
-      websocket.handleUpgrade(request, socket, head, (client) =>
-        client.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire"),
-      );
-    },
     upgrade(
       request: IncomingMessage,
       socket: Duplex,
       head: Buffer,
       url: URL,
       notificationPrincipal?: NotificationPrincipal,
-      browserBuild?: string,
     ): void {
       const detail = url.searchParams.get("detail");
       if (
@@ -555,7 +520,6 @@ export function createRuntimeEventSockets({
           interest,
           backgroundStatuses: new Map(),
           principal: notificationPrincipal,
-          browserBuild: browserBuild ?? null,
         };
         setDetailInterest(peer, interest);
         startPeer(client, peer);
@@ -563,8 +527,7 @@ export function createRuntimeEventSockets({
     },
     close(): void {
       stopHeartbeat();
-      if (streamBatchTimer) clearTimeout(streamBatchTimer);
-      streamBatchTimer = null;
+      if (pendingStreamBatch) clearTimeout(pendingStreamBatch.timer);
       pendingStreamBatch = null;
       runtime.off("event", publishRuntimeEvent);
       unsubscribeUpdateStatus();

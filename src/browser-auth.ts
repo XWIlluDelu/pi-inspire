@@ -1,25 +1,4 @@
-import {
-  BROWSER_BUILD_HEADER,
-  BROWSER_UPGRADE_REQUIRED,
-  DEVELOPMENT_BROWSER_BUILD,
-} from "../shared/browser-build.mjs";
-
-export function browserBuildId(): string {
-  if (!import.meta.env?.PROD) return DEVELOPMENT_BROWSER_BUILD;
-  return (
-    [...document.scripts]
-      .map((script) => new URL(script.src, document.baseURI).pathname)
-      .find((source) => /\/assets\/index-[^/]+\.js$/u.test(source))
-      ?.split("/")
-      .at(-1) ?? "unknown"
-  );
-}
-
-export class BrowserUpgradeRequired extends Error {
-  constructor() {
-    super("Reload this page to use the current Inspire build.");
-  }
-}
+import { base64url } from "./base64url";
 
 /** Durable browser authority is an origin-stored, non-extractable signing key.
  * Certificates are public. API bearers exist only in this module's memory. */
@@ -149,13 +128,6 @@ export async function pairBrowser(token?: string): Promise<void> {
   });
 }
 
-function base64url(bytes: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(bytes)))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-}
-
 function signingIdentity(
   identity: BrowserIdentity | undefined,
 ): identity is BrowserIdentity {
@@ -244,7 +216,6 @@ export async function authenticatedFetch(
   const headers = new Headers(
     init.headers ?? (input instanceof Request ? input.headers : undefined),
   );
-  headers.set(BROWSER_BUILD_HEADER, browserBuildId());
   headers.set("Authorization", `Bearer ${await browserBearer()}`);
   if (init.signal?.aborted) throw init.signal.reason;
   const response = await transport(input, {
@@ -254,24 +225,18 @@ export async function authenticatedFetch(
     headers,
   });
   if (response.status === 401) access = null;
-  if (
-    response.status === 409 &&
-    response.headers.get(BROWSER_BUILD_HEADER) === BROWSER_UPGRADE_REQUIRED
-  ) {
-    window.dispatchEvent?.(new Event("inspire-browser-upgrade"));
-    throw new BrowserUpgradeRequired();
-  }
   return response;
 }
 
 export async function socketTicket(
   audience: "events" | "terminal",
+  signal = AbortSignal.timeout(10_000),
 ): Promise<string> {
   const response = await authenticatedFetch("/api/auth/socket-ticket", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ audience }),
-    signal: AbortSignal.timeout(10_000),
+    signal,
   });
   if (!response.ok) {
     if (response.status === 401)

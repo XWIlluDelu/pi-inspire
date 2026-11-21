@@ -2,7 +2,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../../src/components/ModelSelector";
-import { supportedThinkingLevels } from "../../src/model-options";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 
 beforeEach(mockModelMenuLayout);
@@ -70,37 +69,5 @@ describe("model picker interaction", () => {
     expect(search).toHaveFocus();
     fireEvent.keyDown(search, { key: "Enter" });
     expect(onChange).toHaveBeenCalledWith("fixture", "b");
-  });
-});
-
-describe("new-session thinking choices", () => {
-  it("mirrors Pi's metadata rules for ordinary, extended, and unsupported reasoning", () => {
-    expect(supportedThinkingLevels(null)).toEqual([
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
-    expect(
-      supportedThinkingLevels({ provider: "p", id: "plain", reasoning: false }),
-    ).toEqual(["off"]);
-    expect(
-      supportedThinkingLevels({
-        provider: "p",
-        id: "reasoning",
-        reasoning: true,
-      }),
-    ).toEqual(["off", "minimal", "low", "medium", "high"]);
-    expect(
-      supportedThinkingLevels({
-        provider: "p",
-        id: "mapped",
-        reasoning: true,
-        thinkingLevelMap: { minimal: null, xhigh: "high", max: "high" },
-      }),
-    ).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
   });
 });

@@ -88,9 +88,10 @@ describe("WorkspaceController", () => {
     await first;
     expect(harness.state()).toMatchObject({
       workspaceShowHidden: true,
-      workspaceTruncatedDirs: { "": true },
       workspaceSearchTruncated: true,
-      workspaceLevels: { "": [{ name: ".env", type: "file" }] },
+      workspaceLevels: new Map([
+        ["", { entries: [{ name: ".env", type: "file" }], truncated: true }],
+      ]),
       workspaceMatches: [{ name: ".env", path: ".env" }],
     });
     const other = harness.controller.changeOwner("/other");
@@ -101,10 +102,10 @@ describe("WorkspaceController", () => {
   it("retires the old read on workspace change and restores the saved disclosure and search on return", async () => {
     const harness = createHarness();
     harness.patch({
-      workspaceLevels: {
-        "": [{ name: "src", type: "dir" }],
-        src: [{ name: "main.ts", type: "file" }],
-      },
+      workspaceLevels: new Map([
+        ["", { entries: [{ name: "src", type: "dir" }] }],
+        ["src", { entries: [{ name: "main.ts", type: "file" }] }],
+      ]),
       workspaceExpandedDirs: ["src"],
       workspaceShowHidden: true,
       workspaceQuery: "main",
@@ -148,8 +149,6 @@ describe("WorkspaceController", () => {
       harness.controller.loadDirectory(""),
     ]);
     harness.controller.revealPath("src/components/App.tsx");
-    await Promise.resolve();
-    await Promise.resolve();
 
     expect(harness.state().workspaceExpandedDirs).toEqual([
       "src",
@@ -161,7 +160,7 @@ describe("WorkspaceController", () => {
     expect(harness.state().workspaceRevealRequest).toBeNull();
     expect(
       harness.listFiles.mock.calls.map(([{ query }]) => query.dir),
-    ).toEqual(["", "src", "src/components"]);
+    ).toEqual([""]);
 
     const first = deferred<Directory>();
     const second = deferred<Directory>();
@@ -206,9 +205,8 @@ describe("WorkspaceController", () => {
     await vi.runAllTimersAsync();
     await refreshing;
     expect(harness.state()).toMatchObject({
-      workspaceLevels: { "": entries },
-      workspaceLoadingDirs: [],
-      workspaceDirectoryErrors: {},
+      workspaceLevels: new Map([["", { entries }]]),
+      workspaceDirectoryLoading: false,
       workspaceSearchLoading: false,
       workspaceSearchError: unavailable.message,
     });
@@ -233,7 +231,9 @@ describe("WorkspaceController", () => {
   it("clears stale projections but retains navigation on transport replacement and reports auth expiry", async () => {
     const harness = createHarness();
     harness.patch({
-      workspaceLevels: { "": [{ name: "old", type: "file" }] },
+      workspaceLevels: new Map([
+        ["", { entries: [{ name: "old", type: "file" }] }],
+      ]),
       workspaceQuery: "old",
       workspaceMatches: [{ name: "old", path: "old" }],
       workspaceExpandedDirs: ["src"],

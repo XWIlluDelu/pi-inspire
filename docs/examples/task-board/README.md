@@ -1,9 +1,7 @@
 # Source DIY: a task board
 
-This runnable example separates a Pi extension's behavior from its Web presentation. It starts
-three cancellable thirty-second **demonstration timers**, not subagents or subprocesses. Replace
-`run()` with your own workflow when you have a real execution capability. Inspire does not choose
-your scheduling, tool permissions, retry policy, or agent architecture.
+The Pi extension starts three cancellable thirty-second demo timers. The React view shows their
+progress and sends commands back to the extension. Replace `run()` to drive your own tasks.
 
 ## Files and ownership
 
@@ -11,7 +9,7 @@ your scheduling, tool permissions, retry policy, or agent architecture.
 | --- | --- |
 | [extension.ts](extension.ts) | Session-scoped state, native persistence, timers and namespaced commands. Stop/Retry operate the demo timer; Open notes uses Pi's normal editor dialog. |
 | [types.ts](types.ts) | Small versioned data shape, decoder and command names shared by this example. |
-| [TaskBoard.tsx](TaskBoard.tsx) | Props-only list/detail view with keyboard focus, status, summary, notes and capability-backed actions. |
+| [TaskBoard.tsx](TaskBoard.tsx) | Props-only list/detail view with keyboard focus, status, summary, notes and capability-backed actions. It uses the shared [EmptyState](../../../src/components/EmptyState.tsx) when no snapshot is loaded. |
 | [TaskBoardAdapter.tsx](TaskBoardAdapter.tsx) | Read the selected session's newest admitted snapshot, check its command inventory, and dispatch prepared commands. |
 | [task-board.css](task-board.css) | Existing Inspire typography, surface and spacing tokens; no second theme system. |
 
@@ -55,57 +53,29 @@ The demo requires no model provider, credentials or network access.
 
 ## Mount the source UI
 
-This is an opt-in checkout customization, not a runtime React plugin. The shipped application
-does not gain a Tasks panel just by installing the extension.
+To try the board in the Files tab, edit [FilesPane.tsx](../../../src/components/FilesPane.tsx)
+in your checkout. Import the adapter:
 
-For a small local integration, edit `src/components/ContextPane.tsx`:
+```tsx
+import { TaskBoardAdapter } from "../../docs/examples/task-board/TaskBoardAdapter";
+```
 
-1. Import the adapter and add a local toggle beside its other React state:
+Inside `FileBrowser`, add `const [tasksOpen, setTasksOpen] = useState(false)` beside `showAll`.
+Insert this section between Recent and the workspace tree:
 
-   ```tsx
-   import { TaskBoardAdapter } from "../../docs/examples/task-board/TaskBoardAdapter";
+```tsx
+<section className="res__index-section">
+  <button type="button" className="button button--quiet"
+    aria-expanded={tasksOpen} onClick={() => setTasksOpen(open => !open)}>
+    Tasks
+  </button>
+  {tasksOpen && <TaskBoardAdapter />}
+</section>
+```
 
-   // Inside ContextPane:
-   const [tasksOpen, setTasksOpen] = useState(false);
-   ```
-
-2. Add a visible toggle in `ctx__header-actions`:
-
-   ```tsx
-   <button type="button" className="button button--quiet"
-     aria-pressed={tasksOpen} onClick={() => setTasksOpen(open => !open)}>
-     Tasks
-   </button>
-   ```
-
-3. Keep ordinary Files/Changes/History/Terminal clicks working by changing their existing handler:
-
-   ```tsx
-   onClick={() => {
-     setTasksOpen(false);
-     store.setContextMode(mode);
-   }}
-   ```
-
-4. Prepend the task branch to the existing body conditional, retaining all the existing branches:
-
-   ```tsx
-   {tasksOpen ? (
-     <div className="res__body"><TaskBoardAdapter /></div>
-   ) : state.contextMode === "files" ? (
-     // Existing FilesPane, followed by the unchanged Changes/History/Terminal branches.
-   )}
-   ```
-
-The existing Context pane hosts the same list/detail component in the desktop column and mobile
-full-height panel. **Back to tasks** returns from detail and restores row focus. This local toggle
-is a demonstration mounting point; keep production panel placement and any additional browser-Back
-levels with your layout owner rather than adding a second router.
-
-Build with `npm run build`, serve that checkout through your development Host, and refresh the
-browser. Follow your normal development launch workflow; do not rebuild a production-serving
-checkout accidentally. Pi extension changes need native Reload; React/CSS changes need a rebuilt
-frontend. Removing the source toggle restores the stock layout without migrating data.
+Run the [development workbench](../../host.md#development-checkout), open Files and choose
+**Tasks**. The adapter subscribes while the section is expanded. **Back to tasks** returns from a
+task's detail view and restores focus to its row.
 
 ## Verify your adaptation
 

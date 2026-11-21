@@ -45,7 +45,8 @@ export function AssistantError({ text }: { text: string }) {
   const preview = Array.from(firstParagraph.split("\n").slice(0, 3).join("\n"))
     .slice(0, 240)
     .join("");
-  const hasDetails = preview.length < text.length;
+  const connectionClosed = /\b(?:UND_ERR_SOCKET|ECONNRESET)\b/u.test(preview);
+  const hasDetails = connectionClosed || preview.length < text.length;
   return (
     <div
       className="activity-surface assistant-error"
@@ -71,9 +72,11 @@ export function AssistantError({ text }: { text: string }) {
         className={`assistant-error__message${expanded ? " assistant-error__message--expanded" : ""}`}
       >
         <span className="assistant-error__reason">
-          {expanded || !hasDetails
-            ? firstParagraph
-            : `${preview}${preview.length < firstParagraph.length ? "…" : ""}`}
+          {connectionClosed && !expanded
+            ? "The connection closed before the reply finished."
+            : expanded || !hasDetails
+              ? firstParagraph
+              : `${preview}${preview.length < firstParagraph.length ? "…" : ""}`}
         </span>
         {expanded && diagnostics ? (
           <>

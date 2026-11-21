@@ -328,11 +328,12 @@ export function Welcome({
   );
 
   const searchProjectFiles = useCallback(
-    (query: string) =>
+    (query: string, signal: AbortSignal) =>
       store.searchNewSessionProjectFiles(
         effectiveDirectory,
         query,
         showHiddenFiles,
+        signal,
       ),
     [effectiveDirectory, showHiddenFiles],
   );
@@ -403,7 +404,7 @@ export function Welcome({
       // A displayed workspace default is a preview, not an explicit override:
       // native startup must resolve its own model after registration/trust.
       const selected = model && chosen;
-      const opened = await store.newSession(target || undefined, {
+      const opened = await store.selection.create(target || undefined, {
         ...(createDirectory ? { createDirectory: true } : {}),
         ...(selected
           ? { model: { provider: model.provider, id: model.id } }
@@ -418,7 +419,7 @@ export function Welcome({
       }
 
       const destinationEmpty = !store.drafts.get(opened).text;
-      const upload = store.transferStartDraft(opened, draft);
+      const upload = store.composer.transferStart(opened, draft);
       const revision = store.drafts.get(opened).revision;
       await upload;
       const ownsDraft = () =>
@@ -470,7 +471,7 @@ export function Welcome({
           placeholder: "What do you want to work on?",
           label: "First message",
           completionLabel: "First message completion",
-          autoFocus: true,
+          autoFocus: "unless-editing",
         }}
         header={
           <>
@@ -481,7 +482,10 @@ export function Welcome({
                 aria-label="Browse host directories"
                 title="Browse host directories"
                 disabled={starting}
-                onClick={() => setBrowsing(true)}
+                onClick={(event) => {
+                  event.currentTarget.focus({ preventScroll: true });
+                  setBrowsing(true);
+                }}
               >
                 <FolderOpen size={14} aria-hidden />
               </button>
@@ -663,11 +667,7 @@ export function Welcome({
               aria-expanded={recentOpen}
               onClick={toggleRecent}
             >
-              <ChevronRight
-                size={12}
-                className={`chev ${recentOpen ? "chev--open" : ""}`}
-                aria-hidden
-              />
+              <ChevronRight size={12} className="chev" aria-hidden />
               Recent sessions
             </button>
           </h2>

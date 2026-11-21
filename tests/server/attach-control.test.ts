@@ -254,7 +254,7 @@ describe("takeoverCandidate", () => {
 });
 
 describe("PiSessionActivity", () => {
-  it("publishes the busiest live instance per catalogued session and path", async () => {
+  it("publishes the busiest instance of each unambiguous session and path", async () => {
     const session: SessionRecord = {
       id: "one",
       path: "/work/one.jsonl",
@@ -265,16 +265,28 @@ describe("PiSessionActivity", () => {
       firstMessage: "Task",
       source: null,
     };
+    const duplicate = { ...session, id: "two", path: "/work/two.jsonl" };
     const publish = vi.fn();
     const observer = new PiSessionActivity({
-      catalog: { refresh: vi.fn(async () => [session]) },
+      catalog: {
+        refresh: async () => [
+          session,
+          duplicate,
+          { ...duplicate, path: "/other/two.jsonl" },
+        ],
+      },
       registry: {
         observe: async () => [
-          await record({ activity: "idle" }),
-          await record({ activity: "working" }),
+          await record(),
+          await record({ activity: "blocked" }),
           await record({
             sessionFile: "/elsewhere/one.jsonl",
-            activity: "blocked",
+            activity: "working",
+          }),
+          await record({
+            sessionId: duplicate.id,
+            sessionFile: duplicate.path,
+            activity: "working",
           }),
         ],
       },
@@ -282,7 +294,7 @@ describe("PiSessionActivity", () => {
     });
     await observer.refresh();
     observer.close();
-    expect(publish).toHaveBeenCalledWith({ one: "working" });
+    expect(publish).toHaveBeenCalledWith({ one: "blocked" });
   });
 });
 

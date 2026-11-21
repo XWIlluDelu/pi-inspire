@@ -4,7 +4,9 @@ import type {
   NewSessionOptions,
   SessionReadOnlyReason,
 } from "../../shared/contracts";
+import type { HostOperationIdentity } from "../../shared/host-operations";
 import { type Api, ApiError, ApiRequestCancelledError } from "../api";
+import { isTransientFailure } from "../recovery-backoff";
 
 export type SessionOpenResult = "opened" | "missing" | "retry" | "superseded";
 
@@ -20,20 +22,31 @@ interface SessionSelectionState {
 interface SessionSelectionControllerHost {
   state(): SessionSelectionState;
   api(): Api | null;
+  authorityId(): string | null;
   patch(state: {
-    openingSessionId: string | null;
-    sessionSelectionPending: boolean;
+    openingSessionId?: string | null;
+    sessionSelectionPending?: boolean;
     startupPending?: false;
+    sessionActionError?: string | null;
   }): void;
   onOpenIntent(): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
   ensureSessionVisible(sessionId: string): void;
-  setActionError(message: string | null): void;
   rememberModel(model: ModelIdentity): void;
-  refreshSessionCatalog(): void;
+  refreshLoadedSessions(): Promise<void>;
   notify(kind: "warning", text: string): void;
   handleAuthFailure(): void;
-  confirmUncertainCreation(): boolean;
+}
+
+function uncertainCreation(error: unknown): boolean {
+  if (error instanceof ApiRequestCancelledError) return error.outcomeUnknown;
+  if (!(error instanceof ApiError)) return true;
+  if (
+    error.code === "SESSION_CREATION_FAILED" ||
+    error.code === "SESSION_CREATION_OPERATION_RESULT_RETIRED"
+  )
+    return false;
+  return error.outcomeUnknown || isTransientFailure(error);
 }
 
 /**
@@ -43,7 +56,10 @@ interface SessionSelectionControllerHost {
  */
 export class SessionSelectionController {
   private observation: AbortController | null = null;
-  private creation: "pending" | "uncertain" | null = null;
+  private readonly creations = new Map<
+    string,
+    HostOperationIdentity & { pending: boolean }
+  >();
   private request = 0;
   private intent = 0;
 
@@ -130,7 +146,8 @@ export class SessionSelectionController {
     options: NewSessionOptions = {},
   ): Promise<string | null> {
     const api = this.host.api();
-    if (!api) return null;
+    const authorityId = this.host.authorityId();
+    if (!api || !authorityId) return null;
     const target = cwd?.trim() || this.host.state().cwd;
     if (!target) {
       this.host.notify(
@@ -139,50 +156,59 @@ export class SessionSelectionController {
       );
       return null;
     }
-    // Creation has no receipt/retry identity. Never turn an unconfirmed write
-    // into an ordinary retry button, including after navigation/reconnect.
-    if (this.creation === "pending") return null;
-    if (this.creation === "uncertain" && !this.host.confirmUncertainCreation())
-      return null;
-    this.creation = "pending";
+    const key = JSON.stringify([target, options]);
+    const previous = this.creations.get(key);
+    if (previous?.authorityId === authorityId && previous.pending) return null;
+    const receipt = {
+      operationId:
+        previous?.authorityId === authorityId
+          ? previous.operationId
+          : crypto.randomUUID(),
+      authorityId,
+    };
+    const creation = { ...receipt, pending: true };
+    this.creations.set(key, creation);
     try {
       return await this.runSelection(
         null,
         api,
         async (signal) => {
-          try {
-            return await api.json(
+          const request = () =>
+            api.json(
               "newSession",
-              { body: { cwd: target, ...options } },
+              { body: { cwd: target, ...options, receipt } },
               signal,
             );
+          const retire = () => {
+            if (this.creations.get(key) === creation) this.creations.delete(key);
+          };
+          try {
+            const snapshot = await request().catch((error) => {
+              if (signal.aborted || !uncertainCreation(error)) throw error;
+              return request();
+            });
+            retire();
+            return snapshot;
           } catch (error) {
-            // A gateway/server timeout is not proof that no session exists.
-            if (
-              (error instanceof ApiRequestCancelledError &&
-                !error.outcomeUnknown) ||
-              (error instanceof ApiError &&
-                !error.outcomeUnknown &&
-                error.status < 500 &&
-                error.status !== 408)
-            )
-              this.creation = null;
-            throw error;
+            if (!uncertainCreation(error)) {
+              retire();
+              throw error;
+            }
+            throw new Error("Couldn’t open the new session. Try again.");
           }
         },
         "Failed to create session",
         null,
         (snapshot) => {
-          this.creation = null;
           const sessionId = snapshot.active?.sessionId ?? null;
           if (sessionId) this.host.ensureSessionVisible(sessionId);
           if (options.model) this.host.rememberModel(options.model);
-          this.host.refreshSessionCatalog();
+          void this.host.refreshLoadedSessions();
           return sessionId;
         },
       );
     } finally {
-      if (this.creation === "pending") this.creation = "uncertain";
+      creation.pending = false;
     }
   }
 
@@ -210,18 +236,19 @@ export class SessionSelectionController {
       const snapshot = await request(observation.signal);
       if (!owns()) return staleResult;
       this.host.applySnapshot(snapshot);
-      this.host.setActionError(null);
+      this.host.patch({ sessionActionError: null });
       return afterApply(snapshot);
     } catch (error) {
       if (owns()) {
         if (error instanceof ApiError && error.status === 401)
           this.host.handleAuthFailure();
         else {
-          this.host.setActionError(
-            error instanceof Error ? error.message : fallbackMessage,
-          );
+          this.host.patch({
+            sessionActionError:
+              error instanceof Error ? error.message : fallbackMessage,
+          });
           if (error instanceof ApiError && error.code === "SESSION_NOT_FOUND")
-            this.host.refreshSessionCatalog();
+            void this.host.refreshLoadedSessions();
         }
         return onFailure?.(error) ?? staleResult;
       }

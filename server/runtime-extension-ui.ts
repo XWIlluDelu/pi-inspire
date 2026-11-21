@@ -54,10 +54,7 @@ export class RuntimeExtensionUiController {
     slot.pendingExtensionDialogs.set(request.id, dialog);
     if (request.expiresAt !== undefined) {
       dialog.timer = setTimeout(
-        () => {
-          if (slot.pendingExtensionDialogs.get(request.id) === dialog)
-            this.remove(slot, request.id, "expired");
-        },
+        () => this.remove(slot, dialog, "expired"),
         Math.max(0, request.expiresAt - Date.now()),
       );
       dialog.timer.unref();
@@ -92,16 +89,15 @@ export class RuntimeExtensionUiController {
 
   private remove(
     slot: RuntimeSlot,
-    id: string,
+    dialog: PendingExtensionDialog,
     reason: "answered" | "expired",
-  ): boolean {
-    const dialog = slot.pendingExtensionDialogs.get(id);
-    if (!dialog) return false;
+  ): void {
+    const { id } = dialog.request;
+    if (slot.pendingExtensionDialogs.get(id) !== dialog) return;
     slot.pendingExtensionDialogs.delete(id);
     clearTimeout(dialog.timer);
     this.host.emitSlotEvent(slot, { type: "extension_ui_remove", id, reason });
     this.host.scheduleIdleWorkerEviction();
-    return true;
   }
 
   private async respondInside(
@@ -150,7 +146,7 @@ export class RuntimeExtensionUiController {
       if (
         request.sessionId !== sessionId ||
         slot.process !== rpc ||
-        !slot.ready
+        slot.startupPhase !== "ready"
       ) {
         throw requestError(
           "The extension request no longer belongs to this worker",
@@ -158,7 +154,7 @@ export class RuntimeExtensionUiController {
         );
       }
       if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
-        this.remove(slot, requestId, "expired");
+        this.remove(slot, dialog, "expired");
         if (expected) return;
         throw requestError(
           "The extension request expired before the response",
@@ -167,8 +163,7 @@ export class RuntimeExtensionUiController {
       }
       try {
         await rpc.sendExtensionUiResponse(wireResponse);
-        if (slot.pendingExtensionDialogs.get(requestId) === dialog)
-          this.remove(slot, requestId, "answered");
+        this.remove(slot, dialog, "answered");
         // stdin order makes the correlated read a consumption fence.
         await rpc.request({ type: "get_state" });
       } catch (error) {

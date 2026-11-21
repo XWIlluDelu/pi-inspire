@@ -144,9 +144,7 @@ test("lost post-commit confirmation remains uncertain without retrying", async (
         callback?.(null);
         return true;
       };
-      assert.deepEqual(await f.client.request(f.commit), {
-        kind: "unconfirmed",
-      });
+      assert.deepEqual(await f.client.request(f.commit), { kind: "unconfirmed" });
       assert.equal(f.state.committed, true);
       assert.equal(requests, 1);
       for (const event of ["message", "disconnect"])

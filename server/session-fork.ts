@@ -1,6 +1,7 @@
 import { chmod, link, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { piInstallation } from "./pi-runtime.js";
+import { piInstallation, SessionManager } from "./pi-runtime.js";
+import { createPiSessionDirectoryResolver } from "./pi-session-directory.js";
 import { requestError } from "./request-error.js";
 import { runSessionDocumentWorker } from "./session-document-worker.js";
 import type {
@@ -8,24 +9,26 @@ import type {
   ForkWorkerReply,
 } from "./session-fork-worker.js";
 
-export interface StageSessionForkRequest {
+export type StageSessionForkRequest = {
   sourcePath: string;
   sourceSessionId: string;
   sourceCommittedBytes: number;
   sourceFingerprint: string;
   sourceIdentity?: string;
-  targetId: string | null;
-  targetParentId: string | null;
-  mode?: "fork" | "clone";
-}
+} & (
+  | {
+      mode?: "fork" | "clone";
+      targetId: string | null;
+      targetParentId: string | null;
+    }
+  | { mode: "recover"; destinationCwd: string }
+);
 
 export interface StagedSessionFork {
   stagingDir: string;
   stagedPath: string;
   destinationPath: string;
   destinationId: string;
-  cwd: string;
-  parentSessionPath: string;
   sessionName?: string;
   destinationLeafId: string | null;
 }
@@ -36,7 +39,13 @@ export type StageSessionFork = (
 
 export const stageSessionFork: StageSessionFork = async (request) => {
   const sourcePath = resolve(request.sourcePath);
-  const directory = dirname(sourcePath);
+  const directory =
+    request.mode === "recover"
+      ? SessionManager.create(
+          request.destinationCwd,
+          await createPiSessionDirectoryResolver()(request.destinationCwd),
+        ).getSessionDir()
+      : dirname(sourcePath);
   const stagingDir = await mkdtemp(join(directory, ".inspire-fork-"));
   try {
     await chmod(stagingDir, 0o700);

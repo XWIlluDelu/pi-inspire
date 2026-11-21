@@ -10,26 +10,23 @@ import {
   useState,
 } from "react";
 import {
-  type ActivityFoldVisibilityPreference,
   type ExtensionDisplay,
   emptyPendingQueues,
   type GenericExtensionDisplay,
   type PendingQueues,
   type RunState,
-  type ToolVisibilityPreference,
-  type VisibilityPreference,
 } from "../../shared/contracts";
 import { type ActivityTool, type ChatMessage } from "../events";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
-import { hasActiveModal } from "../use-modal-focus";
-import { EarlierBranchBanner } from "./EarlierBranchBanner";
+import { EmptyState } from "./EmptyState";
 import { ExtensionDisplaySurface } from "./ExtensionDisplays";
 import { TranscriptImageOwnerContext } from "./ImagePreview";
-import { handleRichTextCopy } from "./rich-text-copy";
 import { ScrollRail } from "./ScrollRail";
+import { useTranscriptHistory } from "./use-transcript-history";
+import { handleRichTextCopy } from "./rich-text-copy";
 import { TranscriptPromptMap } from "./TranscriptPromptMap";
 import { TranscriptUtilities } from "./TranscriptUtilities";
 import { useTranscriptRows } from "./transcript-row-projection";
@@ -40,7 +37,6 @@ import {
 } from "./transcript-search";
 import { useTranscriptSearchHighlights } from "./transcript-search-highlights";
 import { useTranscriptViewport } from "./transcript-viewport";
-import { useTranscriptHistory } from "./use-transcript-history";
 
 // --- Transcript with pinned auto-scroll ---
 
@@ -58,9 +54,6 @@ export const Transcript = memo(function Transcript({
   runState,
   activeAssistantMessageKey = null,
   toolActivity = EMPTY_TOOL_ACTIVITY,
-  thinkingVisibility,
-  toolVisibility,
-  activityFoldVisibility = "expanded",
   sessionId = "",
   viewId = "",
   projectionIncarnation = "",
@@ -76,9 +69,6 @@ export const Transcript = memo(function Transcript({
   runState?: RunState;
   activeAssistantMessageKey?: string | null;
   toolActivity?: Record<string, ActivityTool>;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
-  activityFoldVisibility?: ActivityFoldVisibilityPreference;
   sessionId?: string;
   viewId?: string;
   projectionIncarnation?: string;
@@ -95,6 +85,7 @@ export const Transcript = memo(function Transcript({
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
+  const promptLauncherRef = useRef<HTMLButtonElement>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const projectionViewKey = transcriptProjectionKey(
     viewId,
@@ -168,9 +159,6 @@ export const Transcript = memo(function Transcript({
     runState,
     activeAssistantMessageKey,
     toolActivity,
-    thinkingVisibility,
-    toolVisibility,
-    activityFoldVisibility,
   });
   const search = useTranscriptSearch({
     rows,
@@ -231,7 +219,7 @@ export const Transcript = memo(function Transcript({
 
   useLayoutEffect(() => {
     if (!mobileSearchOpen) return;
-    searchInputRef.current?.focus();
+    searchInputRef.current?.focus({ preventScroll: true });
     searchInputRef.current?.select();
   }, [mobileSearchOpen]);
 
@@ -251,13 +239,14 @@ export const Transcript = memo(function Transcript({
       return;
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Element)) return;
-      const tools = searchLauncherRef.current?.closest(".transcript-tools");
-      const popup = target.closest('[role="listbox"]');
-      const related = popup?.id
-        ? tools?.querySelector(`[aria-controls="${CSS.escape(popup.id)}"]`)
-        : null;
-      if (!tools?.contains(target) && !related) closeMobileSearch();
+      if (!(target instanceof Element) || target.closest(".transcript-tools"))
+        return;
+      const scopeMenuId = searchInputRef.current
+        ?.closest(".transcript-tools")
+        ?.querySelector(".transcript-search__scope")
+        ?.getAttribute("aria-controls");
+      if (!scopeMenuId || !document.getElementById(scopeMenuId)?.contains(target))
+        closeMobileSearch();
     };
     document.addEventListener("pointerdown", closeFromOutside, true);
     return () => {
@@ -325,22 +314,6 @@ export const Transcript = memo(function Transcript({
         )
           return;
         if (
-          event.key.toLowerCase() === "f" &&
-          event.metaKey !== event.ctrlKey &&
-          !event.altKey &&
-          !event.shiftKey
-        ) {
-          if (
-            hasActiveModal() ||
-            (event.target instanceof Element &&
-              event.target.closest(
-                '[role=menu], [role=listbox], [role=combobox][aria-expanded="true"]',
-              ))
-          )
-            return;
-          event.preventDefault();
-          openSearch();
-        } else if (
           viewport.scrollRef.current?.contains(event.target as Node) &&
           [
             "ArrowUp",
@@ -364,23 +337,23 @@ export const Transcript = memo(function Transcript({
           search={search}
           inputRef={searchInputRef}
           searchLauncherRef={searchLauncherRef}
+          promptLauncherRef={promptLauncherRef}
           searchOpen={mobileSearchOpen}
           onOpenSearch={() => {
             setMobilePromptsOpen(false);
             setMobileSearchOpen(true);
           }}
           onClose={closeMobileSearch}
-          onTogglePrompts={
+          onOpenPrompts={
             hasPromptMap
               ? () => {
                   closeMobileSearch();
-                  setMobilePromptsOpen((open) => !open);
+                  setMobilePromptsOpen(true);
                 }
               : undefined
           }
-          promptsOpen={mobilePromptsOpen}
+          promptsOpen={hasPromptMap && mobilePromptsOpen}
         />
-        <EarlierBranchBanner key={`${sessionId}:${viewId}`} />
         <div
           className="transcript"
           role="log"
@@ -448,12 +421,11 @@ export const Transcript = memo(function Transcript({
             <TranscriptImageOwnerContext value={imageOwner}>
               <div className="transcript__column">
                 {rows.length === 0 ? (
-                  <div className="empty-state empty-state--conversation">
-                    <p className="empty-state__title">Empty session</p>
-                    <p className="empty-state__hint">
-                      Send a message to start.
-                    </p>
-                  </div>
+                  <EmptyState
+                    className="empty-state--conversation"
+                    title="Empty session"
+                    hint="Send a message to start."
+                  />
                 ) : (
                   rows.map((row, index) => {
                     return (
@@ -501,7 +473,12 @@ export const Transcript = memo(function Transcript({
             viewId={viewId}
             scrollport={scrollport}
             mobileActive={mobilePromptsOpen}
-            onDismissMobile={() => setMobilePromptsOpen(false)}
+            onDismissMobile={() => {
+              setMobilePromptsOpen(false);
+              requestAnimationFrame(() =>
+                promptLauncherRef.current?.focus({ preventScroll: true }),
+              );
+            }}
             onJump={async (turn) => {
               search.clearCurrentMatch();
               viewport.releaseLatestFollow();

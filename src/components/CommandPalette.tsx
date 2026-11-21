@@ -19,14 +19,15 @@ import {
   runStop,
   sessionActionAvailable,
   sessionActions,
+  type SessionInspection,
   sessionPresentationName,
   type WorkbenchDestinations,
 } from "../session-actions";
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
-  type TerminalUiAction,
   terminalActions,
+  type TerminalUiAction,
 } from "../terminal-actions";
 import { terminalShortcutLabel } from "../terminal-keyboard";
 import { useSearchFocus } from "../use-search-focus";
@@ -57,11 +58,7 @@ interface PaletteItem {
 }
 
 const workspaceActions = [
-  {
-    mode: "history",
-    title: "Open History",
-    aliases: ["branches", "inspect history"],
-  },
+  { mode: "history", title: "Open History", aliases: ["branches", "inspect history"] },
   { mode: "files", title: "Open Files", aliases: [] },
   { mode: "changes", title: "Open Changes", aliases: [] },
   {
@@ -83,7 +80,7 @@ export const CommandPalette = memo(function CommandPalette({
   active = true,
   rename,
   onRenameBack,
-  onExportSession,
+  onInspectSession,
   onRenameSession,
   onToggleNav,
   onToggleCtx,
@@ -94,7 +91,7 @@ export const CommandPalette = memo(function CommandPalette({
   active?: boolean;
   rename?: { sessionId: string; name: string };
   onRenameBack: () => void;
-  onExportSession: () => void;
+  onInspectSession: (kind: SessionInspection) => void;
   onRenameSession: (sessionId: string, name: string) => void;
   onToggleNav: () => void;
   onToggleCtx: () => void;
@@ -106,6 +103,7 @@ export const CommandPalette = memo(function CommandPalette({
       sessionId: source.sessionId,
       readOnlyReason: source.readOnlyReason,
       clone: sessionActionAvailable("clone", source),
+      toolLoadout: sessionActionAvailable("tool-loadout", source),
       external: Boolean(
         source.sessionId && source.sessionStatuses[source.sessionId]?.external,
       ),
@@ -147,12 +145,6 @@ export const CommandPalette = memo(function CommandPalette({
   }, []);
   const dialogRef = useRef<HTMLDialogElement>(null);
   useSearchFocus(active && !preparation && !rename, inputRef, dialogRef);
-  const wasRenaming = useRef(false);
-  useEffect(() => {
-    if (active && !rename && wasRenaming.current)
-      inputRef.current?.focus({ preventScroll: true });
-    wasRenaming.current = Boolean(rename);
-  }, [active, rename]);
 
   useEffect(() => {
     if (preparation && preparation.owner !== state.sessionId)
@@ -182,7 +174,7 @@ export const CommandPalette = memo(function CommandPalette({
         id: "refresh",
         group: "Actions",
         title: "Refresh session list",
-        run: () => void store.refreshSessions(),
+        run: () => void store.catalog.refresh(),
       },
       ...(["nav", "ctx"] as const).map((id) => ({
         id,
@@ -207,7 +199,8 @@ export const CommandPalette = memo(function CommandPalette({
           if (
             id === "copy-id" ||
             (id === "clone" && !state.clone) ||
-            (id === "rename" && state.readOnlyReason)
+            (id === "rename" && state.readOnlyReason) ||
+            (id === "tool-loadout" && !state.toolLoadout)
           )
             return [];
           const action = sessionActions[id];
@@ -217,7 +210,7 @@ export const CommandPalette = memo(function CommandPalette({
               id,
               title: id === "rename" ? `${action.title}…` : action.title,
               aliases: [
-                `/${action.command}`,
+                ...(action.command ? [`/${action.command}`] : ["active tools"]),
                 ...(branchSwitch
                   ? ["branches", "branch navigation"]
                   : id === "rename"
@@ -231,7 +224,7 @@ export const CommandPalette = memo(function CommandPalette({
                 runSessionAction(id, sessionId, {
                   rename: onRenameSession,
                   renameName: sessionPresentationName,
-                  export: onExportSession,
+                  inspect: onInspectSession,
                 }),
             },
           ];
@@ -280,10 +273,10 @@ export const CommandPalette = memo(function CommandPalette({
         actions.push({
           id: "latest-branch",
           group: "Workspace",
-          title: "Restore latest saved position",
-          aliases: ["Back to latest branch"],
+          title: "Continue from latest saved point",
+          aliases: ["Restore latest saved position", "Back to latest branch"],
           default: true,
-          run: runInSession(() => void store.returnToLatestBranch()),
+          run: runInSession(() => void store.branches.returnToLatest()),
         });
       }
     }
@@ -309,13 +302,13 @@ export const CommandPalette = memo(function CommandPalette({
           group: "Preferences",
           title: `${title}: ${"actionLabel" in option ? option.actionLabel : option.label}`,
           hint: state.prefs[key] === option.value ? "current" : undefined,
-          run: () => store.setPreference(key, option.value),
+          run: () => store.preferences.set(key, option.value),
         });
     }
 
     const visible = visibleSessions(state.sessions, state.prefs);
     const recentIds = new Set(
-      [...visible]
+      visible
         .filter((session) => session.id !== state.sessionId)
         .sort(
           (left, right) =>
@@ -389,7 +382,7 @@ export const CommandPalette = memo(function CommandPalette({
                   // The palette must release modal focus before its native picker opens.
                   requestAnimationFrame(
                     runInSession(() =>
-                      store.runPaletteNativeCommand(`/${command.name}`),
+                      void store.sendPreparedCommand(`/${command.name}`),
                     ),
                   );
                 }
@@ -407,7 +400,7 @@ export const CommandPalette = memo(function CommandPalette({
     onToggleCtx,
     onOpenSession,
     destinations,
-    onExportSession,
+    onInspectSession,
     onRenameSession,
   ]);
 
@@ -422,15 +415,16 @@ export const CommandPalette = memo(function CommandPalette({
     return [...byGroup.values()].flat();
   }, [items]);
 
-  const searching = Boolean(searchQuery.trim());
-  const options = (
-    searching ? rankPaletteItems(items, searchQuery) : defaultItems
-  ).map((item) => ({
-    key: item.id,
-    value: item,
-    group: searching ? "Results" : item.group,
-    title: item.title,
-  }));
+  const options = useMemo(() => {
+    const searching = Boolean(searchQuery.trim());
+    const matches = searching ? rankPaletteItems(items, searchQuery) : defaultItems;
+    return matches.map((item) => ({
+      key: item.id,
+      value: item,
+      group: searching ? "Results" : item.group,
+      title: item.title,
+    }));
+  }, [items, searchQuery, defaultItems]);
 
   const runItem = (item: PaletteItem | undefined) => {
     if (!item) return;
@@ -521,7 +515,7 @@ export const CommandPalette = memo(function CommandPalette({
               commands={state.commands}
               searchProjectFiles={
                 preparedCommand?.source !== "builtin"
-                  ? (query) => store.searchProjectFiles(query)
+                  ? store.searchProjectFiles
                   : undefined
               }
               models={state.models}

@@ -101,7 +101,7 @@ function DocumentPreviewOwner({
   }, [descriptor.reference]);
   useEffect(() => {
     const owner = new DocumentImageResources((reference, signal) =>
-      store.loadDocumentImage(descriptor.id, reference, signal),
+      store.resources.loadDocumentImage(descriptor.id, reference, signal),
     );
     setImages(owner);
     return () => owner.dispose();

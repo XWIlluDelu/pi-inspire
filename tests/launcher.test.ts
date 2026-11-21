@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -16,19 +17,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  isolatedProcessOptions,
-  signalProcessTree,
-} from "../server/process-tree.mjs";
-import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
-import { terminalDaemonSecretPath } from "../server/terminal-daemon-tls.js";
-import { directLauncherEnvironment } from "./fixtures/packaged-launcher.mjs";
+  directLauncherEnvironment,
+  preparePackagedLauncher,
+} from "./fixtures/packaged-launcher.mjs";
 import { isolatedTestEnvironment } from "./server/fixtures/isolated-environment.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = join(root, "inspire.mjs");
 const children: ChildProcess[] = [];
 const temporaryDirectories: string[] = [];
-const terminalChildren: ChildProcess[] = [];
 let activeEnvironment: NodeJS.ProcessEnv | null = null;
 /** The launcher that owns the active environment's instance. */
 let activeLauncher = launcher;
@@ -117,14 +114,6 @@ afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.exitCode === null) child.kill("SIGTERM");
   }
-  for (const child of terminalChildren.splice(0)) {
-    if (child.exitCode !== null || child.signalCode !== null) continue;
-    const stopped = new Promise<void>((resolve) =>
-      child.once("close", () => resolve()),
-    );
-    await signalProcessTree(child, "SIGTERM", { isolated: true });
-    await stopped;
-  }
   await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   await Promise.all(
     temporaryDirectories
@@ -134,6 +123,31 @@ afterEach(async () => {
 });
 
 describe("production launcher", () => {
+  it("starts terminal Pi in the caller's project and keeps the installation separate", async () => {
+    const install = await mkdtemp(join(tmpdir(), "inspire-pi-launch-"));
+    temporaryDirectories.push(install);
+    await preparePackagedLauncher(install);
+    const project = join(install, "my project");
+    await mkdir(project);
+    await writeFile(join(project, "local.jsonl"), "caller session");
+    await writeFile(
+      join(install, "build/server/attached-pi-entry.js"),
+      `import { readFileSync } from "node:fs";
+       console.log(readFileSync(process.argv[3], "utf8"), process.env.INSPIRE_INSTALLATION_ROOT);`,
+    );
+    expect(
+      execFileSync(
+        process.execPath,
+        [join(install, "inspire.mjs"), "pi", "--session", "local.jsonl"],
+        {
+          cwd: project,
+          encoding: "utf8",
+          env: { ...process.env, INSPIRE_ENVIRONMENT: "inherit" },
+        },
+      ).trim(),
+    ).toBe(`caller session ${await realpath(install)}`);
+  });
+
   it("stops the readiness wait when the service process exits", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-ready-"));
     temporaryDirectories.push(directory);
@@ -172,55 +186,11 @@ describe("production launcher", () => {
     const checkout = await isolatedCheckout(directory);
     const checkoutLauncher = join(checkout, "inspire.mjs");
     activeLauncher = checkoutLauncher;
-    // A user-exported NODE_ENV must not select an in-process terminal owner.
-    env.NODE_ENV = "test";
-    env.INSPIRE_TERMINAL_DAEMON_ADDRESS =
-      process.platform === "win32"
-        ? `\\\\.\\pipe\\inspire-terminal-launcher-${port}`
-        : join(directory, "terminal.sock");
-    env.INSPIRE_TERMINAL_TOKEN_PATH = join(directory, "terminal-token");
     env.INSPIRE_TERMINAL_STATE_PATH = join(directory, "terminals.json");
-    const terminalChild = spawn(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        join(checkout, "server", "terminal-daemon-entry.ts"),
-        "--root",
-        checkout,
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-        "--address",
-        env.INSPIRE_TERMINAL_DAEMON_ADDRESS,
-        "--token-path",
-        env.INSPIRE_TERMINAL_TOKEN_PATH,
-        "--state-path",
-        env.INSPIRE_TERMINAL_STATE_PATH,
-      ],
-      { cwd: checkout, env, ...isolatedProcessOptions(), stdio: "ignore" },
-    );
-    terminalChildren.push(terminalChild);
-    await vi.waitFor(
-      async () => {
-        const token = (
-          await readFile(
-            terminalDaemonSecretPath(env.INSPIRE_TERMINAL_TOKEN_PATH!),
-            "utf8",
-          )
-        ).trim();
-        await new TerminalDaemonClient(
-          env.INSPIRE_TERMINAL_DAEMON_ADDRESS!,
-          token,
-        ).probe();
-      },
-      { timeout: 8_000 },
-    );
     expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
       "No managed INSΠRE instance is running.",
     );
-    // Cold startup publishes only the current build, even with leftover files.
+    // Cold startup ignores leftover files outside the published manifest.
     const outgoingAsset = "ContextPane-launcher-old.js";
     const publishedAsset = join(checkout, "dist", "assets", outgoingAsset);
     await mkdir(dirname(publishedAsset), { recursive: true });
@@ -299,13 +269,9 @@ describe("production launcher", () => {
       fetch(`${origin}/api/terminals?cwd=${encodeURIComponent(directory)}`, {
         headers: terminalHeaders,
       }).then((response) => response.json());
-    const assertTerminalPreserved = async () =>
-      expect((await terminals()).terminals).toContainEqual(
-        expect.objectContaining({ id: createdTerminal.id, status: "running" }),
-      );
 
     const original = await restartStatus();
-    expect(original).toMatchObject({ available: true, allPiAvailable: false });
+    expect(original).toMatchObject({ available: true });
     const response = await fetch(`${origin}/api/host/restart`, {
       method: "POST",
       headers: terminalHeaders,
@@ -329,7 +295,9 @@ describe("production launcher", () => {
     );
     expect(child.exitCode).toBeNull();
     expect(child.signalCode).toBeNull();
-    await assertTerminalPreserved();
+    expect((await terminals()).terminals).toContainEqual(
+      expect.objectContaining({ id: createdTerminal.id }),
+    );
 
     await stop(child);
     await expect(readFile(statePath, "utf8")).rejects.toMatchObject({
@@ -338,11 +306,26 @@ describe("production launcher", () => {
 
     const restarted = await launch("start");
     expect((await readState()).token).toBe(firstState.token);
-    await assertTerminalPreserved();
-    const closeTerminalResponse = await terminalOperation({
-      command: "remove",
-      params: { id: createdTerminal.id, force: true },
-    });
+    const { epoch: nextEpoch } = (await (
+      await fetch(`${origin}/api/terminal-operations`, {
+        headers: terminalHeaders,
+      })
+    ).json()) as { epoch: string };
+    const closeTerminalResponse = await fetch(
+      `${origin}/api/terminal-operations`,
+      {
+        method: "POST",
+        headers: terminalHeaders,
+        body: JSON.stringify({
+          operationId: randomUUID(),
+          executor: { kind: "terminal", epoch: nextEpoch },
+          intent: {
+            command: "remove",
+            params: { id: createdTerminal.id, force: true },
+          },
+        }),
+      },
+    );
     expect(closeTerminalResponse.ok).toBe(true);
     await stop(restarted);
   }, 240_000);

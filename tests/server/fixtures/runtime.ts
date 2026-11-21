@@ -1,13 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { vi } from "vitest";
@@ -68,7 +61,7 @@ export class FakeRpc extends EventEmitter {
     entries: readonly Record<string, unknown>[] = [],
     options: {
       leaf?: string | null;
-      sealed?: "turn" | "settled" | "idle" | null;
+      sealed?: boolean;
     } = {},
   ): void {
     const statusKey = `${this.options.env?.INSPIRE_BRANCH_STATUS_KEY}${CHECKPOINT_SUFFIX}`;
@@ -93,8 +86,7 @@ export class FakeRpc extends EventEmitter {
         from,
         tail,
         leaf: options.leaf === undefined ? tail : options.leaf,
-        run: 0,
-        sealed: options.sealed === undefined ? "idle" : options.sealed,
+        sealed: options.sealed ?? true,
         entries: entries.length,
       }),
     );
@@ -159,7 +151,7 @@ export class FakeRpc extends EventEmitter {
           : entries.findIndex((item) => item.id === this.checkpointTail);
       this.publishCheckpoint(entries.slice(after + 1), {
         leaf: this.checkpointLeaf(),
-        sealed: null,
+        sealed: false,
       });
       return { disposition: "handled" } as T;
     }
@@ -274,8 +266,6 @@ export class FakeRpc extends EventEmitter {
 export const TEST_CWD = realpathSync(tmpdir());
 
 export let fixtureWorkspace: string;
-
-export let HIDDEN_FOLDER_CWD: string;
 
 export function fixtureCwd(cwd: string): string {
   return /^\/(project|folder|loose|ordinary|hidden|other)(\/|$)/u.test(cwd)
@@ -403,7 +393,7 @@ export function catalog(records: SessionRecord[]): SessionCatalogLike {
 const runtimes: RuntimeController[] = [];
 const attachments: AttachmentStore[] = [];
 
-export const workspaceDirectories: string[] = [];
+const workspaceDirectories: string[] = [];
 
 /** Real upload lifecycle with periodic cleanup disabled for deterministic fixtures. */
 export function workerAttachmentStore(root: string): AttachmentStore {
@@ -458,15 +448,14 @@ export function schedulingRuntime(options?: Parameters<typeof fakeRuntime>[0]) {
   return fakeRuntime({ openSessionProjection: preview, ...options });
 }
 
-export function deferredSignal(): {
-  promise: Promise<void>;
-  resolve: () => void;
-} {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
+export const deferredSignal = () => Promise.withResolvers<void>();
+
+export async function stageUpload(
+  store: AttachmentStore,
+  file: Express.Multer.File,
+) {
+  const [staged] = await store.addMany([file]);
+  return staged!;
 }
 
 export function upload(name: string, type: string): Express.Multer.File {
@@ -480,10 +469,12 @@ export function upload(name: string, type: string): Express.Multer.File {
 }
 
 export async function initializeRuntimeFixture() {
-  fixtureWorkspace = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-runtime-fixture-")),
-  );
+  const pi = await nativePiWorkspace("inspire-runtime-fixture-", {
+    defaultProjectTrust: "never",
+  });
+  fixtureWorkspace = pi.root;
   workspaceDirectories.push(fixtureWorkspace);
+  stubNativePiEnvironment(pi.env);
   await Promise.all(
     [
       "previews",
@@ -498,25 +489,6 @@ export async function initializeRuntimeFixture() {
       mkdir(join(fixtureWorkspace, directory), { recursive: true }),
     ),
   );
-  HIDDEN_FOLDER_CWD = fixtureCwd("/folder");
-}
-
-export async function initializeIsolatedRuntimeFixture() {
-  await initializeRuntimeFixture();
-  const pi = await nativePiWorkspace(
-    "pi-",
-    { defaultProjectTrust: "never" },
-    fixtureWorkspace,
-  );
-  stubNativePiEnvironment(pi.env);
-}
-
-export async function disposeIsolatedRuntimeFixture() {
-  try {
-    await disposeRuntimeFixture();
-  } finally {
-    vi.unstubAllEnvs();
-  }
 }
 
 export async function disposeRuntimeFixture() {
@@ -527,6 +499,7 @@ export async function disposeRuntimeFixture() {
     for (const result of closed)
       if (result.status === "rejected") throw result.reason;
   } finally {
+    vi.unstubAllEnvs();
     await Promise.all(attachments.splice(0).map((store) => store.close()));
     await Promise.all(
       workspaceDirectories

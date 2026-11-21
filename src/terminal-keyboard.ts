@@ -1,4 +1,4 @@
-import { isComposingKeyboardEvent } from "./keyboard-input";
+import { isComposingKeyboardEvent, isEditableTarget } from "./keyboard-input";
 
 type TerminalKeyEvent = Pick<
   KeyboardEvent,
@@ -56,10 +56,5 @@ export function isTerminalShortcutTarget(target: EventTarget | null): boolean {
     )
   )
     return false;
-  return (
-    target.matches(".xterm-helper-textarea") ||
-    !target.closest(
-      'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]',
-    )
-  );
+  return target.matches(".xterm-helper-textarea") || !isEditableTarget(target);
 }

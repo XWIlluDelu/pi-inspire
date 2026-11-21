@@ -1,7 +1,7 @@
-import { mkdtemp, realpath, stat, writeFile } from "node:fs/promises";
+import { realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { browserFixtureProjects } from "./fixtures/workspace.mjs";
+import { createBrowserProject } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
 import { pairedPage } from "./support/navigation";
 
@@ -9,9 +9,7 @@ import { pairedPage } from "./support/navigation";
 // Playwright request routing (notably in WebKit), so keep that fixture seam explicit.
 test.use({ serviceWorkers: "block" });
 
-test("directory navigation keeps focus and never shows entries for a failed path", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("directory navigation keeps focus and never shows entries for a failed path", async ({ page }) => {
   const late = Promise.withResolvers<void>();
   const entered = Promise.withResolvers<void>();
   const childListing = Promise.withResolvers<void>();
@@ -110,9 +108,7 @@ test("directory navigation keeps focus and never shows entries for a failed path
   ).toHaveValue("/workspace/src");
 });
 
-test("directory picker preserves hidden visibility across opaque Host roots and resets on reopen", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("directory picker preserves hidden visibility across opaque Host roots and resets on reopen", async ({ page }) => {
   const drive = "R:\\";
   const share = "\\\\server\\share";
   const child = `${share}\\实验项目`;
@@ -147,7 +143,7 @@ test("directory picker preserves hidden visibility across opaque Host roots and 
   await pairedPage(page);
   await page.getByRole("button", { name: "New session", exact: true }).click();
   const browse = page.getByRole("button", { name: "Browse host directories" });
-  await browse.press("Enter");
+  await browse.click();
   const dialog = page.getByRole("dialog", { name: "Choose project directory" });
   const roots = dialog.getByRole("group", { name: "Filesystem roots" });
   const path = dialog.getByRole("textbox", { name: "Project directory" });
@@ -182,80 +178,82 @@ test("directory picker preserves hidden visibility across opaque Host roots and 
     page.getByRole("textbox", { name: "Project directory" }),
   ).toHaveValue(child);
 
-  await browse.press("Enter");
+  await browse.click();
   await expect(hidden).toHaveAttribute("aria-pressed", "false");
   await hidden.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(browse).toBeFocused();
 });
 
-test.describe("New project on a phone", { tag: "@cross-browser" }, () => {
-  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
-  test("creates only after explicit activation and starts with the original first message", async ({
-    page,
-  }) => {
-    const root = await mkdtemp(join(browserFixtureProjects, "new-project-"));
-    const directory = join(root, "projects", "new-project");
-    await pairedPage(page);
-    await hostRequest(page).post("/api/sessions/deselect");
-    await page.reload();
-    const message = page.getByRole("textbox", { name: "First message" });
-    await expect(message).toBeVisible();
-    const project = page.getByRole("textbox", {
-      name: "Project directory",
-    });
-    const file = join(root, "not-a-folder");
-    await writeFile(file, "fixture");
-    await project.fill(file);
-    await message.fill("Review the new project");
-    await expect(page.getByRole("alert")).toContainText(
-      "Project path is not a directory",
-    );
-    await expect(
-      page.getByRole("button", { name: "Create folder and start" }),
-    ).toHaveCount(0);
-    await project.fill(directory);
-    await expect(message).toHaveValue("Review the new project");
-    const create = page.getByRole("button", {
-      name: "Create folder and start",
-    });
-    await expect(create).toBeEnabled();
-    await expect(
-      page.getByRole("button", { name: "Start session", exact: true }),
-    ).toBeDisabled();
-    await expect(stat(join(root, "projects"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    const created = page.waitForRequest(
-      (request) =>
-        request.method() === "POST" &&
-        new URL(request.url()).pathname === "/api/sessions/new",
-    );
-    const prompted = page.waitForRequest(
-      (request) =>
-        request.method() === "POST" &&
-        new URL(request.url()).pathname === "/api/prompt",
-    );
-    await create.tap();
-    expect((await created).postDataJSON()).toEqual({
-      cwd: directory,
-      createDirectory: true,
-    });
-    const { sessionId, message: promptText } = (await prompted).postDataJSON();
-    expect(promptText).toBe("Review the new project");
-    await expect(
-      page.getByRole("textbox", { name: "Message", exact: true }),
-    ).toBeVisible();
-    expect((await stat(directory)).isDirectory()).toBe(true);
-    const snapshot = await (
-      await hostRequest(page).get(
-        `/api/snapshot?detail=${encodeURIComponent(sessionId)}`,
-      )
-    ).json();
-    expect(snapshot.active.cwd).toBe(await realpath(directory));
-    expect(snapshot.active).toMatchObject({
-      model: { provider: "workbench", id: "offline" },
-      thinkingLevel: "medium",
+test.describe("New project on a phone", () => {
+    test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    test("creates only after explicit activation and starts with the original first message", async ({
+      page,
+    }) => {
+      const root = await createBrowserProject("new-");
+      const directory = join(root, "projects", "new-project");
+      await pairedPage(page);
+      await hostRequest(page).post("/api/sessions/deselect");
+      await page.reload();
+      const message = page.getByRole("textbox", { name: "First message" });
+      await expect(message).toBeVisible();
+      const project = page.getByRole("textbox", {
+        name: "Project directory",
+      });
+      const file = join(root, "not-a-folder");
+      await writeFile(file, "fixture");
+      await project.fill(file);
+      await message.fill("Review the new project");
+      await expect(page.getByRole("alert")).toContainText(
+        "Project path is not a directory",
+      );
+      await expect(
+        page.getByRole("button", { name: "Create folder and start" }),
+      ).toHaveCount(0);
+      await project.fill(directory);
+      await expect(message).toHaveValue("Review the new project");
+      const create = page.getByRole("button", {
+        name: "Create folder and start",
+      });
+      await expect(create).toBeEnabled();
+      await expect(
+        page.getByRole("button", { name: "Start session", exact: true }),
+      ).toBeDisabled();
+      await expect(stat(join(root, "projects"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const created = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" &&
+          new URL(request.url()).pathname === "/api/sessions/new",
+      );
+      const prompted = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" &&
+          new URL(request.url()).pathname === "/api/prompt",
+      );
+      await create.tap();
+      expect((await created).postDataJSON()).toMatchObject({
+        cwd: directory,
+        createDirectory: true,
+      });
+      const { sessionId, message: promptText } = (
+        await prompted
+      ).postDataJSON();
+      expect(promptText).toBe("Review the new project");
+      await expect(
+        page.getByRole("textbox", { name: "Message", exact: true }),
+      ).toBeVisible();
+      expect((await stat(directory)).isDirectory()).toBe(true);
+      const snapshot = await (
+        await hostRequest(page).get(
+          `/api/snapshot?detail=${encodeURIComponent(sessionId)}`,
+        )
+      ).json();
+      expect(snapshot.active.cwd).toBe(await realpath(directory));
+      expect(snapshot.active).toMatchObject({
+        model: { provider: "workbench", id: "offline" },
+        thinkingLevel: "medium",
+      });
     });
   });
-});

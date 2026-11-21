@@ -1,3 +1,4 @@
+import { stageUpload } from "./fixtures/runtime.js";
 import { access, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -171,9 +172,9 @@ describe("attachments", () => {
   });
 
   it("looks up original Pending Copy image handles without leasing or dropping missing attachments", async () => {
-    const first = await store.add(upload("first.png", "image/png"));
-    const second = await store.add(upload("second.png", "image/png"));
-    const doc = await store.add(upload("notes.txt", "text/plain"));
+    const first = await stageUpload(store, upload("first.png", "image/png"));
+    const second = await stageUpload(store, upload("second.png", "image/png"));
+    const doc = await stageUpload(store, upload("notes.txt", "text/plain"));
     expect(
       store.pendingCopyImageIds([second.id, doc.id, first.id, second.id]),
     ).toEqual([second.id, first.id]);
@@ -197,7 +198,7 @@ describe("attachments", () => {
   });
 
   it("keeps an in-flight lease exclusive and allows withdrawal after a failed delivery", async () => {
-    const doc = await store.add(upload("draft.txt", "text/plain"));
+    const doc = await stageUpload(store, upload("draft.txt", "text/plain"));
     const { files } = await store.resolveForPrompt([doc.id]);
     const path = files[0]!.path;
     await expect(store.resolveForPrompt([doc.id])).rejects.toMatchObject({
@@ -220,7 +221,8 @@ describe("attachments", () => {
 
   it("enforces upload limits and counts only prompt images against the image budget", async () => {
     await expect(
-      store.add(
+      stageUpload(
+        store,
         upload(
           "too-large.bin",
           "application/octet-stream",
@@ -229,6 +231,13 @@ describe("attachments", () => {
       ),
     ).rejects.toThrow(/Each attachment/);
 
+    const empty = await stageUpload(store, {
+      ...upload("empty.png", "image/png", 0),
+      buffer: Buffer.alloc(0),
+    });
+    await expect(store.resolveForPrompt([empty.id])).rejects.toMatchObject({
+      status: 422,
+    });
     const size = Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1;
     const ordinary = await store.addMany([
       upload("one.bmp", "image/bmp", size),
@@ -238,19 +247,25 @@ describe("attachments", () => {
     const resolved = await store.resolveForPrompt(ordinary.map(({ id }) => id));
     expect(resolved.images).toEqual([]);
     expect(resolved.files).toHaveLength(2);
-    const first = await store.add(upload("one.png", "image/png", size));
-    const second = await store.add(upload("two.png", "image/png", size));
+    const first = await stageUpload(
+      store,
+      upload("one.png", "image/png", size),
+    );
+    const second = await stageUpload(
+      store,
+      upload("two.png", "image/png", size),
+    );
     await expect(store.resolveForPrompt([first.id, second.id])).rejects.toThrow(
       new RegExp(String(MAX_PROMPT_IMAGE_BYTES)),
     );
   });
 
   it("holds no leases when resolving fails partway", async () => {
-    const image = await store.add(upload("shot.png", "image/png"));
+    const image = await stageUpload(store, upload("shot.png", "image/png"));
     const first = await store.resolveForPrompt([image.id]);
     store.restage([image.id]);
     await rm(first.files[0]!.path, { force: true }); // simulate disk loss
-    const doc = await store.add(upload("notes.txt", "text/plain"));
+    const doc = await stageUpload(store, upload("notes.txt", "text/plain"));
 
     await expect(store.resolveForPrompt([doc.id, image.id])).rejects.toThrow();
     // The failed resolve rolled back: the document is still withdrawable.

@@ -1,6 +1,5 @@
 import {
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   rm,
@@ -8,10 +7,8 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import {
-  browserFixtureHome,
-  browserFixtureProjects,
-} from "./fixtures/workspace.mjs";
+import type { SessionRuntimeStatus } from "../../shared/contracts";
+import { browserFixtureHome, createBrowserProject } from "./fixtures/workspace.mjs";
 import { expectConfigurationField } from "./support/configuration-form";
 import { routeSnapshots } from "./support/host-events";
 import {
@@ -37,7 +34,7 @@ const expectServer = async (
 
 async function scenario(page: Page, session: "live" | "new") {
   const root = await realpath(
-    await mkdtemp(join(browserFixtureProjects, "mcp-")),
+    await createBrowserProject("mcp-"),
   );
   const cwd = join(root, "project");
   const userFile = join(browserFixtureHome, "agent/mcp.json");
@@ -90,11 +87,14 @@ async function scenario(page: Page, session: "live" | "new") {
     let reveals = 0,
       reloads = 0;
     let sessionId = "";
+    let workerStatus: SessionRuntimeStatus | undefined;
     const transport =
       session === "live"
         ? await routeSnapshots(page, {
-            snapshot: ({ active }) => {
-              if (active) sessionId = active.sessionId;
+            snapshot: ({ active, sessionStatuses }) => {
+              if (!active) return;
+              sessionId = active.sessionId;
+              if (workerStatus) sessionStatuses[sessionId] = workerStatus;
             },
           })
         : null;
@@ -137,12 +137,10 @@ async function scenario(page: Page, session: "live" | "new") {
       projectFile,
       settings,
       open,
-      worker: (runState: "running" | "idle", external = false) =>
-        transport?.send({
-          type: "session_status",
-          sessionId,
-          sessionStatus: { runState, external },
-        }),
+      worker: (runState: "running" | "idle", external = false) => {
+        workerStatus = { runState, external };
+        transport?.send({ type: "session_status", sessionId, sessionStatus: workerStatus });
+      },
       reveals: () => reveals,
       reloads: () => reloads,
       json: async (path: string) => JSON.parse(await readFile(path, "utf8")),
@@ -175,7 +173,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     await advanced.click();
     await description.fill("Updated documentation");
     await settings
-      .getByRole("button", { name: "Conversation", exact: true })
+      .getByRole("button", { name: "Behavior", exact: true })
       .click();
     await expect(description).not.toBeVisible();
     await settings.getByRole("button", { name: "MCP", exact: true }).click();
@@ -183,41 +181,51 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     await expect(
       settings.getByLabel("Header value for Authorization"),
     ).toHaveValue("");
+    await settings.getByRole("button", { name: "Remove header X-Tenant" }).click();
+    await settings.getByText("OAuth client configuration", { exact: true }).click();
+    await settings.getByLabel("Callback port", { exact: true }).fill("8765");
+    // Saving while busy defers reload until idle, with a single-click reload action.
+    fixture.worker("running");
     await save.click();
-    await expect(
-      settings.getByText(
-        "Saved to file. Running sessions have not been reloaded.",
-      ),
-    ).toBeVisible();
+    await expect(settings.getByText("MCP settings saved.")).toBeVisible();
     await expect(edit).toBeFocused();
     expect(fixture.reloads()).toBe(0);
     const saved = (await fixture.json(fixture.userFile)).mcpServers.docs;
     expect(saved.description).toBe("Updated documentation");
     expect(saved.url).toContain("stored-url-secret");
-    expect(saved.headers.Authorization).toBe("Bearer stored-header-secret");
-    expect(saved.oauth.clientSecret).toBe("stored-oauth-secret");
-    await settings
-      .getByRole("button", { name: "Reload selected session…" })
-      .click();
-    const confirm = settings.getByRole("button", {
-      name: "Reload Pi resources",
+    expect(saved.headers).toEqual({ Authorization: "Bearer stored-header-secret" });
+    expect(saved.oauth).toMatchObject({ clientSecret: "stored-oauth-secret", callbackPort: 8765 });
+    const reloadButton = settings.getByRole("button", {
+      name: "Reload selected session",
       exact: true,
     });
-    fixture.worker("running");
-    await expect(confirm).toBeDisabled();
+    await expect(reloadButton).toBeDisabled();
     fixture.worker("idle");
-    await expect(confirm).toBeEnabled();
+    await expect(reloadButton).toBeEnabled();
     const reloaded = page.waitForResponse("**/api/control/native-command");
-    await confirm.click();
+    await reloadButton.click();
     expect((await reloaded).ok()).toBe(true);
-    await expect(confirm).toBeHidden();
+    await expect(reloadButton).toBeHidden();
     expect(fixture.reloads()).toBe(1);
+    // Saving while idle reloads automatically without extra confirmation.
+    await edit.click();
+    await settings.getByText("Advanced configuration", { exact: true }).click();
+    await settings
+      .getByLabel("Description", { exact: true })
+      .fill("Auto-reloaded documentation");
+    const autoReloaded = page.waitForResponse("**/api/control/native-command");
+    await save.click();
+    expect((await autoReloaded).ok()).toBe(true);
+    await expect(
+      settings.getByText("MCP settings saved and Pi reloaded."),
+    ).toBeVisible();
+    expect(fixture.reloads()).toBe(2);
     fixture.worker("idle", true);
     await expect(
       settings.getByText("Run /reload in the original Pi terminal."),
     ).toBeVisible();
     await expect(
-      settings.getByRole("button", { name: "Reload selected session…" }),
+      settings.getByRole("button", { name: "Reload selected session" }),
     ).toHaveCount(0);
 
     // Retire the owner with an actual credential reveal in flight.

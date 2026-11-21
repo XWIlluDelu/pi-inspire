@@ -5,6 +5,7 @@ import {
   useRef,
 } from "react";
 import { Dropdown } from "./Dropdown";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 export function SettingsLayout<Category extends string>({
   label,
@@ -111,6 +112,7 @@ export function SettingsPage({
 }
 
 type FieldDetails = {
+  id?: string;
   label: string;
   description?: ReactNode;
   status?: ReactNode;
@@ -120,6 +122,7 @@ type FieldDetails = {
 };
 
 export function SettingField({
+  id,
   label,
   description,
   children,
@@ -130,6 +133,7 @@ export function SettingField({
 }: FieldDetails & { children: ReactNode }) {
   return (
     <div
+      id={id}
       className={`settings__field${className ? ` ${className}` : ""}`}
       data-layout={layout}
       data-detailed={Boolean(description || status) || undefined}
@@ -192,37 +196,10 @@ export function SwitchField({
   ...control
 }: Pick<FieldDetails, "label" | "description" | "status"> & {
   controlLabel?: string;
-} & Omit<ComponentProps<typeof SettingsSwitch>, "label">) {
+} & Omit<ComponentProps<typeof ToggleSwitch>, "label">) {
   return (
     <SettingField layout="inline" {...{ label, description, status }}>
-      <SettingsSwitch label={controlLabel ?? label} {...control} />
+      <ToggleSwitch label={controlLabel ?? label} {...control} />
     </SettingField>
-  );
-}
-
-export function SettingsSwitch({
-  label,
-  checked,
-  onChange,
-  disabled = false,
-  busy = false,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  disabled?: boolean;
-  busy?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      className="settings-switch"
-      aria-label={label}
-      aria-checked={checked}
-      aria-busy={busy}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-    />
   );
 }

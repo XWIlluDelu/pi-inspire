@@ -10,14 +10,12 @@ import {
   type McpConnectionRead,
   type McpConnectionValues,
   mcpConfigValuesSchema,
-  mcpConnectionFields,
   mcpConnectionValuesSchema,
   mcpExposureSchema,
   mcpOAuthError,
   mcpPolicyFields,
   mcpPublicValuesSchema,
   mcpRegistrationSchema,
-  mcpSecretMaps,
 } from "../shared/mcp.js";
 import {
   applyConfigurationPatch,
@@ -80,11 +78,12 @@ function projectEntry(
         : policyOnly
           ? null
           : true,
-    exposure: parseExposure(value.exposure) ?? (policyOnly ? null : "codemode"),
-    urlConfigured: mcpConnectionFields.url.presence(value.url),
-    argumentCount: mcpConnectionFields.args.presence(value.args),
-    [mcpSecretMaps.env.projection]: strings(value.env),
-    [mcpSecretMaps.headers.projection]: strings(value.headers),
+    exposure:
+      parseExposure(value.exposure) ?? (policyOnly ? null : "codemode"),
+    urlConfigured: typeof value.url === "string",
+    argumentCount: Array.isArray(value.args) ? value.args.length : 0,
+    envKeys: strings(value.env),
+    headerKeys: strings(value.headers),
     oauthFields: strings(value.oauth),
     ...(registration ? { oauthClientRegistration: registration } : {}),
     toolExposure: Object.fromEntries(
@@ -95,9 +94,6 @@ function projectEntry(
           })
         : [],
     ),
-    extraFieldCount: Object.keys(value).filter(
-      (key) => key !== "type" && !Object.hasOwn(configFields, key),
-    ).length,
   };
 }
 const mcpDocument = {
@@ -263,9 +259,16 @@ export class McpConfigService {
         "That server is no longer available in this file",
         409,
       );
-    // Return only literal connection values, never execute hooks or include credentials
-    // from unrelated fields. URL/arguments themselves may contain user-saved secrets.
-    return mcpConnectionValuesSchema.parse(entry);
+    // A native file can contain fields for both transports. Reveal only the
+    // connection the editor actually displays.
+    switch (transportOf(entry)) {
+      case "http":
+        return mcpConnectionValuesSchema.parse({ url: entry.url });
+      case "stdio":
+        return mcpConnectionValuesSchema.parse({ args: entry.args });
+      default:
+        throw requestError("This server has no supported transport", 409);
+    }
   }
 
   async save(cwd: string | null, edit: McpConfigEdit): Promise<void> {
@@ -303,6 +306,11 @@ export class McpConfigService {
             409,
           );
         const value = mergeValues(current, values);
+        if (!adding && transportOf(current) !== transportOf(value))
+          throw requestError(
+            "Remove and add the server to change its transport",
+            400,
+          );
         if (isPolicyOnly(adding ? value : current, scope)) {
           if (!hasOnlyPolicy(values))
             throw requestError(

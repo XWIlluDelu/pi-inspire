@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BROWSER_UPGRADE_CLOSE } from "../../shared/browser-build.mjs";
 import {
   decodeTerminalInputFrame,
   encodeTerminalServerDataFrame,
@@ -143,28 +142,6 @@ describe("TerminalConnection", () => {
     vi.restoreAllMocks();
   });
 
-  it("stops terminal adoption and asks for reload when the current build changes", async () => {
-    const { connection, events } = fixture();
-    const upgrade = vi.fn();
-    window.addEventListener("inspire-browser-upgrade", upgrade, { once: true });
-    try {
-      connection.start();
-      await nextTurn();
-      const socket = FakeWebSocket.sockets[0]!;
-      socket.open();
-      makeReady(socket);
-      socket.disconnect(BROWSER_UPGRADE_CLOSE);
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(upgrade).toHaveBeenCalledOnce();
-      expect(events.status).toHaveBeenLastCalledWith("offline");
-      expect(FakeWebSocket.sockets).toEqual([socket]);
-      expect(connection.sendInput("do not send")).toBe(false);
-    } finally {
-      window.removeEventListener("inspire-browser-upgrade", upgrade);
-      connection.stop();
-    }
-  });
-
   it.each(["ticket", "replay", "inactive"] as const)(
     "recovers a silent %s stall without waiting for close",
     async (phase) => {
@@ -184,7 +161,8 @@ describe("TerminalConnection", () => {
       connection.start();
       await nextTurn();
       const old = FakeWebSocket.sockets[0];
-      if (phase !== "ticket") old!.open();
+      if (phase !== "ticket")
+        old!.open();
       if (phase === "replay") {
         attachForReplay(old!);
         old!.receive(dataFrame("snapshot"));

@@ -88,7 +88,6 @@ describe("hidden deletion eligibility", () => {
     sessionListLoadingOlder: false,
     sessionListHydrating: false,
     sessionListError: null,
-    sessionListIssues: [],
     curationPending: false,
     clearingHidden: false,
     deletingSessionId: null,
@@ -97,7 +96,7 @@ describe("hidden deletion eligibility", () => {
 
   it.each([
     ["opening", { openingSessionId: "target" }, /opening/],
-    ["partial catalog", { sessionListHydrating: true }, /loading/],
+    ["pending hydration", { sessionListHydrating: true }, /loading/],
     ["search", { sessionQuery: "term" }, /searching/],
     ["another deletion", { deletingSessionId: "elsewhere" }, /deletion/],
   ] as const)(
@@ -108,15 +107,6 @@ describe("hidden deletion eligibility", () => {
       ).toMatch(message);
     },
   );
-
-  it("keeps complete-set deletion unavailable while some catalog sources are unknown", () => {
-    expect(
-      hiddenDeletionBlockReason(targets, {
-        ...idle(),
-        sessionListIssues: [{ path: "/offline", message: "Access denied" }],
-      }),
-    ).toMatch(/unavailable session sources/);
-  });
 });
 
 function navModelRow(id: string, folder: string, day: number) {

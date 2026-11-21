@@ -1,6 +1,6 @@
 import type { PiCommand } from "../../shared/commands";
 import type { ThinkingLevel } from "../../shared/contracts";
-import { thinkingLevelOptions } from "../model-options";
+import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
 import {
   availableStatusControls,
   usePresentationAdapters,
@@ -62,6 +62,11 @@ export function ThinkingControl({
   return (
     <Dropdown
       {...props}
+      // Without supported options the raw level would show; keep one label rule.
+      display={
+        props.display ??
+        (props.value ? thinkingLevelLabel(props.value) : undefined)
+      }
       direction="up"
       openRequest={openRequest}
       onOpenRequestHandled={onOpenRequestHandled}

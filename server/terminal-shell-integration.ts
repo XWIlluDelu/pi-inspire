@@ -8,7 +8,6 @@ const PRIVATE_FILE_MODE = 0o600;
 interface IntegratedTerminalLaunch {
   args: string[];
   env: NodeJS.ProcessEnv;
-  enabled: boolean;
 }
 
 function shellQuote(value: string): string {
@@ -27,17 +26,20 @@ function shellLiteral(value: string): string {
   return value.replaceAll("__INSPIRE_OPEN__", "${");
 }
 
-const bashIntegration =
-  shellLiteral(String.raw`__inspire_encode_terminal_value() {
+const percentEncoder = String.raw`__inspire_encode_terminal_value() {
   local value="$1"
-  value="__INSPIRE_OPEN__value//%/%25}"
+  value="__INSPIRE_OPEN__value//\%/%25}"
   value="__INSPIRE_OPEN__value//$'\033'/%1B}"
   value="__INSPIRE_OPEN__value//$'\007'/%07}"
   value="__INSPIRE_OPEN__value//$'\r'/%0D}"
   value="__INSPIRE_OPEN__value//$'\n'/%0A}"
   printf '%s' "$value"
 }
-__inspire_terminal_preexec() {
+`;
+
+const bashIntegration = shellLiteral(
+  percentEncoder +
+    String.raw`__inspire_terminal_preexec() {
   local command
   # fc -1 can select the previous entry while expanding a PS0 containing
   # command substitution. history reports the accepted line on both PS0 and
@@ -196,18 +198,9 @@ __inspire_bash_finish_bootstrap
 `,
 ).replace("__INSPIRE_BASH_BOOTSTRAP__", shellQuote(bashLoginBootstrap));
 
-const zshIntegration =
-  shellLiteral(String.raw`__inspire_encode_terminal_value() {
-  local value="$1"
-  # Escape the literal percent so zsh does not treat it as an end anchor.
-  value="__INSPIRE_OPEN__value//\%/%25}"
-  value="__INSPIRE_OPEN__value//$'\033'/%1B}"
-  value="__INSPIRE_OPEN__value//$'\007'/%07}"
-  value="__INSPIRE_OPEN__value//$'\r'/%0D}"
-  value="__INSPIRE_OPEN__value//$'\n'/%0A}"
-  print -rn -- "$value"
-}
-__inspire_terminal_preexec() {
+const zshIntegration = shellLiteral(
+  percentEncoder +
+    String.raw`__inspire_terminal_preexec() {
   printf '\033]6973;C1;%s\007' "$(__inspire_encode_terminal_value "$1")"
 }
 __inspire_terminal_precmd() {
@@ -262,27 +255,15 @@ export async function ensureTerminalShellIntegration(
   await ensurePrivateDirectory(directory, "terminal integration directory", {
     loose: "repair",
   });
-  await replacePrivateFile(
-    join(directory, "bash-integration.sh"),
-    bashIntegration,
-  );
-  await replacePrivateFile(join(directory, "bash-init.sh"), bashWrapper);
-  await replacePrivateFile(
-    join(directory, "bash-login-init.sh"),
-    bashLoginInit,
-  );
-  await replacePrivateFile(
-    join(directory, "zsh-integration.zsh"),
-    zshIntegration,
-  );
-  await replacePrivateFile(
-    join(directory, "fish-integration.fish"),
-    fishIntegration,
-  );
-  await replacePrivateFile(
-    join(directory, "powershell-integration.ps1"),
-    powerShellWrapper,
-  );
+  for (const [name, content] of Object.entries({
+    "bash-integration.sh": bashIntegration,
+    "bash-init.sh": bashWrapper,
+    "bash-login-init.sh": bashLoginInit,
+    "zsh-integration.zsh": zshIntegration,
+    "fish-integration.fish": fishIntegration,
+    "powershell-integration.ps1": powerShellWrapper,
+  }))
+    await replacePrivateFile(join(directory, name), content);
 
   const zshDirectory = join(directory, "zsh");
   await ensurePrivateDirectory(zshDirectory, "terminal integration directory", {
@@ -335,7 +316,7 @@ export function integratedTerminalLaunch(
     TERM_PROGRAM: "Inspire",
     TERM_PROGRAM_VERSION: "1",
   };
-  if (!directory) return { args: [...profile.args], env, enabled: false };
+  if (!directory) return { args: [...profile.args], env };
   const shell = basename(profile.shell)
     .toLowerCase()
     .replace(/\.exe$/u, "");
@@ -355,7 +336,6 @@ export function integratedTerminalLaunch(
           INSPIRE_BASH_PROMPT_COMMAND_EXPORTED:
             baseEnv.PROMPT_COMMAND === undefined ? "0" : "1",
         },
-        enabled: true,
       };
     }
     return {
@@ -366,14 +346,12 @@ export function integratedTerminalLaunch(
         "-i",
       ],
       env,
-      enabled: true,
     };
   }
   if (shell === "zsh")
     return {
       args: [...profile.args],
       env: { ...env, ZDOTDIR: join(directory, "zsh") },
-      enabled: true,
     };
   if (shell === "fish")
     return {
@@ -383,7 +361,6 @@ export function integratedTerminalLaunch(
         `source ${shellQuote(join(directory, "fish-integration.fish"))}`,
       ],
       env,
-      enabled: true,
     };
   if (shell === "pwsh" || shell === "powershell")
     return {
@@ -398,7 +375,6 @@ export function integratedTerminalLaunch(
         join(directory, "powershell-integration.ps1"),
       ],
       env,
-      enabled: true,
     };
-  return { args: [...profile.args], env, enabled: false };
+  return { args: [...profile.args], env };
 }

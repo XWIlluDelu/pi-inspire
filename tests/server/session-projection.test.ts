@@ -117,16 +117,20 @@ afterEach(async () => {
 describe("SessionProjection framing and last-good state", () => {
   it("owns an unfinished frame when the caller reuses its read buffer", () => {
     const frames: Buffer[] = [];
-    const decoder = new JsonlObjectDecoder((frame) => {
+    const entries: unknown[] = [];
+    const decoder = new JsonlObjectDecoder((entry, frame) => {
+      entries.push(entry);
       frames.push(Buffer.from(frame));
     });
     const buffer = Buffer.alloc(16);
 
     let length = buffer.write('{"value"');
-    expect(decoder.push(buffer.subarray(0, length))).toEqual([]);
+    decoder.push(buffer.subarray(0, length));
+    expect(entries).toEqual([]);
 
     length = buffer.write(':"ok"}\n');
-    expect(decoder.push(buffer.subarray(0, length))).toEqual([{ value: "ok" }]);
+    decoder.push(buffer.subarray(0, length));
+    expect(entries).toEqual([{ value: "ok" }]);
     expect(Buffer.concat(frames).toString("utf8")).toBe('{"value":"ok"}\n');
   });
 
@@ -479,11 +483,15 @@ describe("SessionProjection replacement and Pi context semantics", () => {
   it("builds incremental context from a verified suffix exactly as a fresh Pi read would", async () => {
     const { path, record, projection } = await fixture([
       message("s1", null, "system", "host-only startup", 0),
-      message("u1", "s1", "user", "one", 1),
+      message("intro", "s1", "assistant", "notice", 1, {
+        __inspireUserTurnId: "extension-field",
+        __inspireUserTurnIndex: "bad",
+      }),
     ]);
     const prefix = projection.messages[0];
     expect(projection.viewMessages("s1")).toEqual([]);
     const entries = [
+      message("u1", "intro", "user", "one", 2),
       { type: "session_info", id: "info", parentId: "u1", name: "Named" },
       {
         type: "model_change",
@@ -533,6 +541,10 @@ describe("SessionProjection replacement and Pi context semantics", () => {
       replacesRows: false,
     });
     expect(projection.messages[0]).toBe(prefix);
+    expect(projection.messages[1]).toMatchObject({
+      __inspireUserTurnId: "u1:0",
+      __inspireUserTurnIndex: 0,
+    });
     expect(projection.leafId).toBe("s2");
     expect(projection.viewMessages("s2")).toEqual(projection.messages);
     expect(JSON.stringify(projection.latestPage())).not.toContain("host-only");
@@ -894,6 +906,7 @@ describe("SessionProjection bounded paging", () => {
       message("left-end", "left", "user", "Left end", 28),
     ];
     await append(...branches);
+    expect(ids(projection.viewMessages("c2"))).toEqual(["follow", "c2"]);
     expect(ids(projection.messages)).toEqual([
       ...entries.slice(0, 19).map(({ id }) => id),
       "left",
@@ -909,6 +922,9 @@ describe("SessionProjection bounded paging", () => {
     ] as const) {
       expect(projection.latestContinuation(from)).toBe(tip);
     }
+    expect(projection.historyPage({ kind: "outline" }).nodes).toContainEqual(
+      expect.objectContaining({ id: "u18", routeLeafId: "left-end" }),
+    );
     expect(() => cursorPage(cursor)).toThrow(/selected branch/);
     expect(cursorPage(cursor, "c2").messages).toEqual(older.messages);
     const branched = projection.latestPage().composerHistoryVersion;

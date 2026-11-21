@@ -1,16 +1,8 @@
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { modelSettingsSnapshot } from "../web/fixtures/model-settings";
-import { browserFixtureHome } from "./fixtures/workspace.mjs";
+import { browserFixtureHome, createBrowserProject } from "./fixtures/workspace.mjs";
 import {
   openFixtureSession,
   openSettings,
@@ -129,9 +121,8 @@ test.describe("touch model settings", () => {
 test("New model settings save native declarations and defaults for the prospective owner", async ({
   page,
 }) => {
-  const target = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-model-project-")),
-  );
+  test.setTimeout(60_000);
+  const target = await realpath(await createBrowserProject("model-settings-"));
   const agent = join(browserFixtureHome, "agent");
   const configuration = join(agent, "models.json");
   const preferences = join(agent, "settings.json");
@@ -142,14 +133,9 @@ test("New model settings save native declarations and defaults for the prospecti
   });
   const savedPreferences = async () =>
     JSON.parse(await readFile(preferences, "utf8"));
-  let settingsOwner: Record<string, string> | undefined;
   let modelChanges = 0;
   page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (url.pathname === "/api/control/model") modelChanges++;
-    if (url.pathname !== "/api/model-settings") return;
-    const owner = Object.fromEntries(url.searchParams);
-    if (request.method() === "GET") settingsOwner = owner;
+    if (new URL(request.url()).pathname === "/api/control/model") modelChanges++;
   });
   try {
     await mkdir(join(target, ".pi"));
@@ -160,7 +146,7 @@ test("New model settings save native declarations and defaults for the prospecti
     await writeFile(
       preferences,
       JSON.stringify({
-        ...(await savedPreferences()),
+        ...JSON.parse(original.toString("utf8")),
         defaultProvider: "missing",
       }),
     );
@@ -186,14 +172,18 @@ test("New model settings save native declarations and defaults for the prospecti
     await expect(search).toBeFocused();
     await search.press("Tab");
     await expect(manage).toBeFocused();
+    const modelSettings = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/model-settings" &&
+        url.searchParams.get("cwd") === target &&
+        response.request().method() === "GET";
+    });
     await manage.press("Enter");
+    expect((await modelSettings).ok()).toBe(true);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
     });
-    await expect
-      .poll(() => settingsOwner)
-      .toEqual({ cwd: target, refresh: "1" });
     await expect(
       settings.getByText("This project uses Low.", { exact: true }),
     ).toBeVisible();
@@ -205,7 +195,13 @@ test("New model settings save native declarations and defaults for the prospecti
     await settings
       .getByLabel("API key", { exact: true })
       .fill("CONFIG_FIXTURE_SECRET");
+    const providerSaved = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/model-settings/config" &&
+        response.request().method() === "PATCH",
+    );
     await settings.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await providerSaved).ok()).toBe(true);
     const addModel = settings.getByRole("button", {
       name: "Add model to new-provider",
       exact: true,
@@ -257,6 +253,5 @@ test("New model settings save native declarations and defaults for the prospecti
     await writeFile(preferences, original);
     if (originalConfig) await writeFile(configuration, originalConfig);
     else await rm(configuration, { force: true });
-    await rm(target, { recursive: true, force: true });
   }
 });

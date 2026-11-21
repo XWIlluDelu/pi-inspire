@@ -78,8 +78,6 @@
 }
 
 .terminal-project-context {
-  position: relative;
-  z-index: 5;
   color: var(--muted);
   background: var(--bg-raised);
   font-size: var(--text-xs);
@@ -101,17 +99,13 @@
   outline-offset: -2px;
 }
 
-.terminal-project-context + .terminal-toolbar {
-  inset-block-start: calc(var(--pane-tool-size) + 2 * var(--space-2));
-}
-
 .terminal-toolbar {
   z-index: 4;
   justify-content: flex-end;
   background: var(--bg-context);
 }
 
-.terminal-pane:has(.terminal-view--active :is(.terminal-search, .terminal-selection)) > .terminal-toolbar {
+.terminal-pane:has(.terminal-view--active .terminal-search) .terminal-toolbar {
   visibility: hidden;
 }
 
@@ -161,9 +155,9 @@
   position: absolute;
   z-index: 12;
   inset-block-start: calc(100% + 3px);
-  inset-inline-end: var(--space-2);
-  width: min(var(--terminal-menu-width, 268px), calc(100% - 2 * var(--space-2)));
-  max-height: max(0px, calc(100cqh - var(--pane-tool-size) - 12px));
+  inset-inline-end: 0;
+  width: min(var(--terminal-menu-width, 268px), calc(100cqw - 2 * var(--space-3)));
+  max-height: max(0px, calc(100cqh - var(--pane-tool-size) - var(--space-6)));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -325,9 +319,9 @@
 .terminal-view__overlays {
   position: absolute;
   z-index: 3;
-  top: 6px;
-  right: 8px;
-  max-width: calc(100% - 16px);
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-3);
+  max-width: calc(100% - 2 * var(--space-3));
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -394,7 +388,7 @@
 }
 
 .terminal-search {
-  width: min(430px, calc(100cqw - 16px));
+  width: min(430px, calc(100cqw - 2 * var(--space-3)));
   flex-wrap: wrap;
   gap: 3px;
   padding: 5px;
@@ -525,52 +519,6 @@
 
 .terminal-empty .empty-state__title { color: var(--terminal-fg); }
 .terminal-empty .button { margin-top: var(--space-2); }
-
-.terminal-pending {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 180px;
-  overflow: auto;
-  border-top: 1px solid var(--hairline-strong);
-  padding: 8px;
-  background: var(--bg-raised);
-}
-
-.terminal-pending__row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 4px 0;
-  color: var(--muted);
-  font: var(--text-xs)/1.5 var(--font-sans);
-}
-
-.terminal-pending__description {
-  flex: 1 1 100px;
-  min-width: 0;
-}
-
-.terminal-pending__label {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--body);
-}
-
-.terminal-pending__row > button {
-  flex: 0 0 auto;
-  min-height: 32px;
-}
-
-.terminal-pending + .terminal-pane__error {
-  position: static;
-  flex: 0 0 auto;
-  align-self: stretch;
-  max-width: none;
-  margin: 0 8px 8px;
-}
 
 .terminal-undo,
 .terminal-pane__error {
@@ -719,10 +667,6 @@
     padding-left: 9px;
   }
 
-  .terminal-pending__row > button {
-    min-height: 44px;
-  }
-
   .terminal-pane {
     --terminal-feedback-bottom: calc(58px + var(--safe-bottom));
     --terminal-action-height: 44px;
@@ -733,7 +677,7 @@
   }
 
   .terminal-settings__footer .button {
-    min-height: 44px;
+    --set-control-h: 44px;
   }
 
   .terminal-settings .settings-switch {
@@ -795,10 +739,6 @@
   .terminal-touch-keys__scroller > button {
     scroll-snap-align: start;
     scroll-snap-stop: always;
-  }
-
-  .terminal-touch-keys__scroller > button:last-child {
-    scroll-snap-align: end;
   }
 
   .terminal-touch-keys__arrows {

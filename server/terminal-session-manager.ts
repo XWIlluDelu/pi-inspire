@@ -38,6 +38,7 @@ import {
   type TerminalOperation,
   type TerminalOperationResults,
 } from "../shared/terminal-operations.js";
+import { captureTerminalContinuation } from "./terminal-continuation.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import { terminalDirectoryFromUrl } from "./terminal-paths.js";
 import {
@@ -113,30 +114,25 @@ type TerminalPtyFactory = (
 interface OwnerLease {
   token: string;
   clientId: string;
-  attachmentId: string | null;
+  attachment: ManagedAttachment | null;
   lastInputSequence: number;
   releaseTimer: NodeJS.Timeout | null;
 }
 
 interface ManagedAttachment {
   id: string;
-  terminalId: string;
+  session: ManagedTerminal;
   clientId: string;
   sink: TerminalAttachmentSink;
-  ready: boolean;
-  writable: boolean;
-  detached: boolean;
+  state: "replaying" | "ready" | "detached";
 }
 
 interface TerminalSessionMetadata {
   id: string;
   projectCwd: string;
   profile: ResolvedTerminalProfile;
-  titleSource: "automatic" | "user";
   customTitle: string;
-  automaticTitle: string;
   currentCwd: string;
-  currentCommand: string;
   cols: number;
   rows: number;
   createdAt: string;
@@ -144,8 +140,8 @@ interface TerminalSessionMetadata {
 }
 
 interface ManagedTerminal extends TerminalSessionMetadata {
-  activeCommand: string;
-  commandStartedAt: number | null;
+  activityTitle: string | null;
+  activeCommand: { text: string; startedAt: number } | null;
   status: "running" | "exited";
   exitCode: number | null;
   signal: number | null;
@@ -154,13 +150,12 @@ interface ManagedTerminal extends TerminalSessionMetadata {
   ring: TerminalRingBuffer;
   emulator: HeadlessTerminal;
   serializer: SerializeAddon;
-  emulatorTail: Promise<void>;
+  continuation: () => Buffer | null;
   emulatorPendingBytes: number;
   ptyPausedForEmulator: boolean;
   pty: TerminalPty | null;
   ptyDisposables: Disposable[];
-  emulatorDisposables: Disposable[];
-  attachments: Map<string, ManagedAttachment>;
+  attachments: Set<ManagedAttachment>;
   owner: OwnerLease | null;
   exitPromise: Promise<void>;
   resolveExit: () => void;
@@ -183,7 +178,8 @@ export interface TerminalPersistedState {
   version: 1;
   settings: TerminalServiceSettings;
   terminals: TerminalPersistedSession[];
-  orderByProject: Array<{ projectCwd: string; terminalIds: string[] }>;
+  /** Older v1 writers persisted tab order separately. */
+  orderByProject?: Array<{ projectCwd: string; terminalIds: string[] }>;
 }
 
 export interface TerminalHistoryBackend {
@@ -283,8 +279,6 @@ function asOutputBytes(data: string | Buffer): Buffer {
 function normalizeCwd(value: string): string {
   if (
     typeof value !== "string" ||
-    value.length < 1 ||
-    value.length > MAX_TERMINAL_CWD_CHARS ||
     cleanTerminalPath(value) !== value ||
     !isAbsolute(value)
   )
@@ -296,7 +290,6 @@ export class TerminalSessionManager implements TerminalService {
   private readonly operations = new TerminalOperationReceipts();
   private readonly sessions = new Map<string, ManagedTerminal>();
   private readonly lifecycleMutations = new Set<string>();
-  private readonly orderByProject = new Map<string, string[]>();
   private readonly profiles: ResolvedTerminalProfile[];
   private readonly ptyFactory: TerminalPtyFactory;
   private readonly env: NodeJS.ProcessEnv;
@@ -373,20 +366,27 @@ export class TerminalSessionManager implements TerminalService {
     ) as Promise<TerminalOperationResults[I["command"]]>;
   }
 
-  list(cwd?: string): TerminalCatalogResponse {
-    const projectCwd = cwd === undefined ? undefined : normalizeCwd(cwd);
-    const sessions = [...this.sessions.values()].filter(
-      (session) =>
-        projectCwd === undefined || session.projectCwd === projectCwd,
+  private projectSessions(cwd: string): ManagedTerminal[] {
+    return [...this.sessions.values()].filter(
+      (session) => session.projectCwd === cwd,
     );
-    const order = projectCwd ? (this.orderByProject.get(projectCwd) ?? []) : [];
-    sessions.sort((left, right) => {
-      if (projectCwd) return order.indexOf(left.id) - order.indexOf(right.id);
-      const cwdOrder = left.projectCwd.localeCompare(right.projectCwd);
-      if (cwdOrder !== 0) return cwdOrder;
-      const projectOrder = this.orderByProject.get(left.projectCwd) ?? [];
-      return projectOrder.indexOf(left.id) - projectOrder.indexOf(right.id);
-    });
+  }
+
+  private applyTabOrder(ids: readonly string[]): void {
+    for (const id of ids) {
+      const session = this.sessions.get(id)!;
+      this.sessions.delete(id);
+      this.sessions.set(id, session);
+    }
+  }
+
+  list(cwd?: string): TerminalCatalogResponse {
+    const sessions =
+      cwd === undefined
+        ? [...this.sessions.values()].sort((a, b) =>
+            a.projectCwd.localeCompare(b.projectCwd),
+          )
+        : this.projectSessions(normalizeCwd(cwd));
     return {
       catalogEpoch: this.catalogEpoch,
       revision: this.revision,
@@ -403,7 +403,7 @@ export class TerminalSessionManager implements TerminalService {
         id: session.id,
         projectCwd: session.projectCwd,
         profileId: session.profile.id,
-        titleSource: session.titleSource,
+        titleSource: session.customTitle ? "user" : "automatic",
         customTitle: session.customTitle,
         currentCwd: session.currentCwd,
         cols: session.cols,
@@ -411,12 +411,6 @@ export class TerminalSessionManager implements TerminalService {
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       })),
-      orderByProject: [...this.orderByProject].map(
-        ([projectCwd, terminalIds]) => ({
-          projectCwd,
-          terminalIds: [...terminalIds],
-        }),
-      ),
     };
   }
 
@@ -457,10 +451,10 @@ export class TerminalSessionManager implements TerminalService {
         const projectCwd = normalizeCwd(candidate.projectCwd);
         const cwdInfo = await stat(projectCwd).catch(() => null);
         if (!cwdInfo?.isDirectory()) continue;
-        const projectCount = [...this.sessions.values()].filter(
-          (session) => session.projectCwd === projectCwd,
-        ).length;
-        if (projectCount >= MAX_TERMINALS_PER_PROJECT) continue;
+        if (
+          this.projectSessions(projectCwd).length >= MAX_TERMINALS_PER_PROJECT
+        )
+          continue;
         validateDimensions(candidate.cols, candidate.rows);
         const profile = this.profileForRestore(candidate.profileId);
         const createdAt =
@@ -473,9 +467,8 @@ export class TerminalSessionManager implements TerminalService {
           Number.isFinite(Date.parse(candidate.updatedAt))
             ? candidate.updatedAt
             : createdAt;
-        const titleSource =
-          candidate.titleSource === "user" ? "user" : "automatic";
         const customTitle =
+          candidate.titleSource === "user" &&
           typeof candidate.customTitle === "string"
             ? cleanTerminalText(candidate.customTitle, MAX_TERMINAL_TITLE_CHARS)
             : "";
@@ -494,14 +487,11 @@ export class TerminalSessionManager implements TerminalService {
           rows: candidate.rows,
           createdAt,
           updatedAt,
-          titleSource: customTitle ? titleSource : "automatic",
           customTitle,
-          automaticTitle: profile.label,
           currentCwd:
             restoredCurrentCwd && isAbsolute(restoredCurrentCwd)
               ? restoredCurrentCwd
               : projectCwd,
-          currentCommand: basename(profile.shell),
           persistedOutput: persistedOutput ?? null,
         });
         this.sessions.set(session.id, session);
@@ -509,36 +499,21 @@ export class TerminalSessionManager implements TerminalService {
         // Ignore stale or invalid records while preserving the remaining tabs.
       }
     }
-    const persistedOrder = new Map<string, string[]>();
     if (Array.isArray(state.orderByProject)) {
-      for (const entry of state.orderByProject) {
+      for (const group of state.orderByProject) {
         if (
-          entry &&
-          typeof entry.projectCwd === "string" &&
-          Array.isArray(entry.terminalIds)
+          typeof group?.projectCwd !== "string" ||
+          !Array.isArray(group.terminalIds)
         )
-          persistedOrder.set(
-            resolve(entry.projectCwd),
-            entry.terminalIds.filter(
-              (id): id is string => typeof id === "string",
-            ),
-          );
+          continue;
+        const remaining = new Set(
+          this.projectSessions(resolve(group.projectCwd)).map(({ id }) => id),
+        );
+        this.applyTabOrder([
+          ...group.terminalIds.filter((id) => remaining.delete(id)),
+          ...remaining,
+        ]);
       }
-    }
-    const projectCwds = new Set(
-      [...this.sessions.values()].map((session) => session.projectCwd),
-    );
-    for (const projectCwd of projectCwds) {
-      const validIds = [...this.sessions.values()]
-        .filter((session) => session.projectCwd === projectCwd)
-        .map((session) => session.id);
-      const preferred = [
-        ...new Set(persistedOrder.get(projectCwd) ?? []),
-      ].filter((id) => validIds.includes(id));
-      this.orderByProject.set(projectCwd, [
-        ...preferred,
-        ...validIds.filter((id) => !preferred.includes(id)),
-      ]);
     }
     if (this.sessions.size > 0) this.revision += 1;
   }
@@ -596,8 +571,7 @@ export class TerminalSessionManager implements TerminalService {
         "Terminal working directory does not exist",
       );
     this.requireOpen();
-    const projectSessions = this.orderByProject.get(projectCwd) ?? [];
-    if (projectSessions.length >= MAX_TERMINALS_PER_PROJECT)
+    if (this.projectSessions(projectCwd).length >= MAX_TERMINALS_PER_PROJECT)
       terminalError(
         "project_terminal_limit",
         409,
@@ -621,11 +595,9 @@ export class TerminalSessionManager implements TerminalService {
       cols,
       rows,
       createdAt: this.now().toISOString(),
-      titleSource: "automatic",
       customTitle: "",
     });
     this.sessions.set(id, session);
-    this.orderByProject.set(projectCwd, [...projectSessions, id]);
     this.touch(session);
     return this.describe(session);
   }
@@ -636,13 +608,11 @@ export class TerminalSessionManager implements TerminalService {
   ): Promise<TerminalDescriptor> {
     const session = this.requireStableSession(id);
     if (request.title === null || request.title.trim() === "") {
-      session.titleSource = "automatic";
       session.customTitle = "";
     } else {
       const title = cleanTerminalText(request.title, MAX_TERMINAL_TITLE_CHARS);
       if (!title)
         terminalError("invalid_title", 400, "Terminal title is invalid");
-      session.titleSource = "user";
       session.customTitle = title;
     }
     this.touch(session);
@@ -655,18 +625,19 @@ export class TerminalSessionManager implements TerminalService {
     terminalIds: string[],
   ): Promise<TerminalCatalogResponse> {
     const projectCwd = normalizeCwd(cwd);
-    const current = this.orderByProject.get(projectCwd) ?? [];
+    const current = new Set(
+      this.projectSessions(projectCwd).map(({ id }) => id),
+    );
     if (
-      terminalIds.length !== current.length ||
-      new Set(terminalIds).size !== terminalIds.length ||
-      terminalIds.some((id) => !current.includes(id))
+      terminalIds.length !== current.size ||
+      terminalIds.some((id) => !current.delete(id))
     )
       terminalError(
         "invalid_terminal_order",
         400,
         "Terminal order does not match this project",
       );
-    this.orderByProject.set(projectCwd, [...terminalIds]);
+    this.applyTabOrder(terminalIds);
     this.revision += 1;
     this.onChange();
     return this.list(projectCwd);
@@ -685,7 +656,6 @@ export class TerminalSessionManager implements TerminalService {
         cols: previous.cols,
         rows: previous.rows,
         createdAt: previous.createdAt,
-        titleSource: previous.titleSource,
         customTitle: previous.customTitle,
       });
       this.sessions.set(id, session);
@@ -700,12 +670,6 @@ export class TerminalSessionManager implements TerminalService {
       await this.stopPty(session, force);
       if (!this.closing) {
         this.sessions.delete(id);
-        const { projectCwd } = session;
-        const order = this.orderByProject
-          .get(projectCwd)
-          ?.filter((tab) => tab !== id);
-        if (order?.length) this.orderByProject.set(projectCwd, order);
-        else this.orderByProject.delete(projectCwd);
         this.retireSession(session, 1000, "Terminal closed");
         await this.history?.remove(id);
         this.revision += 1;
@@ -744,14 +708,12 @@ export class TerminalSessionManager implements TerminalService {
       );
     const attachment: ManagedAttachment = {
       id: this.uuid(),
-      terminalId: session.id,
+      session,
       clientId: options.clientId,
       sink,
-      ready: false,
-      writable: false,
-      detached: false,
+      state: "replaying",
     };
-    session.attachments.set(attachment.id, attachment);
+    session.attachments.add(attachment);
     try {
       const ownershipReason = this.attachOwnership(
         session,
@@ -764,16 +726,14 @@ export class TerminalSessionManager implements TerminalService {
         typeof options.nextOutputOffset === "number" &&
         session.ring.contains(options.nextOutputOffset);
       const replay = canReplayDelta ? "delta" : "snapshot";
+      const owner = this.attachmentLease(attachment);
       this.sendControl(attachment, {
         type: "attached",
         terminal: this.describe(session),
         attachmentId: attachment.id,
-        writable: attachment.writable,
-        ownerToken: attachment.writable ? session.owner?.token : undefined,
-        nextInputSequence:
-          attachment.writable && session.owner
-            ? session.owner.lastInputSequence + 1
-            : 1,
+        writable: owner !== null,
+        ownerToken: owner?.token,
+        nextInputSequence: (owner?.lastInputSequence ?? 0) + 1,
         replay,
       });
 
@@ -786,57 +746,59 @@ export class TerminalSessionManager implements TerminalService {
       } else {
         await this.sendSnapshot(session, attachment);
       }
-      if (attachment.detached)
+      if (attachment.state === "detached")
         terminalError(
           "attachment_closed",
           409,
           "Terminal attachment was closed",
         );
-      attachment.ready = true;
+      attachment.state = "ready";
       this.sendControl(attachment, {
         type: "replay_complete",
         nextOutputOffset: session.ring.nextOffset,
       });
       if (ownershipReason)
         this.publishOwner(session, attachment, ownershipReason);
-      this.broadcastDescriptor(session, attachment.id);
+      this.broadcastDescriptor(session, attachment);
       return {
         send: (frame) => {
+          if (
+            attachment.state === "detached" ||
+            this.sessions.get(session.id) !== session
+          ) {
+            this.requireSession(session.id);
+            terminalError(
+              "attachment_not_found",
+              404,
+              "Terminal attachment was not found",
+            );
+          }
           if ("data" in frame) {
             const { sequence, data } = decodeTerminalInputFrame(frame.data);
-            this.writeInput(session.id, attachment.id, sequence, data);
+            this.writeInput(attachment, sequence, data);
           } else {
             this.controlAttachment(
-              session.id,
-              attachment.id,
+              attachment,
               terminalControlSchema.parse(frame.control),
             );
           }
         },
-        detach: () => this.detachAttachment(session.id, attachment.id),
+        detach: () => this.detachAttachment(attachment),
       };
     } catch (error) {
-      this.detachAttachment(session.id, attachment.id);
+      this.detachAttachment(attachment);
       throw error;
     }
   }
 
   private writeInput(
-    terminalId: string,
-    attachmentId: string,
+    attachment: ManagedAttachment,
     sequence: number,
     data: Uint8Array,
   ): void {
-    const { session, attachment } = this.requireAttachment(
-      terminalId,
-      attachmentId,
-    );
-    const owner = session.owner;
-    if (
-      session.status !== "running" ||
-      !attachment.writable ||
-      owner?.attachmentId !== attachment.id
-    ) {
+    const { session } = attachment;
+    const owner = this.attachmentLease(attachment);
+    if (session.status !== "running" || !owner) {
       this.sendControl(attachment, {
         type: "error",
         code: "terminal_read_only",
@@ -875,14 +837,10 @@ export class TerminalSessionManager implements TerminalService {
   }
 
   private controlAttachment(
-    terminalId: string,
-    attachmentId: string,
+    attachment: ManagedAttachment,
     message: TerminalControl,
   ): void {
-    const { session, attachment } = this.requireAttachment(
-      terminalId,
-      attachmentId,
-    );
+    const { session } = attachment;
     if (message.type === "ping") {
       this.sendControl(attachment, { type: "heartbeat" });
       return;
@@ -891,28 +849,30 @@ export class TerminalSessionManager implements TerminalService {
       this.takeControl(session, attachment, message.cols, message.rows);
       return;
     }
-    if (message.type === "resize") {
-      if (attachment.writable && session.owner?.attachmentId === attachment.id)
-        this.resizeSession(session, message.cols, message.rows);
-    }
+    if (message.type === "resize" && this.attachmentLease(attachment))
+      this.resizeSession(session, message.cols, message.rows);
   }
 
-  private detachAttachment(terminalId: string, attachmentId: string): void {
-    const session = this.sessions.get(terminalId);
-    const attachment = session?.attachments.get(attachmentId);
-    if (!session || !attachment) return;
-    attachment.detached = true;
-    session.attachments.delete(attachmentId);
-    if (session.owner?.attachmentId === attachmentId) {
-      session.owner.attachmentId = null;
-      session.owner.releaseTimer = setTimeout(() => {
-        if (session.owner?.attachmentId !== null) return;
+  private detachAttachment(attachment: ManagedAttachment): void {
+    const { session } = attachment;
+    if (
+      this.sessions.get(session.id) !== session ||
+      !session.attachments.delete(attachment)
+    )
+      return;
+    attachment.state = "detached";
+    const owner = this.attachmentLease(attachment);
+    if (owner) {
+      owner.attachment = null;
+      owner.releaseTimer = setTimeout(() => {
+        if (session.owner !== owner) return;
         session.owner = null;
         this.touch(session);
-        this.broadcastOwnership(session);
+        for (const viewer of session.attachments)
+          this.publishOwner(session, viewer, "available");
         this.broadcastDescriptor(session);
       }, this.ownerReconnectGraceMs);
-      session.owner.releaseTimer.unref();
+      owner.releaseTimer.unref();
     }
     this.touch(session);
     this.broadcastDescriptor(session);
@@ -952,7 +912,6 @@ export class TerminalSessionManager implements TerminalService {
       if (failure?.status === "rejected") throw failure.reason;
       await this.history?.flush();
       this.lifecycleMutations.clear();
-      this.orderByProject.clear();
     })().catch((error) => {
       // Keep failed PTYs tracked and allow a later explicit stop retry.
       this.closePromise = null;
@@ -998,7 +957,7 @@ export class TerminalSessionManager implements TerminalService {
     return profile;
   }
 
-  /** Live and restored tabs share one emulator and advisory-event setup. */
+  /** Live and restored tabs use the same output emulator. */
   private createSession(metadata: TerminalSessionMetadata): ManagedTerminal {
     const emulator = new HeadlessTerminalConstructor({
       allowProposedApi: true,
@@ -1010,10 +969,10 @@ export class TerminalSessionManager implements TerminalService {
     });
     const serializer = new SerializeAddonConstructor();
     emulator.loadAddon(serializer as never);
-    const session: ManagedTerminal = {
+    return {
       ...metadata,
-      activeCommand: "",
-      commandStartedAt: null,
+      activityTitle: null,
+      activeCommand: null,
       status: "exited",
       exitCode: null,
       signal: null,
@@ -1022,41 +981,28 @@ export class TerminalSessionManager implements TerminalService {
       ring: new TerminalRingBuffer(RING_BYTES),
       emulator,
       serializer,
-      emulatorTail: Promise.resolve(),
+      continuation: captureTerminalContinuation(
+        emulator,
+        MAX_SERIALIZED_SNAPSHOT_BYTES,
+      ),
       emulatorPendingBytes: 0,
       ptyPausedForEmulator: false,
       pty: null,
       ptyDisposables: [],
-      emulatorDisposables: [],
-      attachments: new Map(),
+      attachments: new Set(),
       owner: null,
       exitPromise: Promise.resolve(),
       resolveExit: () => {},
     };
-    session.emulatorDisposables.push(
-      emulator.onTitleChange((title) => this.handleTitle(session, title)),
-      emulator.parser.registerOscHandler(7, (value) => {
-        this.handleWorkingDirectory(session, value);
-        return false;
-      }),
-      emulator.parser.registerOscHandler(INSPIRE_SHELL_OSC, (value) => {
-        this.handleShellMarker(session, value);
-        return true;
-      }),
-    );
-    return session;
   }
 
   private spawnSession(
-    metadata: Omit<
-      TerminalSessionMetadata,
-      "updatedAt" | "automaticTitle" | "currentCwd" | "currentCommand"
-    >,
+    metadata: Omit<TerminalSessionMetadata, "updatedAt" | "currentCwd">,
   ): ManagedTerminal {
     const launch = integratedTerminalLaunch(
       metadata.profile,
       this.shellIntegrationDirectory,
-      environmentForPty(this.env, metadata.id),
+      this.env,
     );
     const launchArgs =
       process.platform === "win32" &&
@@ -1065,9 +1011,7 @@ export class TerminalSessionManager implements TerminalService {
         : launch.args;
     const session = this.createSession({
       ...metadata,
-      automaticTitle: metadata.profile.label,
       currentCwd: metadata.projectCwd,
-      currentCommand: basename(metadata.profile.shell),
       updatedAt: this.now().toISOString(),
     });
     let pty: TerminalPty;
@@ -1084,6 +1028,16 @@ export class TerminalSessionManager implements TerminalService {
     }
     session.pty = pty;
     session.status = "running";
+    const { emulator } = session;
+    emulator.onTitleChange((title) => this.handleTitle(session, title));
+    emulator.parser.registerOscHandler(7, (value) => {
+      this.handleWorkingDirectory(session, value);
+      return false;
+    });
+    emulator.parser.registerOscHandler(INSPIRE_SHELL_OSC, (value) => {
+      this.handleShellMarker(session, value);
+      return true;
+    });
     session.exitPromise = new Promise<void>((resolveExit) => {
       session.resolveExit = resolveExit;
     });
@@ -1122,8 +1076,8 @@ export class TerminalSessionManager implements TerminalService {
     // equal-revision response.
     this.revision += 1;
     this.queueEmulatorWrite(session, data);
-    for (const attachment of session.attachments.values()) {
-      if (!attachment.ready || attachment.detached) continue;
+    for (const attachment of session.attachments) {
+      if (attachment.state !== "ready") continue;
       this.sendDataChunks(
         attachment,
         "output",
@@ -1140,10 +1094,10 @@ export class TerminalSessionManager implements TerminalService {
   ): void {
     if (session.status === "exited") return;
     session.status = "exited";
-    session.activeCommand = "";
-    session.commandStartedAt = null;
+    session.activeCommand = null;
     session.exitCode = event.exitCode;
     session.signal = event.signal || null;
+    if (session.owner?.releaseTimer) clearTimeout(session.owner.releaseTimer);
     session.owner = null;
     session.resolveExit();
     this.touch(session);
@@ -1158,9 +1112,12 @@ export class TerminalSessionManager implements TerminalService {
 
   private handleTitle(session: ManagedTerminal, title: string): void {
     const cleaned = cleanTerminalText(title, MAX_TERMINAL_TITLE_CHARS);
-    if (!cleaned || cleaned === session.currentCommand) return;
-    session.currentCommand = cleaned;
-    session.automaticTitle = cleaned;
+    if (
+      !cleaned ||
+      cleaned === (session.activityTitle ?? basename(session.profile.shell))
+    )
+      return;
+    session.activityTitle = cleaned;
     this.touch(session);
     this.broadcastDescriptor(session);
   }
@@ -1178,26 +1135,23 @@ export class TerminalSessionManager implements TerminalService {
     }
     if (marker.type === "command") {
       const { command } = marker;
-      const commandTitle = cleanTerminalText(command, MAX_TERMINAL_TITLE_CHARS);
-      session.activeCommand = command;
-      session.commandStartedAt = this.now().getTime();
-      session.currentCommand = commandTitle;
-      session.automaticTitle = commandTitle;
+      session.activeCommand = {
+        text: command,
+        startedAt: this.now().getTime(),
+      };
+      session.activityTitle = cleanTerminalText(
+        command,
+        MAX_TERMINAL_TITLE_CHARS,
+      );
       this.touch(session);
       this.broadcastDescriptor(session);
       return;
     }
     if (!session.activeCommand) return;
-    const completedAt = this.now().getTime();
-    const durationMs =
-      session.commandStartedAt === null
-        ? null
-        : Math.max(0, completedAt - session.commandStartedAt);
-    const command = session.activeCommand;
-    session.activeCommand = "";
-    session.commandStartedAt = null;
-    session.currentCommand = basename(session.profile.shell);
-    session.automaticTitle = session.profile.label;
+    const { text: command, startedAt } = session.activeCommand;
+    const durationMs = Math.max(0, this.now().getTime() - startedAt);
+    session.activeCommand = null;
+    session.activityTitle = null;
     this.touch(session);
     this.broadcastControl(session, {
       type: "command_complete",
@@ -1256,49 +1210,68 @@ export class TerminalSessionManager implements TerminalService {
         session.ptyPausedForEmulator = false;
       }
     };
-    session.emulatorTail = session.emulatorTail
-      .then(
-        () =>
-          new Promise<void>((resolvePromise) => {
-            session.emulator.write(data, resolvePromise);
-          }),
-      )
-      .then(settle, settle);
+    session.emulator.write(data, settle);
   }
 
-  private async snapshot(session: ManagedTerminal): Promise<{
+  private snapshot(session: ManagedTerminal): Promise<{
     data: Uint8Array;
     offset: number;
     resizeRevision: number;
   }> {
     const offset = session.ring.nextOffset;
     const resizeRevision = session.resizeRevision;
-    let serialized = "";
-    const task = session.emulatorTail.then(() => {
-      let scrollback = this.scrollbackRows;
-      do {
-        serialized = session.serializer.serialize({ scrollback });
-        if (Buffer.byteLength(serialized) <= MAX_SERIALIZED_SNAPSHOT_BYTES)
-          break;
-        scrollback = Math.floor(scrollback / 2);
-      } while (scrollback > 0);
+    return new Promise((resolve, reject) => {
+      // Serialize at this offset, between earlier writes and the live tail.
+      session.emulator.write("", () => {
+        try {
+          const continuation = session.continuation();
+          if (
+            continuation &&
+            continuation.byteLength < MAX_SERIALIZED_SNAPSHOT_BYTES
+          ) {
+            for (
+              let scrollback = this.scrollbackRows;
+              ;
+              scrollback = Math.floor(scrollback / 2)
+            ) {
+              const screen = session.serializer.serialize({ scrollback });
+              if (
+                Buffer.byteLength(screen) + continuation.byteLength <=
+                MAX_SERIALIZED_SNAPSHOT_BYTES
+              ) {
+                const bytes = Buffer.from(screen, "utf8");
+                resolve({
+                  data: continuation.byteLength
+                    ? Buffer.concat([bytes, continuation])
+                    : bytes,
+                  offset,
+                  resizeRevision,
+                });
+                return;
+              }
+              if (!scrollback) break;
+            }
+          }
+          terminalError(
+            "terminal_snapshot_limit",
+            409,
+            "Terminal snapshot exceeds its replay limit",
+          );
+        } catch (error) {
+          reject(error);
+        }
+      });
     });
-    session.emulatorTail = task.catch(() => {});
-    await task;
-    return {
-      data: Buffer.from(serialized, "utf8"),
-      offset,
-      resizeRevision,
-    };
   }
 
   private async sendSnapshot(
     session: ManagedTerminal,
     attachment: ManagedAttachment,
   ): Promise<void> {
-    while (!attachment.detached) {
+    const attached = () => attachment.state !== "detached";
+    while (attached()) {
       const snapshot = await this.snapshot(session);
-      if (attachment.detached) return;
+      if (!attached()) return;
       if (
         snapshot.resizeRevision !== session.resizeRevision ||
         !session.ring.contains(snapshot.offset)
@@ -1310,7 +1283,6 @@ export class TerminalSessionManager implements TerminalService {
         snapshot.resizeRevision,
         snapshot.offset,
         snapshot.data,
-        false,
       );
       this.sendRingFrom(session, attachment, snapshot.offset);
       return;
@@ -1345,7 +1317,6 @@ export class TerminalSessionManager implements TerminalService {
     resizeRevision: number,
     offset: number,
     data: Uint8Array,
-    advanceOffset = true,
   ): void {
     if (data.byteLength === 0) {
       this.sendData(
@@ -1368,7 +1339,7 @@ export class TerminalSessionManager implements TerminalService {
         encodeTerminalServerDataFrame(
           kind === "snapshot" && index > 0 ? "snapshot-continuation" : kind,
           resizeRevision,
-          advanceOffset ? offset + index : offset,
+          kind === "output" ? offset + index : offset,
           chunk,
         ),
       );
@@ -1382,13 +1353,10 @@ export class TerminalSessionManager implements TerminalService {
   ): "claimed" | "reconnected" | null {
     if (session.status !== "running") return null;
     const owner = session.owner;
-    if (
-      owner &&
-      (ownerToken !== owner.token || attachment.clientId !== owner.clientId)
-    )
+    if (owner && (ownerToken !== owner.token || attachment.clientId !== owner.clientId))
       return null;
-    this.resizeSession(session, cols, rows, attachment.id);
-    if (attachment.detached) return null;
+    this.resizeSession(session, cols, rows, attachment);
+    if (attachment.state === "detached") return null;
     this.assignOwner(session, attachment, owner ? "reconnected" : "claimed");
     if (!owner) this.touch(session);
     return owner ? "reconnected" : "claimed";
@@ -1400,29 +1368,17 @@ export class TerminalSessionManager implements TerminalService {
     reason: "claimed" | "reconnected" | "taken",
   ): void {
     const owner = session.owner;
-    const previous =
-      owner?.attachmentId && owner.attachmentId !== attachment.id
-        ? session.attachments.get(owner.attachmentId)
-        : undefined;
+    const previous = owner?.attachment;
     if (owner?.releaseTimer) clearTimeout(owner.releaseTimer);
     session.owner = {
       token: reason === "reconnected" ? owner!.token : this.uuid(),
       clientId: attachment.clientId,
-      attachmentId: attachment.id,
-      lastInputSequence:
-        reason === "reconnected" ? owner!.lastInputSequence : 0,
+      attachment,
+      lastInputSequence: reason === "reconnected" ? owner!.lastInputSequence : 0,
       releaseTimer: null,
     };
-    attachment.writable = true;
-    if (previous) {
-      previous.writable = false;
-      this.sendControl(previous, {
-        type: "ownership",
-        writable: false,
-        hasOwner: true,
-        reason,
-      });
-    }
+    if (previous && previous !== attachment)
+      this.publishOwner(session, previous, reason);
   }
 
   private takeControl(
@@ -1442,7 +1398,7 @@ export class TerminalSessionManager implements TerminalService {
     }
     // Do not revoke a working lease until the requested grid is accepted.
     this.resizeSession(session, cols, rows);
-    if (attachment.detached) return;
+    if (attachment.state === "detached") return;
     // Publish only after the lease is committed; either sink may detach synchronously.
     this.assignOwner(session, attachment, "taken");
     this.publishOwner(session, attachment, "taken");
@@ -1450,20 +1406,23 @@ export class TerminalSessionManager implements TerminalService {
     this.broadcastDescriptor(session);
   }
 
+  private attachmentLease(attachment: ManagedAttachment) {
+    const owner = attachment.session.owner;
+    return owner?.attachment === attachment ? owner : null;
+  }
+
   private publishOwner(
     session: ManagedTerminal,
     attachment: ManagedAttachment,
-    reason: "claimed" | "reconnected" | "taken",
+    reason: "available" | "claimed" | "reconnected" | "taken",
   ): void {
-    const owner = attachment.writable ? session.owner : null;
+    const owner = this.attachmentLease(attachment);
     this.sendControl(attachment, {
       type: "ownership",
-      writable: attachment.writable,
+      writable: owner !== null,
       hasOwner: session.owner !== null,
       ownerToken: owner?.token,
-      nextInputSequence: attachment.writable
-        ? (owner?.lastInputSequence ?? 0) + 1
-        : undefined,
+      nextInputSequence: owner ? owner.lastInputSequence + 1 : undefined,
       reason,
     });
   }
@@ -1472,7 +1431,7 @@ export class TerminalSessionManager implements TerminalService {
     session: ManagedTerminal,
     cols: number,
     rows: number,
-    exceptAttachmentId?: string,
+    except?: ManagedAttachment,
   ): void {
     if (session.status !== "running") return;
     if (session.cols === cols && session.rows === rows) return;
@@ -1486,11 +1445,7 @@ export class TerminalSessionManager implements TerminalService {
     // detached full-screen client. Preserve absolute offsets, but force those
     // clients through a fresh headless-terminal snapshot.
     session.ring.discardRetained();
-    session.emulatorTail = session.emulatorTail
-      .then(() => {
-        session.emulator.resize(cols, rows);
-      })
-      .catch(() => {});
+    session.emulator.write("", () => session.emulator.resize(cols, rows));
     this.touch(session);
     this.broadcastControl(
       session,
@@ -1500,7 +1455,7 @@ export class TerminalSessionManager implements TerminalService {
         rows,
         resizeRevision: session.resizeRevision,
       },
-      exceptAttachmentId,
+      except,
     );
   }
 
@@ -1574,8 +1529,6 @@ export class TerminalSessionManager implements TerminalService {
   private disposeRuntime(session: ManagedTerminal): void {
     if (session.owner?.releaseTimer) clearTimeout(session.owner.releaseTimer);
     for (const disposable of session.ptyDisposables) disposable.dispose();
-    for (const disposable of session.emulatorDisposables) disposable.dispose();
-    session.serializer.dispose();
     session.emulator.dispose();
   }
 
@@ -1586,15 +1539,14 @@ export class TerminalSessionManager implements TerminalService {
       id: session.id,
       projectCwd: session.projectCwd,
       title:
-        session.titleSource === "user"
-          ? session.customTitle
-          : session.automaticTitle,
-      titleSource: session.titleSource,
+        session.customTitle || (session.activityTitle ?? session.profile.label),
+      titleSource: session.customTitle ? "user" : "automatic",
       profileId: session.profile.id,
       shellLabel: session.profile.label,
       currentCwd: session.currentCwd,
-      currentCommand: session.currentCommand,
-      commandRunning: session.activeCommand !== "",
+      currentCommand: session.activityTitle ?? basename(session.profile.shell),
+      commandRunning:
+        session.status === "running" && session.activeCommand !== null,
       status: session.status,
       exitCode: session.exitCode,
       signal: session.signal,
@@ -1618,33 +1570,22 @@ export class TerminalSessionManager implements TerminalService {
 
   private broadcastDescriptor(
     session: ManagedTerminal,
-    exceptAttachmentId?: string,
+    except?: ManagedAttachment,
   ): void {
     this.broadcastControl(
       session,
       { type: "descriptor", terminal: this.describe(session) },
-      exceptAttachmentId,
+      except,
     );
-  }
-
-  private broadcastOwnership(session: ManagedTerminal): void {
-    for (const attachment of session.attachments.values()) {
-      this.sendControl(attachment, {
-        type: "ownership",
-        writable: attachment.writable,
-        hasOwner: session.owner !== null,
-        reason: "available",
-      });
-    }
   }
 
   private broadcastControl(
     session: ManagedTerminal,
     message: TerminalServerControlMessage,
-    exceptAttachmentId?: string,
+    except?: ManagedAttachment,
   ): void {
-    for (const attachment of session.attachments.values()) {
-      if (attachment.id === exceptAttachmentId || attachment.detached) continue;
+    for (const attachment of session.attachments) {
+      if (attachment === except) continue;
       this.sendControl(attachment, message);
     }
   }
@@ -1653,20 +1594,20 @@ export class TerminalSessionManager implements TerminalService {
     attachment: ManagedAttachment,
     message: TerminalServerControlMessage,
   ): void {
-    if (attachment.detached) return;
+    if (attachment.state === "detached") return;
     try {
       attachment.sink.sendControl(message);
     } catch {
-      this.detachAttachment(attachment.terminalId, attachment.id);
+      this.detachAttachment(attachment);
     }
   }
 
   private sendData(attachment: ManagedAttachment, frame: Uint8Array): void {
-    if (attachment.detached) return;
+    if (attachment.state === "detached") return;
     try {
       attachment.sink.sendData(frame);
     } catch {
-      this.detachAttachment(attachment.terminalId, attachment.id);
+      this.detachAttachment(attachment);
     }
   }
 
@@ -1675,8 +1616,8 @@ export class TerminalSessionManager implements TerminalService {
     code: number,
     reason: string,
   ): void {
-    for (const attachment of session.attachments.values()) {
-      attachment.detached = true;
+    for (const attachment of session.attachments) {
+      attachment.state = "detached";
       try {
         attachment.sink.close(code, reason);
       } catch {
@@ -1716,18 +1657,4 @@ export class TerminalSessionManager implements TerminalService {
     return session;
   }
 
-  private requireAttachment(
-    terminalId: string,
-    attachmentId: string,
-  ): { session: ManagedTerminal; attachment: ManagedAttachment } {
-    const session = this.requireSession(terminalId);
-    const attachment = session.attachments.get(attachmentId);
-    if (!attachment || attachment.detached)
-      terminalError(
-        "attachment_not_found",
-        404,
-        "Terminal attachment was not found",
-      );
-    return { session, attachment };
-  }
 }

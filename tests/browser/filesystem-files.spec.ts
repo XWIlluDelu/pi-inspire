@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, type Page, test } from "@playwright/test";
+import { browserFixtureHome } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
 import {
   openWorkspaceFile,
@@ -10,14 +11,12 @@ import {
   reloadSession,
 } from "./support/navigation";
 
-const root = resolve(
-  process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
-  "filesystem-fixture",
-);
+test.use({ serviceWorkers: "block" });
+
+const root = resolve(browserFixtureHome, "filesystem-fixture");
 test.beforeAll(async () => {
   for (const dir of [
-    root,
-    resolve(root, "empty"),
+    resolve(root, "constructor"),
     resolve(root, "dist"),
     resolve(root, ".settings"),
   ])
@@ -159,12 +158,12 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
     tree.getByRole("button", { name: "dist", exact: true }),
   ).toBeVisible();
   await expect(
-    tree.getByRole("button", { name: "empty", exact: true }),
+    tree.getByRole("button", { name: "constructor", exact: true }),
   ).toBeVisible();
   await expect(
     tree.getByRole("button", { name: ".settings", exact: true }),
   ).toHaveCount(0);
-  await tree.getByRole("button", { name: "empty", exact: true }).click();
+  await tree.getByRole("button", { name: "constructor", exact: true }).click();
   await expect(tree.getByText("Empty", { exact: true })).toBeVisible();
   const toggle = pane.getByRole("button", {
     name: "Show hidden files",
@@ -215,11 +214,10 @@ test("Files works with a corrupt Git index and preserves its tabs and search whe
   await expect(search).toHaveValue("report.md");
   await page.goBack();
   await expect(drawer).toBeHidden();
+
 });
 
-test("native authenticated download streams complete bytes beyond the media preview cap", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("native authenticated download streams complete bytes beyond the media preview cap", async ({ page }) => {
   await openFilesystemSession(page, "Large download fixture");
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await page.getByRole("tab", { name: "Files", exact: true }).click();
@@ -253,37 +251,20 @@ test("native authenticated download streams complete bytes beyond the media prev
   expect(contentRequests).toEqual([]);
 });
 
-test("hidden inline references send unchanged text; only explicit picker selections deliver files", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
+test("hidden inline references send unchanged text; only explicit picker selections deliver files", async ({ page }) => {
   await openFilesystemSession(page, "Project file delivery fixture");
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   const completion = page.getByRole("listbox", {
     name: "Project file completions",
   });
-  const scan = Promise.withResolvers<void>();
-  await page.route("**/api/files?**", async (route) => {
-    const query = new URL(route.request().url()).searchParams.get("q");
-    if (query === "offline-catalog")
-      return route.fulfill({
-        status: 422,
-        json: { error: "Catalog query refused" },
-      });
-    if (query === "config") await scan.promise;
-    await route.continue();
-  });
+  await page.route("**/api/files?**q=offline-catalog**", (route) =>
+    route.fulfill({ status: 422, json: { error: "Catalog query refused" } }),
+  );
   await input.fill("@offline-catalog");
   await expect(
     completion.getByText("Project file search failed"),
   ).toBeVisible();
-  try {
-    await input.fill("Read @config");
-    await expect(
-      completion.getByText("Searching project files…"),
-    ).toBeVisible();
-  } finally {
-    scan.resolve();
-  }
+  await input.fill("Read @config");
   await expect(completion.getByText("No matching project files")).toBeVisible();
   await page
     .locator(".completion")

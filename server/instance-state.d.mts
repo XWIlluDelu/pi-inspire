@@ -28,7 +28,8 @@ export type StopResult =
   | { kind: "absent" | "stale" | "unavailable" }
   | { kind: "timeout" | "stopped" | "cleanup-failed"; state: InstanceState };
 
-export function instanceUrl(state: InstanceState): string;
+export function hostListener(host?: string, portText?: string): { host: string; port: number };
+export function instanceUrl(state: Pick<InstanceState, "host" | "port">): string;
 export function instanceLaunchUrl(state: InstanceState, origin?: string): Promise<string | null>;
 export function processStartIdentity(
   pid: number,

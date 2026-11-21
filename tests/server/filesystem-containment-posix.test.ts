@@ -22,13 +22,6 @@ beforeEach(() => {
 });
 
 describe("POSIX directory alias identity", () => {
-  it("returns a path relative to its exact base", async () => {
-    native.stat.mockResolvedValue(directory(7n));
-    expect(
-      await filesystemRelativePath("/Project", "/Project/deep/file.txt"),
-    ).toBe("deep/file.txt");
-  });
-
   it("accepts a case and normalization alias only through its matching ancestor", async () => {
     const root = "/\u00e9/Project";
     const ancestor = "/e\u0301/project";

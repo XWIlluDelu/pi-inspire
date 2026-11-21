@@ -1,13 +1,14 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
-import { nativeCommand, parseNativeCommand } from "../shared/commands";
+import {
+  type CommandInvocation,
+  type NativeCommand,
+  nativeCommand,
+} from "../shared/commands";
 import {
   type ActiveSnapshot,
-  type BranchNavigateRequest,
-  type CompletionAttentionPreference,
   type ComposerHistoryEntry,
   emptyPendingQueues,
   type GitFileChange,
-  type GitStatusResponse,
   type HostDirListing,
   type HostNativeCommandName,
   type HostRootsResponse,
@@ -15,18 +16,14 @@ import {
   type LiveTranscript,
   type ModelOption,
   type ModelSelectionResponse,
-  type NewSessionOptions,
   type PendingRecovery,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
   parsePendingQueues,
   parseRetryInfo,
   projectionConflictSeverity,
-  type SessionDeleteDisposition,
-  type SessionDeletionResponse,
   type ThinkingLevel,
 } from "../shared/contracts";
-import type { SessionHistoryQuery } from "../shared/history-query";
 import type { RuntimeSetting } from "../shared/host-endpoints";
 import { jsonRecord } from "../shared/json-record";
 import type {
@@ -34,8 +31,8 @@ import type {
   ModelConfigEdit,
   ModelPreferencesPatch,
   ModelSettingsSnapshot,
+  ModelSettingsWriteResult,
 } from "../shared/model-settings";
-import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
 import { resourceReferenceLine } from "../shared/resource-references";
 import type { StatusControlDeclaration } from "../shared/tool-presentation-config";
@@ -56,12 +53,7 @@ import {
   selectedRunState,
   transcriptDiagnostic,
 } from "./app-state";
-import { BrowserUpgradeRequired } from "./browser-auth";
-import {
-  type PiCommand,
-  resolveCommandInput,
-  resolveCommandInventory,
-} from "./composer-completion";
+import { type PiCommand, resolveCommandInput } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import {
   type CopySource,
@@ -73,7 +65,6 @@ import { BranchController } from "./controllers/branch-controller";
 import { ComposerController } from "./controllers/composer-controller";
 import {
   ConnectionController,
-  type ConnectionRecoveryTrigger,
 } from "./controllers/connection-controller";
 import {
   GitController,
@@ -102,6 +93,7 @@ import { TaskNotificationController } from "./notifications";
 import {
   configurePresentationAdapters,
   controlState,
+  hasStatusControlCommand,
 } from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 import {
@@ -180,10 +172,20 @@ export class AppStore {
   private clearingWorkbench = false;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
-  private readonly notifications = new TaskNotificationController({
+  private readonly controllerHost = {
     state: () => this.state,
-    patch: (patch) => this.set(patch),
+    applySnapshot: (snapshot: ActiveSnapshot) => this.applySnapshot(snapshot),
+    ensureSessionVisible: (sessionId: string) => this.catalog.ensureVisible(sessionId),
+    refreshLoadedSessions: (): Promise<void> => this.catalog.refreshLoaded(),
+    patch: (patch: Partial<AppState>) => this.set(patch),
     api: () => this.api,
+    authorityId: () => this.hostAuthorityId,
+    selectionGeneration: () => this.selectionGeneration,
+    notify: (kind: Notice["kind"], text: string) => this.notify(kind, text),
+    handleAuthFailure: () => this.handleAuthFailure(),
+  };
+  readonly notifications = new TaskNotificationController({
+    ...this.controllerHost,
     mark: (event) => {
       if (event.sessionId)
         this.runtimeEvents.markTaskAttention(event.sessionId);
@@ -192,20 +194,12 @@ export class AppStore {
     openSession: (id) => this.selection.open(id),
   });
   /** Both Files surfaces consume this one tree/search projection. */
-  private readonly workspace = new WorkspaceController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    handleAuthFailure: () => this.handleAuthFailure(),
-  });
+  readonly workspace = new WorkspaceController(this.controllerHost);
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
-  private readonly resources: ResourceController = new ResourceController({
+  readonly resources: ResourceController = new ResourceController({
+    ...this.controllerHost,
     saveDownload: downloadFileUrl,
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    handleAuthFailure: () => this.handleAuthFailure(),
     revealWorkspacePath: (path) => {
       this.workspace.revealPath(path);
       if (showsFileComparison(this.state)) void this.git.refreshStatus();
@@ -214,27 +208,17 @@ export class AppStore {
   /** GitController owns polling, selection, and diff request lifecycles.
    * AppStore remains the sole state publisher and cross-domain transaction
    * facade, including resource previews opened from a Git path. */
-  private readonly git = new GitController({
-    state: () => ({
-      ...this.state,
-      selectionGeneration: this.selectionGeneration,
-    }),
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
+  readonly git = new GitController({
+    ...this.controllerHost,
     openResourceFromGit: (change) => this.openGitFileTab(change),
-    handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** BranchController owns branch-tree/action generations. AppStore applies
    * snapshots and selection transfers at the controller's verified commit
    * boundary, so no branch path becomes a second session authority. */
-  private readonly branches = new BranchController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    selectionGeneration: () => this.selectionGeneration,
+  readonly branches = new BranchController({
+    ...this.controllerHost,
     selectionRequest: () => this.selection.generation,
     beginForkSelection: () => this.selection.beginForkSelection(),
-    handleAuthFailure: () => this.handleAuthFailure(),
     draftRevision: () => this.drafts.get(this.state.sessionId).revision,
     applyNavigation: (response, draftRevision) => {
       const sessionId = this.state.sessionId!;
@@ -256,7 +240,7 @@ export class AppStore {
     },
     applyFork: (response) => {
       this.applySnapshot(response.snapshot);
-      this.ensureSessionVisible(response.sessionId);
+      this.catalog.ensureVisible(response.sessionId);
       this.composer.restoreStagedAttachments(
         response.sessionId,
         response.editorAttachments ?? [],
@@ -264,34 +248,18 @@ export class AppStore {
       );
       this.drafts.setText(response.sessionId, response.editorText);
     },
-    refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
-    notify: (kind, text) => this.notify(kind, text),
   });
-  private readonly preferences = new PreferenceController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    notify: (kind, text) => this.notify(kind, text),
-    handleAuthFailure: () => this.handleAuthFailure(),
-    curationChanged: (hydrate) => {
-      this.catalog.reconcileCuration();
-      if (hydrate) void this.catalog.hydrateCuration();
-    },
+  readonly preferences = new PreferenceController({
+    ...this.controllerHost,
+    curationChanged: (added) => this.catalog.reconcileCuration(added),
     clearCompletionAttention: () => this.runtimeEvents.clearTitleAttention(),
   });
   /** SessionCatalogController owns pagination, curation/live hydration, and
    * retry lifecycles. AppStore remains the only catalog snapshot publisher and
    * selection authority. */
-  private readonly catalog = new SessionCatalogController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    handleAuthFailure: () => this.handleAuthFailure(),
-  });
-  private readonly selection = new SessionSelectionController({
-    state: () => this.state,
-    api: () => this.api,
-    patch: (patch) => this.set(patch),
+  readonly catalog = new SessionCatalogController(this.controllerHost);
+  readonly selection = new SessionSelectionController({
+    ...this.controllerHost,
     onOpenIntent: () => {
       this.branches.invalidate();
       this.nativeSettings.clear();
@@ -301,54 +269,34 @@ export class AppStore {
         thinkingLevelPending: false,
       });
     },
-    applySnapshot: (snapshot) => this.applySnapshot(snapshot),
-    ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
-    setActionError: (sessionActionError) => this.set({ sessionActionError }),
     rememberModel: (model) => this.preferences.rememberModel(model),
-    refreshSessionCatalog: () => void this.catalog.refreshLoaded(),
-    notify: (kind, text) => this.notify(kind, text),
-    handleAuthFailure: () => this.handleAuthFailure(),
-    confirmUncertainCreation: () =>
-      window.confirm(
-        "Session creation may still complete. Check the session list before creating another. Continue?",
-      ),
   });
-  private readonly runtimeEvents = new RuntimeEventController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
+  readonly runtimeEvents = new RuntimeEventController({
+    ...this.controllerHost,
     setEditorText: (sessionId, text) => this.drafts.setText(sessionId, text),
-    applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     applyTranscript: (sessionId, data, sequence, statuses) =>
       this.applyLiveTranscript(sessionId, data, sequence, statuses),
-    ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
-    refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
-    selectionGeneration: () => this.selectionGeneration,
+    hasVisibleWorkspaceSurface: () =>
+      this.state.resourcesOpen &&
+      this.state.contextMode === "files" &&
+      this.state.fileInspection.kind === "browse",
+    refreshWorkspace: () => this.workspace.refresh(),
     invalidateResync: () => {
       this.resyncRequest += 1;
     },
     resync: (sessionId, generation) => this.resync(sessionId, generation),
   });
-  private readonly composer = new ComposerController({
-    state: () => this.state,
+  readonly composer = new ComposerController({
+    ...this.controllerHost,
     drafts: this.drafts,
-    api: () => this.api,
-    authorityId: () => this.hostAuthorityId,
-    notify: (kind, text) => this.notify(kind, text),
     notifyVisible: (sessionId, message) => {
       if (this.state.sessionId === sessionId) this.notify("warning", message);
     },
-    handleAuthFailure: () => this.handleAuthFailure(),
   });
-  private readonly sessionManagement = new SessionManagementController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    authorityId: () => this.hostAuthorityId,
-    notify: (kind, text) => this.notify(kind, text),
-    handleAuthFailure: () => this.handleAuthFailure(),
-    refreshLoadedSessions: () => this.catalog.refreshLoaded(),
+  readonly sessionManagement = new SessionManagementController({
+    ...this.controllerHost,
     preserveLoadedSessions: (query, offset, total) =>
       this.catalog.preserve(query, offset, total),
     forgetSessions: (sessionIds) => this.forgetSessions(sessionIds),
@@ -362,21 +310,14 @@ export class AppStore {
   private visibleEventSequence = -1;
   private snapshotGeneration = 0;
   private readonly pendingRecovery = new PendingRecoveryController({
-    api: () => this.api,
-    authorityId: () => this.hostAuthorityId,
-    restore: (sessionId, recovered) =>
-      this.restorePendingInput(sessionId, recovered),
-    handleAuthFailure: () => this.handleAuthFailure(),
+    ...this.controllerHost,
+    restore: (sessionId, recovered, feedback) =>
+      this.restorePendingInput(sessionId, recovered, feedback),
   });
-  private readonly updates = new UpdateController({
-    state: () => this.state,
-    patch: (patch) => this.set(patch),
-    api: () => this.api,
-    notify: (kind, text) => this.notify(kind, text),
-  });
+  readonly updates = new UpdateController(this.controllerHost);
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
    * continues to publish connection state and owns every stream consequence. */
-  private readonly connectionController = new ConnectionController({
+  readonly connectionController = new ConnectionController({
     state: () => ({
       bootstrapped: this.state.bootstrapped,
       authorityId: this.hostAuthorityId,
@@ -389,6 +330,7 @@ export class AppStore {
         this.afterInitialSnapshot = null;
         complete?.();
         this.composer.resumeUploads();
+        this.composer.resumeDeliveries();
         this.pendingRecovery.resume();
         void this.notifications.openTarget();
       }
@@ -515,43 +457,32 @@ export class AppStore {
     });
   }
 
-  private forgetSessions(
-    sessionIds: ReadonlySet<string>,
-  ): AppState["sessionStatuses"] {
+  private forgetSessions(sessionIds: ReadonlySet<string>): void {
     const sessionStatuses = { ...this.state.sessionStatuses };
     const commandActivities = { ...this.state.commandActivities };
+    const externalSessionActivities = {
+      ...this.state.externalSessionActivities,
+    };
+    this.catalog.remove(sessionIds);
     for (const sessionId of sessionIds) {
-      this.catalog.remove(sessionId);
+      delete externalSessionActivities[sessionId];
       delete sessionStatuses[sessionId];
       delete commandActivities[sessionId];
       this.composer.discard(sessionId);
     }
-    const externalSessionActivities = {
-      ...this.state.externalSessionActivities,
-    };
-    for (const sessionId of sessionIds)
-      delete externalSessionActivities[sessionId];
-    this.set({ commandActivities, externalSessionActivities });
+    this.set({ commandActivities, externalSessionActivities, sessionStatuses });
     this.runtimeEvents.forgetAttention(sessionIds);
     // Commit only the deleted identity's view. A newer open/new request keeps
     // its selection owner and can still publish its own snapshot afterwards.
     if (this.state.sessionId && sessionIds.has(this.state.sessionId)) {
       this.applySnapshot({ active: null, sessionStatuses });
     }
-    return sessionStatuses;
   }
-
-  acknowledgeVisibleSession = (): void =>
-    this.runtimeEvents.acknowledgeVisibleSession();
 
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
   refreshSession = (): Promise<void> =>
     this.resync(this.state.sessionId, this.selectionGeneration, true);
-
-  replaceComposerText = (text: string): void => {
-    if (this.state.sessionId) this.drafts.setText(this.state.sessionId, text);
-  };
 
   private invalidateTransportRequests(): void {
     this.resyncRecovery.reset();
@@ -567,8 +498,7 @@ export class AppStore {
               ? {
                   ...activity,
                   status: "warning" as const,
-                  message:
-                    "The Host connection changed before this command result could be confirmed.",
+                  message: "Connection reset before the command finished.",
                 }
               : activity,
           ),
@@ -629,7 +559,7 @@ export class AppStore {
   private handleAuthFailure(): void {
     this.replaceTransport();
     this.hostAuthorityId = null;
-    this.runtimeEvents.resetStatusAcknowledgements();
+    this.runtimeEvents.setStatusAuthority(null);
     this.api = null;
     this.set({
       needsToken: true,
@@ -693,9 +623,8 @@ export class AppStore {
         needsToken: false,
         connectionProblem: null,
       });
-      if (this.hostAuthorityId !== boot.authorityId)
-        this.runtimeEvents.resetStatusAcknowledgements();
       this.hostAuthorityId = boot.authorityId;
+      this.runtimeEvents.setStatusAuthority(boot.authorityId);
       if (rememberedSession) this.autoContinued = true;
       this.composer.reconcileAuthority(boot.authorityId);
       const detailSessionId =
@@ -711,7 +640,7 @@ export class AppStore {
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
       this.notifications.start();
-      const catalog = this.loadSessions(this.state.sessionQuery);
+      const catalog = this.catalog.load(this.state.sessionQuery);
       this.afterInitialSnapshot = () => {
         if (!showsFileComparison(this.state))
           void this.git.resumeAfterTransportReplacement();
@@ -742,9 +671,7 @@ export class AppStore {
       await this.connectionController.connect(detailSessionId);
     } catch (error) {
       if (!ownsBootstrap()) return;
-      if (error instanceof BrowserUpgradeRequired) {
-        this.requireBrowserUpgrade();
-      } else if (error instanceof ApiError && error.status === 401) {
+      if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
         this.set({
@@ -1049,87 +976,9 @@ export class AppStore {
     }
   }
 
-  readNativeHistory = <Q extends SessionHistoryQuery>(
-    sessionId: string,
-    viewId: string,
-    query: Q,
-    signal: AbortSignal,
-  ) => this.branches.history(sessionId, viewId, query, signal);
-
-  loadComposerHistory = (
-    scope: Omit<
-      import("./composer-history").ComposerHistoryScope,
-      "effectiveLeafId"
-    >,
-    signal: AbortSignal,
-  ) => this.branches.composerHistory(scope, signal);
-
-  // --- Connection lifecycle ---
-
-  requireBrowserUpgrade = (): void => {
-    this.connectionController.stop();
-    this.set({
-      startupPending: false,
-      connection: "offline",
-      connectionProblem: { kind: "browser-upgrade" },
-    });
-  };
-
-  retryConnection = (): void => {
-    if (this.state.connectionProblem?.kind === "browser-upgrade")
-      window.location.reload();
-    else this.connectionController.retry();
-  };
-
-  recoverConnection = (trigger: ConnectionRecoveryTrigger): void =>
-    this.connectionController.recover(trigger);
-
-  // --- Sessions ---
-
-  /** Public facades retain the established AppStore surface while the catalog
-   * controller owns query generations, pagination, hydration, and retries. */
-  loadSessions = (query: string): Promise<void> => this.catalog.load(query);
-
-  loadOlderSessions = (): Promise<void> => this.catalog.loadOlder();
-
-  retrySessionList = (): Promise<void> => this.catalog.retryCurrent();
-
-  searchSessions = (query: string): void => this.catalog.search(query);
-
-  refreshSessions = (retryQuery = this.state.sessionQuery): Promise<void> =>
-    this.catalog.refresh(retryQuery);
-
-  private ensureSessionVisible(id: string): void {
-    this.catalog.ensureVisible(id);
-  }
-
   openSession = async (id: string): Promise<void> => {
     await this.selection.open(id);
   };
-
-  deselectSession = (): Promise<boolean> => this.selection.deselect();
-
-  newSession = (
-    cwd?: string,
-    options: NewSessionOptions = {},
-  ): Promise<string | null> => this.selection.create(cwd, options);
-
-  renameSession = (sessionId: string, name: string): Promise<boolean> =>
-    this.sessionManagement.renameSession(sessionId, name);
-
-  clearSessionDeleteError = (): void =>
-    this.sessionManagement.clearSessionDeleteError();
-
-  deleteSession = (
-    sessionId: string,
-  ): Promise<SessionDeleteDisposition | null> =>
-    this.sessionManagement.deleteSession(sessionId);
-
-  clearHiddenSessions = (
-    sessionIds: string[],
-    projectCwd?: string,
-  ): Promise<SessionDeletionResponse | null> =>
-    this.sessionManagement.clearHiddenSessions(sessionIds, projectCwd);
 
   // --- Prompting & native commands ---
 
@@ -1204,57 +1053,50 @@ export class AppStore {
     sessionId: string,
     command: string,
     message: string,
-    run: () => Promise<
-      Pick<
-        NativeCommandActivity,
-        "status" | "message" | "details" | "download" | "action"
-      >
-    >,
+    run: () => Promise<Pick<NativeCommandActivity, "status" | "message" | "details" | "download" | "action">>,
     options: {
       scopedAuth?: () => boolean;
       persistent?: boolean;
       fallback?: string;
       afterReceipt?: () => void;
+      onResult?: (status: NativeCommandActivity["status"], message: string) => void;
     } = {},
   ): PromptAcceptedResponse {
     const api = this.api;
-    const id = this.presentCommandActivity(
-      sessionId,
-      command,
-      "running",
-      message,
-    );
+    const id = this.presentCommandActivity(sessionId, command, "running", message);
+    const publish = (result: Awaited<ReturnType<typeof run>>) => {
+      if (options.onResult) {
+        this.dismissCommandActivity(sessionId, id);
+        options.onResult(result.status, result.message);
+      } else if (result.status === "success" && !options.persistent) {
+        this.dismissCommandActivity(sessionId, id);
+        if (this.state.sessionId === sessionId)
+          this.notify("info", result.message);
+      } else this.updateCommandActivity(sessionId, id, result);
+    };
     // Dispatch here so clipboard reads are still in the initiating gesture.
     void (async () => {
       try {
         const result = await run();
         if (options.afterReceipt && this.api !== api) return;
-        if (result.status === "success" && !options.persistent) {
-          this.dismissCommandActivity(sessionId, id);
-          if (this.state.sessionId === sessionId)
-            this.notify("info", result.message);
-        } else {
-          this.updateCommandActivity(sessionId, id, result);
-        }
+        publish(result);
         options.afterReceipt?.();
       } catch (error) {
         if (options.afterReceipt && this.api !== api) return;
-        const unauthenticated =
-          error instanceof ApiError && error.status === 401;
+        const unauthenticated = error instanceof ApiError && error.status === 401;
         const unknown =
           error instanceof ApiTransportError ||
-          (error instanceof ApiError &&
-            error.code === "PI_RPC_OUTCOME_UNKNOWN");
-        this.updateCommandActivity(sessionId, id, {
+          (error instanceof ApiError && error.code === "PI_RPC_OUTCOME_UNKNOWN");
+        publish({
           status: unknown && !options.scopedAuth ? "warning" : "error",
           message:
             unauthenticated && !options.scopedAuth
               ? "Host authentication expired before the command completed."
               : unknown && !options.scopedAuth
-                ? "Could not confirm the command result. Reconnect and check the session before trying again."
+                ? "Couldn’t confirm that the command finished."
                 : error instanceof Error
                   ? error.message
-                  : (options.fallback ?? `/${command} failed`),
+                  : options.fallback ?? `/${command} failed`,
         });
         if (unauthenticated && (options.scopedAuth?.() ?? true))
           this.handleAuthFailure();
@@ -1400,6 +1242,7 @@ export class AppStore {
     sessionId: string,
     command: HostNativeCommandName,
     argument: string,
+    onResult?: (status: NativeCommandActivity["status"], message: string) => void,
   ): PromptAcceptedResponse | false {
     const api = this.api;
     if (!api) return false;
@@ -1410,38 +1253,35 @@ export class AppStore {
           nativeCommand(activity.command)?.execution === "host",
       )
     ) {
-      this.notify("warning", "Wait for the active command to finish");
+      if (!onResult) this.notify("warning", "Wait for the active command to finish");
       return false;
     }
     const selectionGeneration = this.selectionGeneration;
-    return this.runCommandActivity(
-      sessionId,
-      command,
-      "",
-      async () => {
-        const result = await api.json("nativeCommand", {
-          body: { sessionId, command, argument: argument || undefined },
-        });
-        const exporting = command === "export";
-        const path = exporting ? result.details?.[0]?.value : undefined;
-        const { downloadId, fileName } = result.export ?? {};
-        return {
-          status: result.outcome === "cancelled" ? "cancelled" : "success",
-          message: result.message,
-          details: result.details,
-          download:
-            downloadId && fileName ? { id: downloadId, fileName } : undefined,
-          action: path
-            ? { kind: "copy", label: "Copy path", value: path }
-            : undefined,
-        };
-      },
-      {
-        persistent: command === "export",
-        afterReceipt: () => void this.resync(sessionId, selectionGeneration),
-      },
-    );
+    return this.runCommandActivity(sessionId, command, "", async () => {
+      const result = await api.json("nativeCommand", {
+        body: { sessionId, command, argument: argument || undefined },
+      });
+      const exporting = command === "export";
+      const path = exporting ? result.details?.[0]?.value : undefined;
+      const { downloadId, fileName } = result.export ?? {};
+      return {
+        status: result.outcome === "cancelled" ? "cancelled" : "success",
+        message: result.message,
+        details: result.details,
+        download: downloadId && fileName ? { id: downloadId, fileName } : undefined,
+        action: path ? { kind: "copy", label: "Copy path", value: path } : undefined,
+      };
+    }, {
+      persistent: command === "export",
+      afterReceipt: () => void this.resync(sessionId, selectionGeneration),
+      onResult,
+    });
   }
+
+  reloadSessionResources = (
+    sessionId: string,
+    onResult: (status: NativeCommandActivity["status"], message: string) => void,
+  ) => this.launchHostNativeCommand(sessionId, "reload", "", onResult);
 
   private sessionCommandDetails(): NonNullable<
     NativeCommandActivity["details"]
@@ -1480,12 +1320,6 @@ export class AppStore {
     return details;
   }
 
-  /** Palette actions never borrow an unfinished message's artifacts. */
-  runPaletteNativeCommand = (input: string): PromptAcceptedResponse | false => {
-    const command = parseNativeCommand(input);
-    return command ? this.executeNativeCommand(command, false) : false;
-  };
-
   sendPreparedCommand = (
     input: string,
     behavior?: "steer" | "followUp",
@@ -1504,11 +1338,7 @@ export class AppStore {
     if (!sessionId || !current()) return false;
     if (
       !control.options.some((option) => option.value === value) ||
-      !resolveCommandInventory(this.state.commands).some(
-        (command) =>
-          command.source === "extension" &&
-          "/" + command.name === control.command,
-      )
+      !hasStatusControlCommand(control, this.state.commands)
     )
       throw new Error("This control is not available in this session.");
     const confirmed = () =>
@@ -1571,12 +1401,9 @@ export class AppStore {
   };
 
   private executeNativeCommand(
-    {
-      descriptor,
-      argument,
-      raw,
-    }: NonNullable<ReturnType<typeof parseNativeCommand>>,
-    includeDraftArtifacts = true,
+    descriptor: NativeCommand,
+    { argument, raw }: CommandInvocation,
+    includeDraftArtifacts: boolean,
   ): PromptAcceptedResponse | false {
     const sessionId = this.state.sessionId;
     if (!sessionId) return false;
@@ -1592,17 +1419,15 @@ export class AppStore {
       message: string,
       action: () => Promise<CommandChangeResult>,
       confirmation: string,
-    ) =>
-      this.runCommandActivity(sessionId, name, message, async () => {
-        const result = await action();
-        return result.status === "stale"
-          ? {
-              status: "warning",
-              message:
-                "The command outcome is unknown after ownership changed.",
-            }
-          : { status: result.status, message: result.message ?? confirmation };
-      });
+    ) => this.runCommandActivity(sessionId, name, message, async () => {
+      const result = await action();
+      return result.status === "stale"
+        ? {
+            status: "warning",
+            message: "Session ownership changed before the command finished.",
+          }
+        : { status: result.status, message: result.message ?? confirmation };
+    });
     const draft = this.drafts.get(sessionId);
     if (
       includeDraftArtifacts &&
@@ -1655,10 +1480,7 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (name === "fork") {
-      this.notify(
-        "info",
-        "Choose Fork on the user message where you want to start the new branch.",
-      );
+      this.notify("info", "Choose Fork on the user message where you want to start the new branch.");
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (name === "clone") {
@@ -1780,11 +1602,7 @@ export class AppStore {
             current,
           );
           return written
-            ? {
-                status: "success",
-                message:
-                  "Copied the complete last assistant response to the clipboard.",
-              }
+            ? { status: "success", message: "Copied the complete last assistant response to the clipboard." }
             : {
                 status: "warning",
                 message: noResponse
@@ -1794,10 +1612,7 @@ export class AppStore {
                     : "Copy cancelled because the session or branch changed.",
               };
         },
-        {
-          scopedAuth: current,
-          fallback: "Failed to read the complete response.",
-        },
+        { scopedAuth: current, fallback: "Failed to read the complete response." },
       );
     }
     if (name === "session") {
@@ -1816,30 +1631,6 @@ export class AppStore {
 
     return false;
   }
-
-  restoreFailedComposerPrompt = (): boolean => {
-    const sessionId = this.state.sessionId;
-    return sessionId ? this.composer.restoreFailedPrompt(sessionId) : false;
-  };
-
-  readonly subscribeComposerDeliveries = this.composer.subscribe;
-  readonly composerDeliveryVersion = this.composer.getDeliveryVersion;
-  readonly composerDeliveryState = this.composer.deliveryState;
-
-  retryPreviousComposerDelivery = (): void => {
-    if (this.state.sessionId)
-      void this.composer.retryPrevious(this.state.sessionId);
-  };
-
-  forgetPreviousComposerDelivery = (): void => {
-    if (this.state.sessionId)
-      this.composer.forgetPrevious(this.state.sessionId);
-  };
-
-  forgetUnsupportedComposerDeliveries = (): void => {
-    if (this.state.sessionId)
-      this.composer.forgetUnsupportedDeliveries(this.state.sessionId);
-  };
 
   sendPrompt = async (
     message: string,
@@ -1863,10 +1654,7 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     const input = message.trimStart();
     const invocation = input.startsWith("/")
-      ? resolveCommandInput(
-          message,
-          resolveCommandInventory(this.state.commands),
-        )
+      ? resolveCommandInput(message, this.state.commands)
       : null;
     if (!invocation) {
       if (prepared) {
@@ -1879,10 +1667,7 @@ export class AppStore {
     }
     const descriptor = nativeCommand(invocation.name);
     if (descriptor) {
-      const result = this.executeNativeCommand(
-        { ...invocation, descriptor },
-        !prepared,
-      );
+      const result = this.executeNativeCommand(descriptor, invocation, !prepared);
       if (
         result &&
         sessionId &&
@@ -1945,7 +1730,7 @@ export class AppStore {
         )
       ) {
         try {
-          await this.pendingRecovery.run(sessionId, "recover", viewId);
+          await this.pendingRecovery.run(sessionId, "recover", viewId, false);
         } catch (error) {
           if (this.api !== api) return;
           if (
@@ -1957,11 +1742,6 @@ export class AppStore {
             this.handleAuthFailure();
             return;
           }
-          if (this.state.sessionId === sessionId)
-            this.notify(
-              "warning",
-              `Pending recovery failed: ${error instanceof Error ? error.message : "request failed"}`,
-            );
           // Stop remains owned even if its preliminary recovery failed. The
           // Host will clear again or retire the worker rather than resume input.
         }
@@ -1979,7 +1759,7 @@ export class AppStore {
           error instanceof Error ? error.message : "Failed to abort";
         if (compacting)
           this.updateCommandActivity(sessionId, compacting.id, {
-            message: `Cancellation was not confirmed: ${message}`,
+            message: `Could not stop Pi: ${message}`,
           });
         if (
           this.state.sessionId === sessionId &&
@@ -1993,6 +1773,7 @@ export class AppStore {
   private restorePendingInput(
     sessionId: string,
     recovered: PendingRecovery,
+    feedback: boolean,
   ): boolean {
     const text = [...recovered.steering, ...recovered.followUp].join("\n\n");
     const hasImages = Boolean(recovered.attachments?.length);
@@ -2009,7 +1790,7 @@ export class AppStore {
         .join("\n\n");
       this.drafts.setText(sessionId, draft);
     }
-    if (this.state.sessionId === sessionId) {
+    if (feedback && this.state.sessionId === sessionId) {
       if (recovered.interruptionScope === "agent")
         this.notify(
           "info",
@@ -2088,7 +1869,7 @@ export class AppStore {
   ): Promise<CopySource | null> => {
     const sessionId = this.state.sessionId;
     const viewId = this.state.view.viewId;
-    const generation = this.selectionGeneration;
+    const ownsView = this.copyOwnership();
     const queueRevision = this.state.live.queue.revision;
     const api = this.api;
     if (!api || !sessionId || !viewId) {
@@ -2097,11 +1878,8 @@ export class AppStore {
     }
     const owns = () =>
       !signal.aborted &&
-      this.api === api &&
-      this.state.sessionId === sessionId &&
-      this.state.view.viewId === viewId &&
-      this.state.live.queue.revision === queueRevision &&
-      this.selectionGeneration === generation;
+      ownsView() &&
+      this.state.live.queue.revision === queueRevision;
     try {
       const result = await api.json(
         "pendingText",
@@ -2195,11 +1973,8 @@ export class AppStore {
   }
 
   private changeModel(provider: string, modelId: string) {
-    return this.changeNativeSetting(
-      "model",
-      "Failed to set model",
-      (api, sessionId) =>
-        api.json("setModel", { body: { sessionId, provider, modelId } }),
+    return this.changeNativeSetting("model", "Failed to set model", (api, sessionId) =>
+      api.json("setModel", { body: { sessionId, provider, modelId } }),
     );
   }
 
@@ -2340,48 +2115,25 @@ export class AppStore {
     return this.composer.useHistoryEntry(scope, entry);
   };
 
-  addFiles = (files: File[], sessionId = this.state.sessionId): Promise<void> =>
-    this.composer.addFiles(files, sessionId);
-
-  removeAttachment = (
-    localId: string,
-    sessionId = this.state.sessionId,
-  ): void => this.composer.removeAttachment(localId, sessionId);
-
-  retryAttachment = (localId: string): Promise<void> =>
-    this.composer.retryAttachment(localId);
-
-  addProjectFile = (
-    path: string,
-    sessionId = this.state.sessionId,
-    cwd?: string,
-  ): void => this.composer.addProjectFile(path, sessionId, cwd);
-
-  removeProjectFile = (path: string, sessionId = this.state.sessionId): void =>
-    this.composer.removeProjectFile(path, sessionId);
-
-  transferStartDraft = (
-    sessionId: string,
-    draft: SessionDraft,
-  ): Promise<void> => this.composer.transferStart(sessionId, draft);
-
   searchProjectFiles = async (
     query: string,
+    signal: AbortSignal,
   ): Promise<ProjectFileSearchResult> => {
     const sessionId = this.state.sessionId;
     if (!this.api || !sessionId) return { files: [] };
-    return this.api.json("searchFiles", {
-      query: {
-        sessionId,
-        q: query,
-        limit: 50,
-        showHidden: this.state.workspaceShowHidden ? "1" : undefined,
+    return this.api.json(
+      "searchFiles",
+      {
+        query: {
+          sessionId,
+          q: query,
+          limit: 50,
+          showHidden: this.state.workspaceShowHidden ? "1" : undefined,
+        },
       },
-    });
+      signal,
+    );
   };
-
-  setWorkspaceShowHidden = (value: boolean): void =>
-    this.workspace.setShowHidden(value);
 
   private modelCycleQueue: {
     sessionId: string;
@@ -2470,6 +2222,17 @@ export class AppStore {
   cycleThinking = (): Promise<void> =>
     this.queueModelCycle(async () => {
       if (!this.state.model || this.state.readOnlyReason) return;
+      if (!this.visibleSessionIsExternal()) {
+        await this.reportSelectionChange(() =>
+          this.changeNativeSetting(
+            "thinking",
+            "Failed to cycle thinking level",
+            (api, sessionId) =>
+              api.json("cycleThinkingLevel", { body: { sessionId } }),
+          ),
+        );
+        return;
+      }
       const levels = supportedThinkingLevels(
         resolveModelMetadata(this.state.model, this.state.availableModels),
       );
@@ -2479,6 +2242,31 @@ export class AppStore {
 
   readMcpConfig = async (owner: { sessionId?: string; cwd?: string }) =>
     this.settingsApi().json("mcpConfig", { query: owner });
+
+  toolLoadout = async (
+    owner: { sessionId: string; viewId: string; transportGeneration: number },
+    signal: AbortSignal,
+    change?: { workerId: string; name: string; active: boolean },
+  ) => {
+    const api = this.settingsApi();
+    const { sessionId, viewId, transportGeneration } = owner;
+    if (
+      this.state.sessionId !== sessionId ||
+      this.state.view.viewId !== viewId ||
+      this.state.transportGeneration !== transportGeneration ||
+      this.state.sessionSelectionPending
+    )
+      throw new Error("The session view changed.");
+    try {
+      return change
+        ? await api.json("setToolLoadout", { body: { sessionId, viewId, ...change } }, signal)
+        : await api.json("toolLoadout", { query: { sessionId, viewId } }, signal);
+    } catch (error) {
+      if (this.api === api && error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      throw error;
+    }
+  };
 
   readMcpConnection = async (
     owner: { sessionId?: string; cwd?: string },
@@ -2541,42 +2329,48 @@ export class AppStore {
     return snapshot;
   };
 
-  saveModelPreferences = async (
+  private async writeModelSettings(
+    owner: { sessionId?: string; cwd?: string },
+    write: (api: Api) => Promise<ModelSettingsWriteResult>,
+    refreshCatalog = false,
+  ) {
+    const { api, current } = this.modelSettingsOperation(owner);
+    const result = await write(api);
+    if (current()) {
+      this.modelCatalogRead++;
+      const { snapshot } = result;
+      if (snapshot && !snapshot.modelDiscoveryFailed)
+        this.set({
+          ...(refreshCatalog ? { availableModels: snapshot.models } : {}),
+          commonModels: snapshot.commonModels,
+        });
+    }
+    return result;
+  }
+
+  saveModelPreferences = (
     owner: { sessionId?: string; cwd?: string },
     revision: string,
     patch: ModelPreferencesPatch,
-  ) => {
-    const { api, current } = this.modelSettingsOperation(owner);
-    const result = await api.json("saveModelPreferences", {
-      query: owner,
-      body: { revision, patch },
-    });
-    if (result.snapshot && current()) {
-      this.modelCatalogRead++;
-      this.set({ commonModels: result.snapshot.commonModels });
-    }
-    return result;
-  };
+  ) =>
+    this.writeModelSettings(owner, (api) =>
+      api.json("saveModelPreferences", {
+        query: owner,
+        body: { revision, patch },
+      }),
+    );
 
-  editModelConfig = async (
+  editModelConfig = (
     owner: { sessionId?: string; cwd?: string },
     revision: string,
     edit: ModelConfigEdit,
-  ) => {
-    const { api, current } = this.modelSettingsOperation(owner);
-    const result = await api.json("editModelConfig", {
-      query: owner,
-      body: { revision, edit },
-    });
-    if (result.snapshot && current()) {
-      this.modelCatalogRead++;
-      this.set({
-        availableModels: result.snapshot.models,
-        commonModels: result.snapshot.commonModels,
-      });
-    }
-    return result;
-  };
+  ) =>
+    this.writeModelSettings(
+      owner,
+      (api) =>
+        api.json("editModelConfig", { query: owner, body: { revision, edit } }),
+      true,
+    );
 
   providerAuth = async (
     owner: { sessionId?: string; cwd?: string },
@@ -2651,17 +2445,22 @@ export class AppStore {
   searchNewSessionProjectFiles = async (
     cwd: string,
     query: string,
-    showHidden = false,
+    showHidden: boolean,
+    signal: AbortSignal,
   ): Promise<ProjectFileSearchResult> => {
     if (!this.api) return { files: [] };
-    const result = await this.api.json("searchNewSessionFiles", {
-      query: {
-        cwd,
-        q: query,
-        limit: 50,
-        showHidden: showHidden ? "1" : undefined,
+    const result = await this.api.json(
+      "searchNewSessionFiles",
+      {
+        query: {
+          cwd,
+          q: query,
+          limit: 50,
+          showHidden: showHidden ? "1" : undefined,
+        },
       },
-    });
+      signal,
+    );
     return {
       ...result,
       files: result.files.map((file) => ({
@@ -2669,24 +2468,6 @@ export class AppStore {
         workspaceCwd: result.cwd,
       })),
     };
-  };
-
-  loadWorkspaceDirectory = (dir: string): Promise<void> =>
-    this.workspace.loadDirectory(dir);
-
-  toggleWorkspaceDirectory = (dir: string): void => {
-    this.workspace.toggleDirectory(dir);
-  };
-
-  consumeWorkspaceRevealRequest = (nonce: number): boolean =>
-    this.workspace.consumeRevealRequest(nonce);
-
-  setWorkspaceQuery = (query: string): void => {
-    this.workspace.setQuery(query);
-  };
-
-  resumeWorkspaceSearch = (): void => {
-    this.workspace.resumeSearch();
   };
 
   openWorkspaceFile = (path: string): Promise<void> => {
@@ -2720,8 +2501,6 @@ export class AppStore {
     }
   };
 
-  refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
-
   /** Filesystem roots for cross-volume navigation in the host picker. */
   browseHostRoots = async (): Promise<HostRootsResponse> => {
     if (!this.api) throw new Error("Not connected to the Inspire host");
@@ -2749,16 +2528,18 @@ export class AppStore {
     payload: Record<string, unknown>,
   ): Promise<string | null> => {
     const api = this.api;
-    const ownsTransport = (): boolean => this.api === api;
     if (!api || this.state.live.extensionUiRespondingId) return null;
     const request = this.state.live.extensionUiRequests[0];
     if (!request || payload.id !== request.id) return null;
+    const generation = this.selectionGeneration;
+    const current = () =>
+      this.api === api && this.selectionGeneration === generation;
     this.patchLive({ extensionUiRespondingId: request.id });
     try {
       await api.json("respondExtensionUi", {
         body: { ...payload, id: request.id, sessionId: request.sessionId },
       });
-      if (ownsTransport() && this.state.sessionId === request.sessionId) {
+      if (current()) {
         this.patchLive({
           extensionUiRequests: this.state.live.extensionUiRequests.filter(
             (candidate) => candidate.id !== request.id,
@@ -2766,7 +2547,7 @@ export class AppStore {
         });
       }
     } catch (error) {
-      if (!ownsTransport()) return null;
+      if (!current()) return null;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
         return null;
@@ -2775,7 +2556,6 @@ export class AppStore {
       // remove the owning request before the HTTP result arrives. That stale
       // completion must not turn a later dialog into a global error.
       if (
-        this.state.sessionId === request.sessionId &&
         this.state.live.extensionUiRequests.some(
           (candidate) => candidate.id === request.id,
         )
@@ -2785,20 +2565,10 @@ export class AppStore {
           : "Failed to answer the extension";
       }
     } finally {
-      if (
-        ownsTransport() &&
-        this.state.live.extensionUiRespondingId === request.id
-      )
-        this.patchLive({ extensionUiRespondingId: null });
+      if (current()) this.patchLive({ extensionUiRespondingId: null });
     }
     return null;
   };
-
-  checkInspireUpdate = (): void => this.updates.refreshInspire();
-
-  checkPiUpdate = (): void => this.updates.refreshPi();
-
-  snoozeUpdate = (): void => this.updates.snooze();
 
   dismissNotice = (id: number): void => {
     if (!this.state.live.notices.some((notice) => notice.id === id)) return;
@@ -2827,32 +2597,11 @@ export class AppStore {
     configurePresentationAdapters(result.configuration, result.adapters);
     if (result.warning) this.notify("warning", result.warning);
   };
-
-  setPreference: PreferenceController["set"] = (field, value) =>
-    this.preferences.set(field, value);
-  setCompletionAttention = (
-    value: CompletionAttentionPreference,
-  ): Promise<boolean> => this.notifications.setMode(value);
-  setTaskNotificationGrouping = (
-    value: TaskNotificationGrouping,
-  ): Promise<boolean> => this.notifications.setGrouping(value);
-  refreshTaskAlerts = (): Promise<void> => this.notifications.initialize();
-  testTaskNotification = (): Promise<void> => this.notifications.test();
-  captureNotificationTarget = (): void => this.notifications.captureTarget();
   restoreDefaultSettings = (): void => {
     this.preferences.restoreDefaults();
     void this.notifications.setMode("off");
     void this.notifications.setGrouping("session");
   };
-  toggleNavGroup = (cwd: string): void => this.preferences.toggleNavGroup(cwd);
-  toggleSessionPin = (id: string): void =>
-    this.preferences.toggleSessionPin(id);
-  toggleSessionHidden = (id: string): void =>
-    this.preferences.toggleSessionHidden(id);
-  toggleProjectPin = (cwd: string): void =>
-    this.preferences.toggleProjectPin(cwd);
-  toggleProjectHidden = (cwd: string): void =>
-    this.preferences.toggleProjectHidden(cwd);
 
   // --- Files/resources pane ---
 
@@ -3058,90 +2807,15 @@ export class AppStore {
     this.changeContext(true, contextMode);
 
   historyReadingState = () => readHistoryReading(this.workbenchKey());
-
-  branchCopyContent = (
-    targetId: string,
-    signal: AbortSignal,
-    format?: "message",
-  ) => this.branches.copyContent(targetId, signal, format);
-
-  readBranchImage = (targetId: string, index: number, signal?: AbortSignal) =>
-    this.branches.readImage(targetId, index, signal);
-
-  navigateBranch = (
-    targetId: string,
-    mode: BranchNavigateRequest["mode"],
-    options: Pick<
-      Exclude<BranchNavigateRequest, { mode: "watch" }>,
-      "summarize" | "customInstructions"
-    > = {},
-    revision?: number,
-  ): Promise<boolean> =>
-    this.branches.navigate(targetId, mode, options, revision);
-
-  forkFromEntry = (targetId: string): Promise<boolean> =>
-    this.branches.forkFromEntry(targetId);
-
-  forkBranch = (targetId: string): Promise<boolean> =>
-    this.branches.fork(targetId);
-
-  returnToLatestBranch = (): Promise<boolean> => this.branches.returnToLatest();
-
-  cloneBranch = (targetId: string): Promise<boolean> =>
-    this.branches.clone(targetId);
   cloneCurrentBranch = (): Promise<boolean> =>
     this.branches.clone(undefined, (message) =>
       this.notify("warning", message),
     );
 
-  setGitSurfaceVisible = (surface: string, visible: boolean): void => {
-    this.git.setSurfaceVisible(surface, visible);
-  };
-
-  refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
-
-  openGitDiff = (pathId: string): Promise<void> => this.git.openChange(pathId);
-
-  cancelResourceProbes = (clearStanding = false): void => {
-    this.resources.cancelProbes(clearStanding);
-  };
-
-  loadSessionResources = (signal?: AbortSignal) =>
-    this.resources.loadSessionResources(signal);
-
-  probeResources = (references: string[]): Promise<void> =>
-    this.resources.probeResources(references);
-
-  loadDocumentImage = (
-    documentId: string,
-    reference: string,
-    signal: AbortSignal,
-  ): Promise<Blob> =>
-    this.resources.loadDocumentImage(documentId, reference, signal);
-
-  createHtmlPreview = () => this.resources.createHtmlPreview();
-
-  downloadResource = () => this.resources.downloadResource();
-
   loadAttachmentImage = (id: string, signal: AbortSignal): Promise<Blob> => {
     if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
     return this.api.attachmentPreview(id, signal);
   };
-
-  loadTranscriptImage = (
-    sessionId: string,
-    viewId: string,
-    projectionKey: string,
-    reference: string,
-    signal: AbortSignal,
-  ): Promise<Blob> =>
-    this.resources.loadTranscriptImage(
-      sessionId,
-      viewId,
-      projectionKey,
-      reference,
-      signal,
-    );
 
   consumeFileSourceJump = (jump: FileSourceJump): boolean => {
     const inspection = this.state.fileInspection;
@@ -3169,14 +2843,6 @@ export class AppStore {
         : undefined,
     );
   };
-}
-
-export function gitChangeForWorkspacePath(
-  status: GitStatusResponse | null,
-  workspacePath: string,
-): GitFileChange | undefined {
-  if (!status || status.kind !== "repository") return undefined;
-  return status.files.find((file) => file.path.workspacePath === workspacePath);
 }
 
 export const store = new AppStore();
@@ -3227,8 +2893,6 @@ export function useAppState<T>(
     const candidate = selector ? selector(source) : source;
     const selection =
       previous &&
-      previous.selector === selector &&
-      previous.isEqual === isEqual &&
       (isEqual ?? Object.is)(previous.selection as T, candidate as T)
         ? previous.selection
         : candidate;

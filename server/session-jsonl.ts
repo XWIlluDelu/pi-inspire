@@ -9,6 +9,7 @@ import { MAX_SESSION_ID_CHARS } from "../shared/contracts.js";
 export const MAX_PERSISTED_ENTRY_BYTES = 32 * 1024 * 1024;
 
 export class PersistedJsonlError extends Error {}
+export class MissingSessionHeaderError extends PersistedJsonlError {}
 
 export interface SessionSourceIdentity {
   dev: bigint;
@@ -40,7 +41,7 @@ export function sameSessionObject(
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function sameSessionVersion(
+export function sameSessionVersion(
   left: SessionSourceIdentity,
   right: SessionSourceIdentity,
 ): boolean {
@@ -49,6 +50,17 @@ function sameSessionVersion(
     left.size === right.size &&
     left.mtimeNs === right.mtimeNs &&
     left.ctimeNs === right.ctimeNs
+  );
+}
+
+/** Admit same-file growth under Pi's append-only persistence model. */
+export function preservesSessionPrefix(
+  current: SessionSourceIdentity,
+  observed: SessionSourceIdentity,
+): boolean {
+  return (
+    sameSessionVersion(current, observed) ||
+    (sameSessionObject(current, observed) && current.size > observed.size)
   );
 }
 
@@ -61,7 +73,10 @@ export class SessionSourceTypeError extends Error {}
 
 async function sourceAtPath(
   path: string,
+  canonicalPath?: string,
 ): Promise<SessionSourceIdentity | null> {
+  if (canonicalPath !== undefined && (await realpath(path)) !== canonicalPath)
+    return null;
   const details = await lstat(path, { bigint: true });
   return details.isFile() ? details : null;
 }
@@ -69,8 +84,9 @@ async function sourceAtPath(
 export async function sessionVersionAtPath(
   path: string,
   source: SessionSourceIdentity,
+  canonicalPath?: string,
 ): Promise<boolean> {
-  const addressed = await sourceAtPath(path);
+  const addressed = await sourceAtPath(path, canonicalPath);
   return addressed !== null && sameSessionVersion(addressed, source);
 }
 
@@ -115,18 +131,12 @@ export class SessionDocumentReader {
     allowGrowth = false,
   ): Promise<boolean> {
     try {
-      if (
-        canonicalPath !== undefined &&
-        (await realpath(this.path)) !== canonicalPath
-      )
-        return false;
-      const addressed = await sourceAtPath(this.path);
+      const addressed = await sourceAtPath(this.path, canonicalPath);
       return (
         addressed !== null &&
-        (sameSessionVersion(addressed, this.source) ||
-          (allowGrowth &&
-            sameSessionObject(addressed, this.source) &&
-            addressed.size > this.source.size))
+        (allowGrowth
+          ? preservesSessionPrefix(addressed, this.source)
+          : sameSessionVersion(addressed, this.source))
       );
     } catch (error) {
       if (isDisappearedSessionPath(error)) return false;
@@ -184,26 +194,24 @@ export class SessionDocumentReader {
     onChunk?: (chunk: Buffer, offset: number) => void | Promise<void>,
     limit = Number(this.source.size),
   ) {
-    const decoder = new JsonlObjectDecoder(onFrame);
     const result: { header: SessionHeader | null } = { header: null };
+    const decoder = new JsonlObjectDecoder((entry, frame) => {
+      onFrame?.(frame);
+      if (start === 0 && result.header === null) {
+        assertSessionHeader(entry);
+        result.header = entry;
+        visit(entry, entry);
+      } else {
+        if (entry.type === "session")
+          throw new PersistedJsonlError(
+            "Persisted session contains a second session header",
+          );
+        visit(entry, null);
+      }
+    });
     const end = await this.readBytes(start, limit, async (chunk, offset) => {
       if (onChunk) await onChunk(chunk, offset);
-      for (const entry of decoder.push(chunk)) {
-        if (start === 0 && result.header === null) {
-          if (!isSessionHeader(entry))
-            throw new PersistedJsonlError(
-              "Persisted session has an invalid Pi session header",
-            );
-          result.header = entry;
-          visit(entry, entry);
-        } else {
-          if (entry.type === "session")
-            throw new PersistedJsonlError(
-              "Persisted session contains a second session header",
-            );
-          visit(entry, null);
-        }
-      }
+      decoder.push(chunk);
     });
     return {
       header: result.header,
@@ -224,17 +232,21 @@ function isSessionPath(value: unknown): value is string {
 }
 
 /** Authority fields common to every supported on-disk version. */
-function isSessionHeader(
-  entry: Record<string, unknown> | undefined,
-): entry is Record<string, unknown> & SessionHeader {
-  return (
-    entry?.type === "session" &&
-    typeof entry.id === "string" &&
-    entry.id.length > 0 &&
-    entry.id.length <= MAX_SESSION_ID_CHARS &&
-    isSessionPath(entry.cwd) &&
-    (entry.parentSession === undefined || isSessionPath(entry.parentSession))
-  );
+function assertSessionHeader(
+  entry: Record<string, unknown>,
+): asserts entry is Record<string, unknown> & SessionHeader {
+  if (entry.type !== "session")
+    throw new MissingSessionHeaderError("Missing Pi session header");
+  if (
+    typeof entry.id !== "string" ||
+    !entry.id.length ||
+    entry.id.length > MAX_SESSION_ID_CHARS ||
+    !isSessionPath(entry.cwd) ||
+    (entry.parentSession !== undefined && !isSessionPath(entry.parentSession))
+  )
+    throw new PersistedJsonlError(
+      "Persisted session has an invalid Pi session header",
+    );
 }
 
 function decodeJsonlObject(line: Buffer): Record<string, unknown> {
@@ -267,7 +279,12 @@ export class JsonlObjectDecoder {
   private pendingBytes = 0;
   private framedBytes = 0;
 
-  constructor(private readonly onFrame?: (frame: Buffer) => void) {}
+  constructor(
+    private readonly onEntry: (
+      entry: Record<string, unknown>,
+      frame: Buffer,
+    ) => void,
+  ) {}
 
   get completeBytes(): number {
     return this.framedBytes;
@@ -278,8 +295,7 @@ export class JsonlObjectDecoder {
     return Buffer.concat(this.pending, this.pendingBytes);
   }
 
-  push(chunk: Buffer): Record<string, unknown>[] {
-    const values: Record<string, unknown>[] = [];
+  push(chunk: Buffer): void {
     let offset = 0;
     while (offset < chunk.length) {
       const lf = chunk.indexOf(0x0a, offset);
@@ -309,13 +325,11 @@ export class JsonlObjectDecoder {
         throw new PersistedJsonlError(
           `Persisted session entry exceeds ${MAX_PERSISTED_ENTRY_BYTES} bytes`,
         );
-      values.push(decodeJsonlObject(frame.subarray(0, lineLength)));
+      this.onEntry(decodeJsonlObject(frame.subarray(0, lineLength)), frame);
       this.framedBytes += frame.length;
-      this.onFrame?.(frame);
       this.pending = [];
       this.pendingBytes = 0;
       offset = lf + 1;
     }
-    return values;
   }
 }

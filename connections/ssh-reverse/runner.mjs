@@ -6,24 +6,22 @@ import {
   mkdir,
   readFile,
   readlink,
-  rename,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { systemdEscape } from "../../deploy/systemd/install.mjs";
+import { renderUnit, unitWorkingDirectory, writeUnit } from "../../deploy/systemd/install.mjs";
 // Source checkouts and installed packages keep runtime support in different roots.
 const sourceSupport = new URL("../../server/", import.meta.url);
 const support = existsSync(new URL("file-lock.mjs", sourceSupport))
   ? sourceSupport
   : new URL("../../build/server/", import.meta.url);
-const [{ acquireFileLock }, { processStartIdentity }, { runChild }] =
+const [{ acquireFileLock }, { processStartIdentity }, { runChild }, { replacePrivateStateFile }] =
   await Promise.all(
-    ["file-lock", "instance-state", "process-tree"].map((module) =>
+    ["file-lock", "instance-state", "process-tree", "replace-private-state-file"].map((module) =>
       import(new URL(`${module}.mjs`, support).href),
     ),
   );
@@ -189,15 +187,9 @@ async function ensurePrivateDirectory(path) {
   await chmod(path, 0o700);
 }
 
-async function writePrivateFile(path, content, mode = 0o600) {
+async function writePrivateFile(path, content) {
   await ensurePrivateDirectory(dirname(path));
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await writeFile(temporary, content, { mode });
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true });
-  }
+  await replacePrivateStateFile(path, content);
 }
 
 function validState(value) {
@@ -346,14 +338,6 @@ async function serviceActive() {
   );
 }
 
-function serviceRootLine(root) {
-  return `WorkingDirectory=${systemdEscape(resolve(root))}`;
-}
-
-function sshReverseServiceBelongsToRoot(unit, root) {
-  return unit.split(/\r?\n/u).includes(serviceRootLine(root));
-}
-
 async function renderedService(root) {
   const template = await readFile(
     join(
@@ -363,10 +347,11 @@ async function renderedService(root) {
     ),
     "utf8",
   );
-  return template
-    .replaceAll("@NODE@", systemdEscape(process.execPath))
-    .replaceAll("@RUNNER@", systemdEscape(fileURLToPath(import.meta.url)))
-    .replaceAll("@ROOT@", systemdEscape(resolve(root)));
+  return renderUnit(template, {
+    NODE: process.execPath,
+    RUNNER: fileURLToPath(import.meta.url),
+    ROOT: resolve(root),
+  });
 }
 
 async function installedService(paths, root) {
@@ -381,7 +366,7 @@ async function installedService(paths, root) {
     ? { kind: "managed" }
     : {
         kind: "mismatch",
-        sameRoot: sshReverseServiceBelongsToRoot(unit, root),
+        sameRoot: unit.split(/\r?\n/u).includes(unitWorkingDirectory(resolve(root))),
       };
 }
 
@@ -638,7 +623,7 @@ async function installService(root) {
       );
     }
   }
-  await writePrivateFile(paths.service, await renderedService(root), 0o644);
+  await writeUnit(paths.service, await renderedService(root));
   const reloaded = await runChild("systemctl", ["--user", "daemon-reload"]);
   if (reloaded.code !== 0)
     throw new Error(`Installed ${paths.service}, but systemd could not reload${commandDetail(reloaded)}`);

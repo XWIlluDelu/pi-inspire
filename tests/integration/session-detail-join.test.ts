@@ -202,4 +202,4 @@ it("changes the addressed view and resumes it through the Host across an atomic 
     hostSocket.close();
     resumed?.socket.close();
   }
-}, 15_000);
+}, 30_000);

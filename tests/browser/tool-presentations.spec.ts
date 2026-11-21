@@ -39,8 +39,6 @@ async function openReview(
 ) {
   return openEventSession(page, "Tool presentation review", configuration, {
     theme: "light",
-    toolVisibility: "expanded",
-    activityFoldVisibility: "expanded",
     ...preferences,
   });
 }
@@ -59,10 +57,7 @@ test.describe("narrow CodeMode details", () => {
   test("keeps CodeMode script, child failures and output inspectable across settlement", async ({
     page,
   }) => {
-    const send = await openReview(page, {
-      toolVisibility: "dynamic",
-      activityFoldVisibility: "dynamic",
-    });
+    const send = await openReview(page);
     const args = { code: 'text(await tools.read({path: "report.txt"}));' };
     const call = tool("codemode", args);
     send(
@@ -159,9 +154,7 @@ test.describe("narrow CodeMode details", () => {
     await expect(row.locator("summary")).toBeInViewport();
     await expect.poll(position).toBeCloseTo(reading, 0);
     await expect(script).toBeFocused();
-    const incomplete = list
-      .locator(".child-call")
-      .filter({ hasText: "Unfinished" });
+    const incomplete = list.locator(".child-call").filter({ hasText: "Unfinished" });
     await expect(incomplete).toBeAttached();
     await expect(
       card.getByRole("button", { name: "View full output" }),
@@ -261,7 +254,7 @@ function toolCard(page: Page, name: string, resultOnly = false) {
 test("live output and partial arguments follow the reader through native execution and settlement", async ({
   page,
 }) => {
-  const send = await openReview(page, { toolVisibility: "dynamic" });
+  const send = await openReview(page);
   const shell = tool("bash", { command: "npm run build" });
   const path = "src/stream.ts";
   const content = Array.from(
@@ -331,17 +324,14 @@ test("live output and partial arguments follow the reader through native executi
   });
   await expect(card).toContainText("Waiting to execute");
   await expect(file).toBeVisible();
+
 });
 
 test("raw fallback preserves opaque results, complete copies and valid images alongside malformed blocks", async ({
   page,
 }) => {
   const send = await openReview(page);
-  const generic = tool(
-    "review_markdown",
-    { other: "unmatched" },
-    "generic-output",
-  );
+  const generic = tool("review_markdown", { other: "unmatched" }, "generic-output");
   const resultOnly = tool("imported_plot", {});
   const output = `${"Useful output\n".repeat(1000)}Final result line`;
   const png =
@@ -374,7 +364,9 @@ test("raw fallback preserves opaque results, complete copies and valid images al
       { details: { peak: 12.4 } },
     ),
   );
+  await page.getByRole("button", { name: "Expand assistant activity" }).click();
   const card = toolCard(page, "review_markdown");
+  await card.locator(".card__disclosure").click();
   const reader = card.getByRole("group", { name: "Result text" });
   await expect(reader).toBeVisible();
   await expect(reader).not.toContainText("Final result line");
@@ -395,6 +387,7 @@ test("raw fallback preserves opaque results, complete copies and valid images al
     '"line": 4',
   );
   const imported = toolCard(page, "imported_plot", true);
+  await imported.locator(".card__disclosure").click();
   await expect(imported.getByText("Computed spectrum")).toBeVisible();
   await expect(imported.getByText("Arguments", { exact: true })).toHaveCount(0);
   await expect(imported).toContainText(
@@ -493,8 +486,6 @@ test("saved tool images survive presentation changes and full logs open in the n
       bootstrap(body) {
         Object.assign(body.preferences, {
           theme: "light",
-          toolVisibility: fallback ? "collapsed" : "expanded",
-          activityFoldVisibility: "expanded",
         });
         if (fallback)
           body.toolPresentations = {
@@ -515,6 +506,8 @@ test("saved tool images survive presentation changes and full logs open in the n
       page,
       /Inspect the saved image and shell output/,
     );
+    await page.getByRole("button", { name: "Expand assistant activity" }).click();
+    await toolCard(page, "read").locator(".card__disclosure").click();
     await expect(
       toolCard(page, "read").locator(
         '[data-tool-rule="inspire.pi.read"] .tool-image-block__image',
@@ -524,11 +517,9 @@ test("saved tool images survive presentation changes and full logs open in the n
     fallback = true;
     await page.setViewportSize({ width: 390, height: 844 });
     await reloadSession(page, selected);
-    await page
-      .getByRole("button", { name: "read tool details", exact: true })
-      .click();
-    const detail = toolCard(page, "read");
-    const thumbnail = detail.getByRole("button", {
+    await page.getByRole("button", { name: "Expand assistant activity" }).click();
+    await toolCard(page, "read").locator(".card__disclosure").click();
+    const thumbnail = toolCard(page, "read").getByRole("button", {
       name: "Preview Tool result image 1",
     });
     await thumbnail.press("Enter");
@@ -543,11 +534,8 @@ test("saved tool images survive presentation changes and full logs open in the n
       .toBeGreaterThan(0);
     await page.keyboard.press("Escape");
     await expect(thumbnail).toBeFocused();
-    await page
-      .getByRole("button", { name: "bash tool details", exact: true })
-      .click();
-    const shell = toolCard(page, "bash");
-    await shell
+    await toolCard(page, "bash").locator(".card__disclosure").click();
+    await toolCard(page, "bash")
       .getByRole("button", { name: "View full output" })
       .press("Enter");
     const output = page.getByRole("region", {
@@ -557,6 +545,7 @@ test("saved tool images survive presentation changes and full logs open in the n
     await expect(output).toContainText("native line 1");
     await expect(output).toContainText("native line 2500");
   } finally {
+    await page.goto("about:blank");
     await rm(path, { force: true });
     if (fullOutputPath) await rm(fullOutputPath, { force: true });
   }

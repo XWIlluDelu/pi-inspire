@@ -34,7 +34,13 @@ async function workspace() {
 }
 
 function scope(cwd: string, revision = 1, viewId = "view-s1") {
-  return { sessionId: "s1", cwd, revision, viewId };
+  return {
+    sessionId: "s1",
+    cwd,
+    revision,
+    viewId,
+    loadHistoryImage: async () => null,
+  };
 }
 
 function context(
@@ -43,7 +49,10 @@ function context(
   revision = 1,
   viewId = "view-s1",
 ) {
-  return { ...scope(cwd, revision, viewId), messages };
+  return {
+    ...scope(cwd, revision, viewId),
+    loadMessages: async () => messages,
+  };
 }
 
 function citation(text: string, role = "assistant") {
@@ -80,13 +89,17 @@ afterEach(async () => {
 });
 
 describe("ResourceStore", () => {
-  it("keeps the newest ordered citation index when an older transcript finishes late", async () => {
-    const { project } = await workspace();
+  it("keeps full citation authority behind the bounded list when an older read finishes late", async () => {
+    const { root, project } = await workspace();
+    const outside = join(root, "outside.md");
+    const reference = pathToFileURL(outside).href;
+    await writeFile(outside, "An older citation");
     const older = Promise.withResolvers<unknown[]>();
     const loadOlder = vi.fn(() => older.promise);
     const current = {
       ...scope(project, 8),
       loadMessages: vi.fn(async () => [
+        citation(`[Outside](${reference})`),
         {
           role: "assistant",
           content: [
@@ -117,7 +130,9 @@ describe("ResourceStore", () => {
     });
     older.resolve([citation("See \`older.md\`.")]);
     await expect(pending).resolves.toMatchObject([{ reference: "older.md" }]);
-    await resources.probe(current, ["file-19.md", "file-0.md"]);
+    await expect(resources.probe(current, [reference])).resolves.toEqual([
+      { reference, availability: "available" },
+    ]);
     await expect(resources.list(current)).resolves.toEqual(listed);
     expect(current.loadMessages).toHaveBeenCalledOnce();
     expect(loadOlder).toHaveBeenCalledOnce();
@@ -281,12 +296,16 @@ describe("ResourceStore", () => {
     const reference = "pi-embedded://3/0";
     const embedded = (data: string, mimeType: string) => ({
       role: "toolResult",
-      __inspireMessageIndex: 3,
       content: [{ type: "image", data, mimeType }],
     });
     const image = (text: string) => Buffer.from(text).toString("base64");
     const descriptor = await resources.resolve(
-      context(project, [embedded(image("old-image"), "image/png")]),
+      context(project, [
+        null,
+        null,
+        null,
+        embedded(image("old-image"), "image/png"),
+      ]),
       reference,
     );
     const resource = resources.get(
@@ -299,7 +318,12 @@ describe("ResourceStore", () => {
         resource,
         context(
           project,
-          [citation("replacement"), embedded(image("new-image"), "image/jpeg")],
+          [
+            citation("replacement"),
+            null,
+            null,
+            embedded(image("new-image"), "image/jpeg"),
+          ],
           2,
         ),
       ),
@@ -314,7 +338,11 @@ describe("ResourceStore", () => {
       [embedded(image("html"), "text/html")],
     ];
     for (const [offset, messages] of invalid.entries()) {
-      const current = context(project, messages, 3 + offset);
+      const current = context(
+        project,
+        [null, null, null, ...messages],
+        3 + offset,
+      );
       await expect(resources.resolve(current, reference)).rejects.toMatchObject(
         { status: 404 },
       );
@@ -405,7 +433,6 @@ describe("ResourceStore", () => {
       status: 409,
       matches: [selected],
     });
-    expect(discover).toHaveBeenCalledWith(project, "kernel.py");
     discover.mockClear();
     await expect(resources.resolve(source, selected)).resolves.toMatchObject({
       workspacePath: selected,
@@ -428,7 +455,7 @@ describe("ResourceStore", () => {
     expect(await readResource(descriptor)).toBe("kernel");
     const duplicate = "other/kernel.py";
     await writeFile(join(project, duplicate), "duplicate");
-    projectFiles.invalidateProjectFiles(project);
+    projectFiles.invalidateProjectFiles();
     await expect(resources.resolve(source, "kernel.py")).rejects.toMatchObject({
       status: 409,
       matches: expect.arrayContaining([selected, duplicate]),
@@ -478,7 +505,7 @@ describe("ResourceStore", () => {
     await writeFile(join(project, "literal"), "different file");
     const descriptor = await resources.resolve(source, selected, selected);
     await writeFile(join(project, ".gitignore"), `${selected}\n`);
-    projectFiles.invalidateProjectFiles(project);
+    projectFiles.invalidateProjectFiles();
     await resources.authorize(descriptor.id, source);
     expect(await readResource(descriptor)).toBe(`${selected}\n`);
   });
@@ -568,7 +595,10 @@ describe("literal native paths and URL reference identity", () => {
     const appended = {
       ...before,
       revision: 3,
-      messages: [...before.messages, citation("append")],
+      loadMessages: async () => [
+        ...(await before.loadMessages()),
+        citation("append"),
+      ],
     };
     await expect(
       resources.authorize(descriptor.id, appended),

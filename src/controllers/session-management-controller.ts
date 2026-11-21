@@ -20,7 +20,7 @@ interface SessionManagementHost {
     offset: number,
     total: number,
   ): Promise<void>;
-  forgetSessions(sessionIds: ReadonlySet<string>): AppState["sessionStatuses"];
+  forgetSessions(sessionIds: ReadonlySet<string>): void;
   pauseSessionReads(sessionIds: ReadonlySet<string>): () => void;
   publishPreferences(publication: PreferencePublication): void;
 }
@@ -171,8 +171,7 @@ export class SessionManagementController {
       state.sessionListLoading ||
       state.sessionListLoadingOlder ||
       state.sessionListHydrating ||
-      state.sessionListError ||
-      state.sessionListIssues.length
+      state.sessionListError
     ) {
       return null;
     }
@@ -215,11 +214,9 @@ export class SessionManagementController {
       if (!ownsTransport()) return null;
       const { deleted, failure, navigation } = result;
       if (deleted.length) {
-        this.host.patch({
-          sessionStatuses: this.host.forgetSessions(
-            new Set(deleted.map(({ sessionId }) => sessionId)),
-          ),
-        });
+        this.host.forgetSessions(
+          new Set(deleted.map(({ sessionId }) => sessionId)),
+        );
         const subject = single
           ? "Session"
           : `${deleted.length} ${deleted.length === 1 ? "session" : "sessions"}`;

@@ -57,20 +57,21 @@ export class DocumentImageResources {
   ) {}
 
   load(reference: string): Promise<string> {
+    if (this.request.signal.aborted)
+      return Promise.reject(this.request.signal.reason);
     const cached = this.images.get(reference);
     if (cached) return cached;
-    if (this.request.signal.aborted) return Promise.reject(this.aborted());
     if (this.images.size >= MAX_DOCUMENT_IMAGES)
       return Promise.reject(new Error("Document image preview limit reached"));
     const promise = new Promise<string>((resolve, reject) => {
       this.pending.push(() => {
         this.active += 1;
         void (async () => {
-          if (this.request.signal.aborted) throw this.aborted();
+          this.request.signal.throwIfAborted();
           if (this.bytes >= MAX_DOCUMENT_IMAGE_BYTES)
             throw new Error("Document image preview limit reached");
           const blob = await this.fetchImage(reference, this.request.signal);
-          if (this.request.signal.aborted) throw this.aborted();
+          this.request.signal.throwIfAborted();
           if (this.bytes + blob.size > MAX_DOCUMENT_IMAGE_BYTES)
             throw new Error("Document image preview limit reached");
           this.bytes += blob.size;
@@ -95,13 +96,6 @@ export class DocumentImageResources {
     for (const url of this.urls) URL.revokeObjectURL(url);
     this.urls = [];
     this.pump();
-  }
-
-  private aborted(): Error {
-    return Object.assign(
-      new Error("The document preview is no longer current"),
-      { name: "AbortError" },
-    );
   }
 
   private pump(): void {

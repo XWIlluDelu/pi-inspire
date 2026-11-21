@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import {
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
   rm,
   stat,
@@ -76,10 +75,11 @@ export default {
 };\n`,
   );
   const compiledScript = async () => {
-    const assets = join(root, "dist", "assets");
-    const script = (await readdir(assets)).find((name) => name.endsWith(".js"));
+    const dist = join(root, "dist");
+    const manifest = await currentWebBuild(dist)();
+    const script = manifest?.generations[0].find((name) => name.endsWith(".js"));
     assert.ok(script);
-    return readFile(join(assets, script), "utf8");
+    return readFile(join(dist, "assets", script), "utf8");
   };
   const stamp = async () =>
     (await readFile(join(root, ".inspire-build"), "utf8")).trim();
@@ -97,7 +97,7 @@ export default {
   assert.notEqual(await sourceBuildHash(root), compiledHash);
 });
 
-it("publishes current assets and encodings together and removes outgoing files", async () => {
+it("keeps recent assets and encodings available and drops older generations", async () => {
   const root = await directory("inspire-web-publication-");
   const dist = join(root, "dist");
   const first = join(root, "first");
@@ -113,7 +113,6 @@ it("publishes current assets and encodings together and removes outgoing files",
   await put(first, "obsolete.js", "old root file");
   await publishWebBuild(first, dist);
   const observe = currentWebBuild(dist);
-  assert.equal((await observe()).buildId, "index-first.js");
 
   await put(
     next,
@@ -124,7 +123,6 @@ it("publishes current assets and encodings together and removes outgoing files",
   await put(next, join("assets", asset), source);
   await publishWebBuild(next, dist);
   const current = await observe();
-  assert.equal(current.buildId, "index-current.js");
   assert.deepEqual(
     [...current.assets],
     [
@@ -132,6 +130,7 @@ it("publishes current assets and encodings together and removes outgoing files",
       "nested/chunk.js",
       "nested/chunk.js.br",
       "nested/chunk.js.gz",
+      "index-first.js",
     ],
   );
   const published = join(dist, "assets", asset);
@@ -141,6 +140,15 @@ it("publishes current assets and encodings together and removes outgoing files",
     source,
   );
   assert.deepEqual(gunzipSync(await readFile(`${published}.gz`)), source);
-  await missing(join(dist, "assets/index-first.js"));
+  assert.equal(await readFile(join(dist, "assets/index-first.js"), "utf8"), "first");
   await missing(join(dist, "obsolete.js"));
+
+  for (const name of ["third", "fourth"]) {
+    const staging = join(root, name);
+    await put(staging, "index.html", `<script src="/assets/index-${name}.js"></script>`);
+    await put(staging, `assets/index-${name}.js`, name);
+    await publishWebBuild(staging, dist);
+  }
+  await missing(join(dist, "assets/index-first.js"));
+  assert.equal((await observe()).assets.has("nested/chunk.js"), true);
 });

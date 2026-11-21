@@ -1,4 +1,3 @@
-import { fireEvent, screen } from "@testing-library/react";
 import type { ComposerHistoryEntry } from "../../../shared/contracts";
 import { discardComposerHistory } from "../../../src/composer-history";
 import { store } from "../../../src/store";
@@ -103,17 +102,11 @@ export async function createComposerFixture() {
   return host;
 }
 
-export function typeDraft(text: string) {
-  fireEvent.change(screen.getByLabelText("Message"), {
-    target: { value: text },
-  });
-}
-
 function clearComposer() {
-  store.replaceComposerText("");
+  store.drafts.setText(store.getState().sessionId, "");
   for (const item of store.drafts.get(store.getState().sessionId).attachments)
-    store.removeAttachment(item.localId);
+    store.composer.removeAttachment(item.localId);
   for (const path of store.drafts.get(store.getState().sessionId).projectFiles)
-    store.removeProjectFile(path);
+    store.composer.removeProjectFile(path);
   store.dismissError();
 }

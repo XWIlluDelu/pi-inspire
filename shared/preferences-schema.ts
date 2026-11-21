@@ -25,20 +25,6 @@ export const preferenceFields = {
   readingWidth: z.enum(READING_WIDTHS),
   launch: z.enum(["welcome", "continue"]),
   desktopSendKey: z.enum(DESKTOP_SEND_KEYS),
-  thinkingVisibility: z.enum(["dynamic", "expanded", "collapsed", "hidden"]),
-  toolVisibility: z.enum([
-    "dynamic",
-    "expanded",
-    "compact",
-    "collapsed",
-    "hidden",
-  ]),
-  activityFoldVisibility: z.enum([
-    "dynamic",
-    "expanded",
-    "compact",
-    "collapsed",
-  ]),
   projectDisplay: z.enum(["folder", "path"]),
   sessionActionOrder: z
     .array(z.enum(SESSION_ACTION_IDS))

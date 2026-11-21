@@ -441,11 +441,11 @@ it("rerenders a shallow selection only when a selected value changes", () => {
   }
   render(createElement(ResourceProbe));
   const initial = rendered.mock.calls.length;
-  act(() => store.setWorkspaceQuery("notes"));
+  act(() => store.workspace.setQuery("notes"));
   expect(rendered).toHaveBeenCalledTimes(initial);
   act(() => store.setResourcesOpen(true));
   expect(screen.getByRole("status")).toHaveTextContent("Resources open");
   cleanup();
-  store.setWorkspaceQuery("");
+  store.workspace.setQuery("");
   store.setResourcesOpen(false);
 });

@@ -35,7 +35,7 @@ it("allows project notification grouping when desktop notifications are unavaila
     },
   });
   const change = vi
-    .spyOn(store, "setTaskNotificationGrouping")
+    .spyOn(store.notifications, "setGrouping")
     .mockResolvedValue(true);
 
   openBehaviorSettings();

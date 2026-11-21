@@ -15,8 +15,7 @@ export interface PendingImageDelivery {
   mode: Mode;
   text: string;
   fingerprint: string;
-  imageCount: number;
-  attachments: UploadedAttachment[];
+  imageIds: string[];
   copiedIds: Set<string>;
   state:
     | "prepared"
@@ -24,9 +23,7 @@ export interface PendingImageDelivery {
     | "queued"
     | "removed"
     | "uncorrelated"
-    | "consumed"
-    | "recovered"
-    | "discarded";
+    | "released";
 }
 interface Row {
   text: string;
@@ -44,11 +41,20 @@ interface PendingImageClear {
   rows: Rows | null;
   candidates: Set<PendingImageDelivery>;
 }
-function texts(rows: Row[]): string[] {
-  return rows.map((row) => row.text);
+function sameRows(rows: Row[], input: string[]): boolean {
+  return (
+    rows.length === input.length &&
+    rows.every((row, i) => row.text === input[i])
+  );
 }
-function equal(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((text, index) => text === b[index]);
+
+/** Earliest single removal, including when several adjacent captions match. */
+function removedRow(rows: Row[], next: string[]): number {
+  if (rows.length !== next.length + 1) return -1;
+  let index = next.length;
+  while (index > 0 && rows[index]!.text === next[index - 1]) index--;
+  for (let i = 0; i < index; i++) if (rows[i]!.text !== next[i]) return -1;
+  return index;
 }
 
 /** Artifact ownership at observed Pi boundaries, never a scheduler or queue authority.
@@ -59,8 +65,7 @@ export class PendingImageRecovery {
   private deliveries = new Set<PendingImageDelivery>();
   private removed: Row[] = [];
   private clears = new Set<PendingImageClear>();
-  private baseline: string | null | undefined;
-  private baselineRequest: Promise<void> | null = null;
+  private baseline?: Promise<string | null | undefined>;
   private rawSeen = new Map<string, number>();
   private corroborated = new Map<string, number>();
   private cleanup: Promise<void> = Promise.resolve();
@@ -88,12 +93,14 @@ export class PendingImageRecovery {
 
   async prepare(): Promise<void> {
     // One native append cursor per image lifetime, not a full history read.
-    this.baselineRequest ??= this.readEvidence()
-      .then(({ cursor }) => {
-        this.baseline = cursor;
-      })
-      .catch(this.report);
-    await this.baselineRequest;
+    this.baseline ??= this.readEvidence().then(
+      ({ cursor }) => cursor,
+      (error) => {
+        this.report(error);
+        return undefined;
+      },
+    );
+    await this.baseline;
   }
 
   async begin(
@@ -108,16 +115,11 @@ export class PendingImageRecovery {
       mode,
       text,
       fingerprint: hash([text, images]),
-      imageCount: images.length,
-      attachments: held.attachments,
-      copiedIds: new Set(held.copiedIds),
+      ...held,
       state: "prepared",
     };
     if (this.disposed) {
-      await this.store.rejectPendingImages(
-        held.attachments.map((item) => item.id),
-        delivery.copiedIds,
-      );
+      await this.store.rejectPendingImages(held.imageIds, delivery.copiedIds);
       throw new Error("Image delivery worker was retired");
     }
     this.deliveries.add(delivery);
@@ -143,17 +145,10 @@ export class PendingImageRecovery {
         .catch(this.report);
       return;
     }
-    if (
-      delivery.state === "consumed" ||
-      delivery.state === "recovered" ||
-      delivery.state === "discarded"
-    )
-      return;
-    delivery.state = "discarded";
+    if (delivery.state === "released") return;
+    delivery.state = "released";
     this.deliveries.delete(delivery);
-    const removing = this.store.releasePendingImages(
-      delivery.attachments.map((item) => item.id),
-    );
+    const removing = this.store.releasePendingImages(delivery.imageIds);
     this.cleanup = Promise.all([this.cleanup, removing])
       .then(() => undefined)
       .catch(this.report);
@@ -161,11 +156,8 @@ export class PendingImageRecovery {
 
   async rejected(delivery: PendingImageDelivery): Promise<void> {
     if (!this.deliveries.delete(delivery)) return;
-    delivery.state = "discarded";
-    await this.store.rejectPendingImages(
-      delivery.attachments.map((item) => item.id),
-      delivery.copiedIds,
-    );
+    delivery.state = "released";
+    await this.store.rejectPendingImages(delivery.imageIds, delivery.copiedIds);
   }
 
   accepted(delivery: PendingImageDelivery, disposition?: unknown): void {
@@ -197,10 +189,10 @@ export class PendingImageRecovery {
     ] as const) {
       const previous = this.rows[key];
       const next = input[key];
-      if (equal(texts(previous), next)) continue;
+      if (sameRows(previous, next)) continue;
       if (
         next.length === previous.length + 1 &&
-        equal(texts(previous), next.slice(0, -1))
+        previous.every((row, i) => row.text === next[i])
       ) {
         const text = next.at(-1)!;
         const delivery =
@@ -214,12 +206,7 @@ export class PendingImageRecovery {
         this.rows[key] = [...previous, { text, delivery }];
         continue;
       }
-      const removedIndex = previous.findIndex((_row, index) =>
-        equal(
-          texts(previous.filter((_item, position) => position !== index)),
-          next,
-        ),
-      );
+      const removedIndex = removedRow(previous, next);
       if (removedIndex >= 0) {
         const row = previous[removedIndex]!;
         if (!clearing && !row.consumed) {
@@ -233,9 +220,7 @@ export class PendingImageRecovery {
           this.removed.push(row);
           if (row.delivery?.state === "queued") row.delivery.state = "removed";
         }
-        this.rows[key] = previous.filter(
-          (_row, index) => index !== removedIndex,
-        );
+        this.rows[key] = previous.toSpliced(removedIndex, 1);
       } else {
         for (const row of previous) {
           if (!clearing && !row.consumed) {
@@ -306,7 +291,6 @@ export class PendingImageRecovery {
         else row.consumed = true;
       }
     this.release(delivery);
-    delivery.state = "consumed";
     return changed;
   }
 
@@ -328,8 +312,8 @@ export class PendingImageRecovery {
           text,
           ...(delivery?.state === "queued"
             ? {
-                imageCount: delivery.imageCount,
-                imageAttachmentIds: delivery.attachments.map((item) => item.id),
+                imageCount: delivery.imageIds.length,
+                imageAttachmentIds: delivery.imageIds,
               }
             : {}),
         }));
@@ -349,8 +333,8 @@ export class PendingImageRecovery {
     const rows = clear.rows;
     if (
       !rows ||
-      !equal(texts(rows.steering), input.steering) ||
-      !equal(texts(rows.followUp), input.followUp)
+      !sameRows(rows.steering, input.steering) ||
+      !sameRows(rows.followUp, input.followUp)
     )
       return input;
     const content = this.content(rows);
@@ -365,7 +349,6 @@ export class PendingImageRecovery {
     if (this.deliveries.size) return;
     this.removed = [];
     this.baseline = undefined;
-    this.baselineRequest = null;
     this.rawSeen.clear();
     this.corroborated.clear();
   }
@@ -398,9 +381,11 @@ export class PendingImageRecovery {
   }
 
   async corroborate(clear: PendingImageClear): Promise<void> {
-    if (!this.uncertain(clear).size || this.baseline === undefined) return;
+    if (!this.uncertain(clear).size) return;
+    const cursor = await this.baseline;
+    if (cursor === undefined) return;
     try {
-      const { messages } = await this.readEvidence(this.baseline);
+      const { messages } = await this.readEvidence(cursor);
       const counts = new Map<string, number>();
       for (const content of messages) {
         const count = (counts.get(content.identity) ?? 0) + 1;
@@ -430,21 +415,15 @@ export class PendingImageRecovery {
     const rows = clear.rows;
     const matches =
       rows &&
-      equal(texts(rows.steering), input.steering) &&
-      equal(texts(rows.followUp), input.followUp);
+      sameRows(rows.steering, input.steering) &&
+      sameRows(rows.followUp, input.followUp);
     const uncertain = this.uncertain(clear);
     const attachments: UploadedAttachment[] = [];
     let lost = false;
     const restored = new Set<PendingImageDelivery>();
     for (const row of rows ? [...rows.steering, ...rows.followUp] : []) {
       const delivery = row.delivery;
-      if (
-        !delivery ||
-        restored.has(delivery) ||
-        delivery.state === "consumed" ||
-        delivery.state === "recovered" ||
-        delivery.state === "discarded"
-      )
+      if (!delivery || restored.has(delivery) || delivery.state === "released")
         continue;
       restored.add(delivery);
       if (
@@ -455,11 +434,9 @@ export class PendingImageRecovery {
       ) {
         try {
           attachments.push(
-            ...this.store.restorePendingImages(
-              delivery.attachments.map((item) => item.id),
-            ),
+            ...this.store.restorePendingImages(delivery.imageIds),
           );
-          delivery.state = "recovered";
+          delivery.state = "released";
           this.deliveries.delete(delivery);
         } catch (error) {
           lost = true;

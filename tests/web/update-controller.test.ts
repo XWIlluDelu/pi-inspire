@@ -6,6 +6,7 @@ import {
   type UpdateCheckResponse,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../../src/api";
+import { createInitialAppState } from "../../src/app-state";
 import { UpdateController } from "../../src/controllers/update-controller";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -16,20 +17,8 @@ import {
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
+  updateStatus,
 } from "./helpers";
-
-interface State {
-  inspireUpdateCheck: UpdateCheckResponse | null;
-  piUpdateCheck: PiUpdateCheckResponse | null;
-  inspireUpdateChecking: boolean;
-  piUpdateChecking: boolean;
-  inspireUpdateRequestPending: boolean;
-  piUpdateRequestPending: boolean;
-  inspireUpdateRequestError: string | null;
-  piUpdateRequestError: string | null;
-  availableUpdateIdentity: string | null;
-  updateSnoozedUntil: number | null;
-}
 
 function available(latestVersion = "1.1.0"): UpdateCheckResponse {
   return {
@@ -55,36 +44,8 @@ function piAvailable(latestVersion = "0.84.3"): PiUpdateCheckResponse {
   };
 }
 
-function updateStatus(
-  revision: number,
-  overrides: Partial<HostUpdateStatus> = {},
-): HostUpdateStatus {
-  return {
-    revision,
-    inspireUpdateCheck: null,
-    piUpdateCheck: null,
-    inspireUpdateChecking: false,
-    piUpdateChecking: false,
-    availableUpdateIdentity: null,
-    updateSnoozedUntil: null,
-    ...overrides,
-  };
-}
-
 function harness() {
-  let state: State = {
-    inspireUpdateCheck: null,
-    piUpdateCheck: null,
-    inspireUpdateChecking: false,
-    piUpdateChecking: false,
-    inspireUpdateRequestPending: false,
-    piUpdateRequestPending: false,
-    inspireUpdateRequestError: null,
-    piUpdateRequestError: null,
-    availableUpdateIdentity: null,
-    updateSnoozedUntil: null,
-  };
-  const notify = vi.fn();
+  let state = createInitialAppState();
   const api = {
     update: vi.fn(async (_force?: boolean) =>
       updateStatus(2, { inspireUpdateCheck: available() }),
@@ -112,12 +73,10 @@ function harness() {
       state = { ...state, ...patch };
     },
     api: () => current,
-    notify,
   });
   return {
     controller,
     api,
-    notify,
     state: () => state,
     bootstrap: (status: HostUpdateStatus) => {
       state = { ...state, ...controller.bootstrap(status) };
@@ -289,7 +248,7 @@ describe("update status controller", () => {
     });
   });
 
-  it("snoozes the Host-issued update set and lets the user retry a failed write explicitly", async () => {
+  it("dismisses an update immediately and keeps it dismissed if the write fails", async () => {
     vi.useFakeTimers();
     const test = harness();
     const status = updateStatus(4, {
@@ -297,48 +256,14 @@ describe("update status controller", () => {
       availableUpdateIdentity: "host-issued-set",
     });
     test.bootstrap(status);
-    test.api.snoozeUpdate
-      .mockResolvedValueOnce({} as HostUpdateStatus)
-      .mockResolvedValueOnce({
-        ...status,
-        revision: 5,
-        updateSnoozedUntil: 2_000_000,
-      });
-
+    test.api.snoozeUpdate.mockRejectedValueOnce(new Error("Offline"));
     test.controller.snooze();
-    test.controller.snooze();
-    await vi.runAllTimersAsync();
-    expect(test.notify).toHaveBeenCalledExactlyOnceWith(
-      "warning",
-      "Unable to close the update notice.",
-    );
-    expect(test.api.snoozeUpdate).toHaveBeenCalledExactlyOnceWith(
-      "host-issued-set",
-    );
-    expect(test.state().updateSnoozedUntil).toBeNull();
-
-    test.controller.snooze();
-    await vi.runAllTimersAsync();
-    expect(test.api.snoozeUpdate.mock.calls).toEqual([
-      ["host-issued-set"],
-      ["host-issued-set"],
-    ]);
-    expect(test.state().updateSnoozedUntil).toBe(2_000_000);
-  });
-
-  it("ignores an invalid snooze reply after its transport is replaced", async () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const pending = deferred<HostUpdateStatus>();
-    test.bootstrap(
-      updateStatus(4, { availableUpdateIdentity: "host-issued-set" }),
-    );
-    test.api.snoozeUpdate.mockReturnValueOnce(pending.promise);
-    test.controller.snooze();
+    expect(test.state().updateSnoozedUntil).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(0);
     test.replaceTransport();
-    pending.resolve({} as HostUpdateStatus);
-    await vi.runAllTimersAsync();
-    expect(test.notify).not.toHaveBeenCalled();
+    test.bootstrap(status);
+    expect(test.state().updateSnoozedUntil).not.toBeNull();
+    test.controller.applySnapshot({ ...status, revision: 5, availableUpdateIdentity: "new-set" });
     expect(test.state().updateSnoozedUntil).toBeNull();
   });
 });

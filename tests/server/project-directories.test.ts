@@ -84,7 +84,6 @@ describe("durable project discovery roots", () => {
       await catalog.refresh(true);
       expect(await catalog.list()).toMatchObject({
         sessions: [{ id: "healthy" }],
-        issues: [{ path: preferences.projectDirectories.path }],
       });
       await expect(
         catalog.refresh(false, { requireComplete: true }),

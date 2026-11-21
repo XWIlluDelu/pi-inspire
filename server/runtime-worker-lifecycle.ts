@@ -18,29 +18,19 @@ import type { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import { parseRpcEntryChain } from "./runtime-entry-chain.js";
 import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
-import {
-  type BranchBridgeIdentity,
-  clearWorkerPresentation,
-  type RuntimeSlot,
-  workerOnSeparateBranch,
-} from "./runtime-slot.js";
+import { type BranchBridgeIdentity, type RuntimeSlot } from "./runtime-slot.js";
 import { createWorkerView } from "./runtime-worker-view.js";
 import type {
   ProjectionReconcileResult,
-  SessionProjectionView,
+  SessionProjection,
 } from "./session-projection.js";
 
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
-const extensionSuffix = fileURLToPath(import.meta.url).endsWith(".ts")
-  ? "ts"
-  : "js";
+const extensionSuffix = fileURLToPath(import.meta.url).endsWith(".ts") ? "ts" : "js";
 const workerExtensions = [
   `./extensions/inspire-branch-bridge.${extensionSuffix}`,
   `../extensions/attach-control.${extensionSuffix}`,
-].flatMap((path) => [
-  "--extension",
-  fileURLToPath(new URL(path, import.meta.url)),
-]);
+].flatMap((path) => ["--extension", fileURLToPath(new URL(path, import.meta.url))]);
 
 interface StartupProjectionBaseline {
   entries: readonly SessionEntry[];
@@ -51,7 +41,7 @@ interface StartupProjectionBaseline {
 }
 
 function captureStartupProjection(
-  projection: SessionProjectionView,
+  projection: SessionProjection,
 ): StartupProjectionBaseline {
   return {
     entries: projection.entriesAfter(null),
@@ -79,8 +69,7 @@ interface RuntimeWorkerLifecycleHost {
     message: string,
     diagnosticFields?: Record<string, unknown>,
   ): ProjectionConflict;
-  markLiveUnconfirmed(slot: RuntimeSlot): void;
-  renewView(slot: RuntimeSlot): void;
+  retireLiveTail(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   dispatchProcessEvent(
     slot: RuntimeSlot,
@@ -114,17 +103,14 @@ export class RuntimeWorkerLifecycle {
       cwd,
       args: [...args, ...workerExtensions],
       workerId: bridge.workerId,
-      diagnostic: (level, event, fields) =>
-        this.diagnostics.record(level, event, fields),
+      diagnostic: (level, event, fields) => this.diagnostics.record(level, event, fields),
       env: {
         // An owned worker is excluded from external Pi presence.
         PI_ATTACH_CONTROL_TAG: bridge.workerId,
         INSPIRE_BRANCH_COMMAND: bridge.command,
         INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
         INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
-        ...(resume && {
-          INSPIRE_NATIVE_START_COUNT: String(resume.entryCount),
-        }),
+        ...(resume && { INSPIRE_NATIVE_START_COUNT: String(resume.entryCount) }),
       },
       ...(resume && { sessionId: resume.sessionId }),
     });
@@ -174,17 +160,13 @@ export class RuntimeWorkerLifecycle {
       if (attest) await attest(rpc);
       this.host.assertNotClosing();
       if (attest && (slot.process !== rpc || !rpc.available))
-        throw requestError(
-          "Pi runtime stopped during startup attestation",
-          503,
-        );
+        throw requestError("Pi runtime stopped during startup attestation", 503);
     } catch (error) {
       // A reopened worker may have run startup hooks. Require an explicit retry.
       if (attest) slot.readOnlyReason = null;
       throw error;
     }
-    slot.startupPhase = "complete";
-    slot.ready = true;
+    slot.startupPhase = "ready";
   }
 
   publishReady(slot: RuntimeSlot, rpc: PiRpcProcess, created = false): void {
@@ -263,7 +245,9 @@ export class RuntimeWorkerLifecycle {
     reason: Parameters<RuntimeExtensionUiController["clear"]>[1],
   ): void {
     this.collaborators.extensionUi.clear(slot, reason);
-    clearWorkerPresentation(slot);
+    slot.extensionDisplays = [];
+    slot.extensionStatuses = {};
+    slot.toolActivity = {};
   }
 
   async stop(
@@ -273,8 +257,7 @@ export class RuntimeWorkerLifecycle {
   ): Promise<void> {
     const rpc = slot.process;
     if (!rpc) {
-      if (reason === "closed")
-        this.collaborators.extensionUi.clear(slot, reason);
+      if (reason === "closed") this.collaborators.extensionUi.clear(slot, reason);
       if (slot.stopping) await slot.stopping;
       return;
     }
@@ -289,7 +272,7 @@ export class RuntimeWorkerLifecycle {
     });
     if (
       reason === "stopped" &&
-      slot.ready &&
+      slot.startupPhase === "ready" &&
       slot.projection?.health.status === "pending" &&
       !slot.conflict
     ) {
@@ -306,18 +289,19 @@ export class RuntimeWorkerLifecycle {
     this.host.rejectDeferredPrompts(slot, rpc);
     this.collaborators.bash.retire(slot, rpc);
     void this.retirePendingImages(slot);
-    this.host.markLiveUnconfirmed(slot);
+    this.host.retireLiveTail(slot);
     slot.process = null;
     slot.pendingPromptCount = 0;
     slot.nativeBash = null;
-    slot.ready = false;
+    const started = slot.startupPhase !== "idle";
+    slot.startupPhase = "idle";
     if (cancelledCommand !== "compact") slot.activeTask = null;
     slot.compactionReturnState = null;
-    if (workerOnSeparateBranch(slot)) slot.branchRevision += 1;
+    if (slot.workerOnSeparateBranch) slot.branchRevision += 1;
     slot.workerView = null;
     slot.bridge = null;
     // Pre-start preparation has not acquired a Pi view to retire.
-    if (slot.startupPhase !== "idle") this.host.renewView(slot);
+    if (started) slot.renewView();
     if (slot.pendingBranchBridge) {
       slot.pendingBranchBridge.reject(
         new Error("Branch bridge worker stopped"),
@@ -338,12 +322,7 @@ export class RuntimeWorkerLifecycle {
     });
     try {
       await stopping;
-      if (slot.stopping === stopping) {
-        slot.stopping = null;
-        // Failed startup is settled once its worker is gone, not ongoing work.
-        // Keep startupError available to the caller unwinding that startup.
-        slot.startupPhase = "idle";
-      }
+      if (slot.stopping === stopping) slot.stopping = null;
     } catch (error) {
       // Rejection is not an exit acknowledgement. Keep the rejected barrier
       // so neither recovery nor another start can silently acquire this file.
@@ -354,7 +333,9 @@ export class RuntimeWorkerLifecycle {
     }
   }
 
-  async ensureFreshWriter(slot: RuntimeSlot): Promise<PiRpcProcess> {
+  async ensureFreshWriter(
+    slot: RuntimeSlot,
+  ): Promise<PiRpcProcess> {
     await this.host.reconcile(slot, true);
     if (!slot.projection || slot.projection.health.status === "error") {
       throw requestError(
@@ -369,11 +350,15 @@ export class RuntimeWorkerLifecycle {
       );
     }
     if (slot.conflict) throw requestError(slot.conflict.message, 409);
-    if (slot.process && slot.ready && !slot.process.available) {
+    if (
+      slot.process &&
+      slot.startupPhase === "ready" &&
+      !slot.process.available
+    ) {
       await this.stop(slot);
     }
-    if (!slot.process || !slot.ready) await this.start(slot);
-    if (!slot.process || !slot.ready)
+    if (!slot.process || slot.startupPhase !== "ready") await this.start(slot);
+    if (!slot.process || slot.startupPhase !== "ready")
       throw requestError("Pi runtime failed to start", 503);
     return slot.process;
   }
@@ -396,15 +381,10 @@ export class RuntimeWorkerLifecycle {
     try {
       const baseline = captureStartupProjection(projection);
       const bridge = newBridgeIdentity();
-      rpc = await this.createWorker(
-        slot.cwd,
-        ["--session", slot.sessionPath],
-        bridge,
-        {
-          sessionId: slot.id,
-          entryCount: baseline.entries.length,
-        },
-      );
+      rpc = await this.createWorker(slot.cwd, ["--session", slot.sessionPath], bridge, {
+        sessionId: slot.id,
+        entryCount: baseline.entries.length,
+      });
       this.host.assertNotClosing();
       slot.process = rpc;
       installed = true;
@@ -412,7 +392,6 @@ export class RuntimeWorkerLifecycle {
       slot.startupError = null;
       slot.nativeStart = null;
       slot.bridge = bridge;
-      slot.ready = false;
       const released = this.releaseWorkerView(slot, "replaced");
       slot.availableModels = null;
       slot.commands = null;
@@ -436,7 +415,7 @@ export class RuntimeWorkerLifecycle {
       this.publishReady(slot, rpc);
       this.host.scheduleIdleWorkerEviction();
     } catch (error) {
-      const failure = installed ? (slot.startupError ?? error) : error;
+      const failure = installed ? slot.startupError ?? error : error;
       if (installed && slot.process === rpc) {
         await this.stop(slot);
         // Ownership observation retains read-only state; actual preparation or
@@ -539,10 +518,7 @@ export class RuntimeWorkerLifecycle {
         return fail();
       }
     })();
-    const state = await rpc.request<{
-      sessionId?: unknown;
-      sessionFile?: unknown;
-    }>({
+    const state = await rpc.request<{ sessionId?: unknown; sessionFile?: unknown }>({
       type: "get_state",
     });
     if (

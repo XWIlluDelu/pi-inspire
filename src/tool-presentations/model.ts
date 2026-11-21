@@ -1,3 +1,4 @@
+import type { DiffLine } from "../diff";
 import type { ChatMessage, ToolCallContent } from "../events";
 
 export interface ToolPresentationInput {
@@ -143,7 +144,7 @@ export type ToolPresentationBlock =
   | {
       type: "diff";
       label?: string;
-      text: string;
+      lines: DiffLine[];
       path?: string;
     }
   | {
