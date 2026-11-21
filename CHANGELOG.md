@@ -9,6 +9,9 @@
   daemon, `inspire terminal` subcommands, and `inspire restart --terminals`. Restarting the Host
   now restarts both Pi workers and project terminals in one step.
 - Updated the Pi development compatibility baseline to **1.6.0**.
+- Subsetted bundled `IBM Plex Sans SC` and `Flux Mono SC` web fonts to full GB2312 +
+  high-frequency multi-weight tiers with system CJK fallbacks (reducing bundled font assets from
+  31.4 MB to 6.0 MB across 169 `.woff2` shards).
 - Simplified notices, Host restart recovery, and user-facing copy (unified **Thinking** terminology).
 - The thinking shortcut uses the live Pi worker's native cycle order.
 - **Tool Loadout…** in the session menu and palette shows Pi's tool inventory and lets you change

@@ -251,9 +251,11 @@ enabled state; disabled styling takes precedence over local action styles.
 | Flux Mono SC | Code, paths, identifiers, timestamps, shortcuts and machine data. |
 | Bundled KaTeX faces | Mathematical glyphs. |
 
-Latin core faces load with the shell. The complete checksum-pinned CJK registry loads after
-authoritative bootstrap so it does not compete with first render, and fetches only used Unicode
-subsets. Structural labels (`--font-label`: resource tabs, Settings section headings and command-palette
+Latin core faces load with the shell. The checksum-pinned CJK registry (IBM Plex Sans SC full
+GB2312 Regular plus high-frequency 3-weight shards, and Flux Mono SC high-frequency CJK Regular
+shards) loads after authoritative bootstrap so it does not compete with first render, fetching
+only used Unicode subsets and falling back cleanly to system CJK faces for rare glyphs. Structural
+labels (`--font-label`: resource tabs, Settings section headings and command-palette
 group headings) share IBM Plex Sans SC in authored sentence case without tracking, using 500 (600
 for Settings sections, selected resource tabs and palette groups). Activity headings use Flux Mono
 SC at 11.5px and 400, uppercase
