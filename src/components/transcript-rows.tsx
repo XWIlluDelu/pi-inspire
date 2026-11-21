@@ -238,12 +238,10 @@ export function AssistantActivityCard({
   item,
   live,
   dynamicActive,
-  expanded = false,
 }: {
   item: AssistantActivityContent;
   live: boolean;
   dynamicActive: boolean;
-  expanded?: boolean;
 }) {
   switch (item.kind) {
     case "thinking":
@@ -258,7 +256,6 @@ export function AssistantActivityCard({
           activity={item.activity}
           live={live}
           dynamicActive={dynamicActive}
-          expanded={expanded}
         />
       );
   }

@@ -145,12 +145,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
       rows.push({
         key: `${group}:activity:${band++}`,
         node: (
-          <ResponseActivityFold
-            live={live}
-            items={activity}
-            collapseTools={!live}
-            choices={choices}
-          />
+          <ResponseActivityFold live={live} items={activity} choices={choices} />
         ),
         searchText: "",
         searchScope: null,
@@ -293,14 +288,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               failed:
                 tool?.result?.isError === true ||
                 tool?.activity?.phase === "error",
-              expandedNode: tool ? (
-                <AssistantActivityCard
-                  item={item}
-                  live={false}
-                  dynamicActive={false}
-                  expanded
-                />
-              ) : undefined,
               node: (
                 <AssistantActivityCard
                   item={item}
@@ -337,7 +324,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               name: message.toolName,
               failed: message.isError === true,
               node: <ToolCard result={message} />,
-              expandedNode: <ToolCard result={message} expanded />,
             });
           break;
         default: {

@@ -1,7 +1,6 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   type ReactNode,
-  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -10,12 +9,9 @@ import {
 } from "react";
 import {
   ActivityItemOwner,
-  hasOpenActivityCard,
   type ActivityReadingChoices,
   ReadingChoices,
 } from "./transcript-activity-visibility";
-
-import { toolIcon } from "./transcript-cards";
 import { useActivityCloseDelay } from "./use-activity-close-delay";
 
 const ACTIVITY_PAGE_SIZE = 24;
@@ -28,7 +24,6 @@ export interface ActivityItem {
   failed?: boolean;
   toolCallId?: string;
   live?: boolean;
-  expandedNode?: ReactNode;
 }
 
 function ActivityMatrix({
@@ -102,86 +97,13 @@ function summarizeActivity(items: readonly ActivityItem[]) {
   };
 }
 
-function ToolStrip({ items }: { items: readonly ActivityItem[] }) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const panel = useId();
-  const selected = items.find((item) => item.key === selectedKey);
-  return (
-    <div className="activity-strip">
-      <div
-        className="activity-strip__items"
-        role="group"
-        aria-label="Tool calls"
-      >
-        {items.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className="activity-strip__item"
-            aria-label={`${item.name} tool details${item.failed ? ", failed" : ""}`}
-            title={item.name}
-            aria-expanded={selectedKey === item.key}
-            aria-controls={selectedKey === item.key ? panel : undefined}
-            data-failed={item.failed || undefined}
-            onClick={() =>
-              setSelectedKey(selectedKey === item.key ? null : item.key)
-            }
-          >
-            {toolIcon(item.name ?? "")}
-          </button>
-        ))}
-      </div>
-      {selected && (
-        <div id={panel} className="activity-strip__detail" key={selected.key}>
-          <ActivityItemOwner toolCallId={selected.toolCallId}>
-            {selected.expandedNode}
-          </ActivityItemOwner>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ActivityItems({
-  items,
-  collapseTools,
-}: {
-  items: readonly ActivityItem[];
-  collapseTools: boolean;
-}) {
-  const choices = useContext(ReadingChoices);
-  const canGroup = (item: ActivityItem | undefined) =>
-    item?.expandedNode &&
-    !item.live &&
-    !hasOpenActivityCard(choices, item.toolCallId);
-  const children: ReactNode[] = [];
-  for (let start = 0; start < items.length; ) {
-    const item = items[start]!;
-    let end = start + 1;
-    if (collapseTools && canGroup(item)) while (canGroup(items[end])) end++;
-    children.push(
-      end - start > 1 ? (
-        <ToolStrip key={item.key} items={items.slice(start, end)} />
-      ) : (
-        <ActivityItemOwner key={item.key} toolCallId={item.toolCallId}>
-          {item.node}
-        </ActivityItemOwner>
-      ),
-    );
-    start = end;
-  }
-  return children;
-}
-
 export function ResponseActivityFold({
   live,
   choices,
   items,
-  collapseTools,
 }: {
   live: boolean;
   choices: ActivityReadingChoices;
-  collapseTools: boolean;
   items: readonly ActivityItem[];
 }) {
   const id = useId();
@@ -349,10 +271,11 @@ export function ResponseActivityFold({
               </button>
             )}
             <ReadingChoices value={choices}>
-              <ActivityItems
-                items={items.slice(earlierCount)}
-                collapseTools={collapseTools}
-              />
+              {items.slice(earlierCount).map((item) => (
+                <ActivityItemOwner key={item.key} toolCallId={item.toolCallId}>
+                  {item.node}
+                </ActivityItemOwner>
+              ))}
             </ReadingChoices>
           </>
         )}

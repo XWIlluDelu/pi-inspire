@@ -1050,12 +1050,10 @@ export function ToolCard({
   activity,
   live = false,
   dynamicActive = false,
-  expanded = false,
 }: {
   activity?: ActivityTool;
   live?: boolean;
   dynamicActive?: boolean;
-  expanded?: boolean;
 } & (
   | { call: ToolCallContent; result?: ChatMessage }
   | { call?: undefined; result: ChatMessage }
@@ -1064,12 +1062,7 @@ export function ToolCard({
   const owner = useContext(TranscriptImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
   const dynamicOpen = useActivityCloseDelay(
-    Boolean(
-      !expanded &&
-        dynamicActive &&
-        status !== "success" &&
-        status !== "failure",
-    ),
+    Boolean(dynamicActive && status !== "success" && status !== "failure"),
     1500,
     500,
   );
@@ -1089,9 +1082,9 @@ export function ToolCard({
   return (
     <ToolArgumentPreviewContext value={call?.__inspireToolCall}>
       <CollapsibleCard
-        defaultVisibility={expanded || dynamicOpen ? "expanded" : "collapsed"}
+        defaultVisibility={dynamicOpen ? "expanded" : "collapsed"}
         className="card--tool"
-        animate={!expanded}
+        animate
         icon={toolIcon(name)}
         label={
           <code className="card__tool-name">
@@ -1218,7 +1211,7 @@ export function GenericCard({
 
 /** Tool identity is part of the annotation grammar: the glyph carries the
  * tool type so a settled batch of cards or tiles scans without reading. */
-export function toolIcon(name: string): React.ReactNode {
+function toolIcon(name: string): React.ReactNode {
   switch (name.toLowerCase()) {
     case "read":
       return <FileText size={14} aria-hidden />;
