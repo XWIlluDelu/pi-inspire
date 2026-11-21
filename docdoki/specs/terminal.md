@@ -332,8 +332,7 @@ Writes run one batch at a time; output arriving during a slow write stays in the
 Browser-local preferences never become process authority.
 
 Source, npm-release, direct-launch, and installed Linux service paths run terminals in-process
-within the Host (`inspire-host.service`). [[host-lifecycle]] defines Host stop, ordinary restart,
-and **Restart all** (`inspire restart --all`), which additionally closes Pi processes.
+within the Host (`inspire-host.service`). [[host-lifecycle]] defines Host stop and restart.
 
 ## Boundaries
 

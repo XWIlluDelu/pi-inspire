@@ -81,12 +81,8 @@ Extensions keep their Pi RPC compatibility requirements.
   the next worker-start request, sharing an in-flight attempt with other starts. Successful
   recovery stays established for the Host lifetime; later owned workers are not old recovery
   candidates. Status inspection reports the current result without starting recovery or cleanup.
-- Host shutdown and ordinary restart end Inspire-owned Pi workers. A shared Herdr server launched by a Linux Host service uses a separate user unit so it survives
+- Host shutdown and restart end Inspire-owned Pi workers. A shared Herdr server launched by a Linux Host service uses a separate user unit so it survives
   Host replacement. Failure to establish that unit fails startup instead of attaching it to Host.
-- **Restart all** closes current-user Herdr Pi, including independent terminal Pi, only when
-  enhancement is active in the running Host. Disabled mode preserves Herdr Pi. This explicit
-  process reset leaves the shared Herdr server running; [[host-lifecycle]] owns its confirmation
-  and shutdown checks.
 - After verified Pi retirement, `pane_not_found` ends pane cleanup. `workspace_not_found` invalidates
   cached topology and permits one fresh allocation. Uncertain layout/connection results are not
   retried, and cleanup of an older pane cannot invalidate a newer workspace.

@@ -14,8 +14,6 @@ import type { RuntimeController } from "./runtime.js";
 export interface HostRestartBackend {
   inspect(): Promise<{
     host: boolean;
-    allPi?: boolean;
-    includeHerdr?: boolean;
   }>;
   prepare(): Promise<void>;
   request(
@@ -26,8 +24,6 @@ export interface HostRestartBackend {
 
 const UNAVAILABLE =
   "Page restart requires the Inspire launcher or installed Linux systemd service.";
-const ALL_PI_UNAVAILABLE =
-  "Restart all requires the installed Linux service and Pi process control.";
 const WORK_BUSY =
   "Finish active Pi work before restarting, or stop work and restart.";
 
@@ -65,9 +61,6 @@ export class HostRestartController {
     return {
       hostId: this.hostId,
       available: available.host,
-      allPiAvailable: available.allPi === true,
-      allPiIncludesHerdr: available.includeHerdr === true,
-      ...(!available.allPi ? { allPiReason: ALL_PI_UNAVAILABLE } : {}),
       ...(!available.host ? { reason: UNAVAILABLE } : {}),
       operation: this.operation ? { ...this.operation } : null,
     };
@@ -76,11 +69,6 @@ export class HostRestartController {
   start(request: HostRestartRequest): HostRestartOperation {
     if (request.hostId !== this.hostId)
       throw requestError("Host changed. Review restart again.", 409);
-    if (request.scope === "all-pi" && request.interruptWork !== true)
-      throw requestError(
-        "Confirm closing all Pi sessions before restarting.",
-        400,
-      );
     const previous = this.receipts.find(({ id }) => id === request.operationId);
     if (previous) {
       if (!matchesRestartIntent(previous, request))
@@ -110,9 +98,7 @@ export class HostRestartController {
     let result: RestartSubmission;
     try {
       const available = await this.backend.inspect();
-      const global = operation.scope === "all-pi";
-      if (!(global ? available.allPi : available.host))
-        throw new Error(global ? ALL_PI_UNAVAILABLE : UNAVAILABLE);
+      if (!available.host) throw new Error(UNAVAILABLE);
       await this.backend.prepare();
       // Preparation can be slow. Acquire the authoritative admission fence
       // afterwards, not from an earlier observation of active work.
@@ -129,11 +115,7 @@ export class HostRestartController {
         );
       }
       leaseId = reservation.leaseId;
-      if (
-        operation.scope !== "all-pi" &&
-        operation.interruptWork &&
-        !operation.skipAttachedStop
-      ) {
+      if (operation.interruptWork && !operation.skipAttachedStop) {
         try {
           await this.runtime.stopAttachedPiWork();
         } catch (error) {

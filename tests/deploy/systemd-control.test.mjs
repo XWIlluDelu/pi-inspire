@@ -82,23 +82,6 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
       "restart",
       "inspire-host.service",
     ]);
-
-    run.mockClear();
-    await expect(
-      submitSystemdRestart(
-        root,
-        {
-          ...plan,
-          beforeRestart: async () => {
-            active = "b".repeat(32);
-          },
-        },
-        options,
-      ),
-    ).resolves.toEqual({ kind: "not-issued", reason: "invocation-changed" });
-    expect(run.mock.calls.some(([args]) => args.includes("restart"))).toBe(
-      false,
-    );
   });
 
   it("honors the manager's unit absence even when a unit file remains on disk", async () => {

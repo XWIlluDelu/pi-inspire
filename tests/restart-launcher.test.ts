@@ -36,21 +36,6 @@ afterEach(async () => {
 async function fixture() {
   root = await mkdtemp(join(tmpdir(), "inspire-restart-launcher-"));
   await preparePackagedLauncher(root);
-  // The launcher fixture must never enumerate or stop real user Pi processes.
-  await writeFile(
-    join(root, "build/server/pi-processes.mjs"),
-    `
-    import { appendFileSync } from "node:fs";
-    export const supportsGlobalPiStop = () => true;
-    export async function assertExternalPiRestartCaller() {
-      if (process.env.FIXTURE_PI_ANCESTOR) throw new Error("Run inspire restart --all outside Pi, from an OS terminal.");
-    }
-    export async function stopAllPiProcesses({ includeHerdr }) {
-      appendFileSync(process.env.FIXTURE_LOG, "stop-all-pi:" + includeHerdr + "\\n");
-      if (process.env.FIXTURE_STOP_PI_FAIL) throw new Error("Synthetic Pi stop failure");
-    }
-  `,
-  );
   const logPath = await installSystemdManager(root);
   await writeFile(
     join(root, "build/server/restart-preflight.js"),
@@ -78,14 +63,9 @@ async function fixture() {
       execFileSync(process.execPath, command(args), options),
     runAsync: (args: string[]) =>
       promisify(execFile)(process.execPath, command(args), options),
-    async runningHost({
-      includeHerdr = false,
-      confirmExit = true,
-      ready = true,
-    } = {}) {
+    async runningHost({ confirmExit = true, ready = true } = {}) {
       let state: InstanceState;
       host = await hostApiFixture({
-        activeHerdrMode: includeHerdr,
         instanceState: () => (ready ? state : null),
       });
       state = {
@@ -178,20 +158,15 @@ describe.runIf(process.platform === "linux")(
       expect(() => f.run(["restart", "--host-only"])).toThrow(
         /Use: inspire restart/,
       );
-      f.env.FIXTURE_PI_ANCESTOR = "1";
-      expect(() => f.run(["restart", "--all"])).toThrow(/outside Pi/);
-      delete f.env.FIXTURE_PI_ANCESTOR;
+      expect(() => f.run(["restart", "--all"])).toThrow(/Use: inspire restart/);
       f.env.INSPIRE_TERMINAL_ID = "project-terminal";
       expect(() => f.run(["restart"])).toThrow(/external OS terminal/);
-      expect(() => f.run(["restart", "--all"])).toThrow(/external OS terminal/);
-      expect(await f.log()).not.toMatch(/preflight|stop-all-pi/);
+      expect(await f.log()).not.toMatch(/preflight/);
       expect(await f.mutations()).toEqual([]);
 
       delete f.env.INSPIRE_TERMINAL_ID;
       f.env.FIXTURE_PREFLIGHT_FAIL = "1";
-      expect(() => f.run(["restart", "--all"])).toThrow(
-        /running Host was not stopped/,
-      );
+      expect(() => f.run(["restart"])).toThrow(/running Host was not stopped/);
       expect(await f.mutations()).toEqual([]);
       expect(await f.log()).toContain("preflight\n");
       delete f.env.FIXTURE_PREFLIGHT_FAIL;
@@ -203,52 +178,5 @@ describe.runIf(process.platform === "linux")(
         /preflight\n[\s\S]*restart inspire-host.service/,
       );
     });
-
-    it.each([
-      { mode: "direct", includeHerdr: false },
-      { mode: "enhanced", includeHerdr: true },
-      {
-        mode: "readiness lost",
-        ready: false,
-        error: /Cannot verify the running Host/,
-      },
-      {
-        mode: "exit unconfirmed",
-        confirmExit: false,
-        error: /Host exit was not confirmed/u,
-      },
-      {
-        mode: "Pi cleanup unconfirmed",
-        cleanupFails: true,
-        error: /Synthetic Pi stop failure/,
-      },
-    ])(
-      "fences full restart in $mode mode",
-      async ({ includeHerdr, ready, confirmExit, cleanupFails, error }) => {
-        const f = await fixture();
-        if (cleanupFails) f.env.FIXTURE_STOP_PI_FAIL = "1";
-        await f.runningHost({ includeHerdr, ready, confirmExit });
-        const restart = f.runAsync(["restart", "--all"]);
-        if (error) await expect(restart).rejects.toThrow(error);
-        else await restart;
-        const log = await f.log();
-        expect(log).toContain("preflight\ninspect owner\n");
-        const effects =
-          log.match(
-            /^(?:--user (?:stop|start) inspire-host\.service|stop-all-pi:.*)$/gmu,
-          ) ?? [];
-        expect(effects).toEqual(
-          ready === false
-            ? []
-            : [
-                "--user stop inspire-host.service",
-                ...(confirmExit === false
-                  ? []
-                  : [`stop-all-pi:${includeHerdr ?? false}`]),
-                ...(!error ? ["--user start inspire-host.service"] : []),
-              ],
-        );
-      },
-    );
   },
 );

@@ -118,7 +118,6 @@ fixes, with platform-specific differences in features such as installation and n
 | --- | --- | --- | --- |
 | Host, Pi sessions, launcher, project terminals | Supported | Supported | Supported |
 | Page Restart (launcher-owned or installed service) | Supported | Supported | Supported |
-| Restart all (Pi sessions + installed Host and terminals) | Supported | — | — |
 | Native session Trash | Freedesktop Trash | `~/.Trash` | Recycle Bin |
 | Persistent systemd services | Yes | — | — |
 | Herdr enhancement and managed reverse SSH | Yes | — | — |

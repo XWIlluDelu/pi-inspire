@@ -296,7 +296,6 @@ test("real Pi questions preserve workbench edits and restore the native deadline
       json: {
         hostId: "settings-host",
         available: true,
-        allPiAvailable: true,
         operation: null,
       },
     });
@@ -314,9 +313,9 @@ test("real Pi questions preserve workbench edits and restore the native deadline
   await url.fill("https://example.invalid/v1");
   await settings.getByRole("button", { name: "System", exact: true }).click();
   await settings
-    .getByRole("button", { name: "Restart all", exact: true })
+    .getByRole("button", { name: "Restart", exact: true })
     .click();
-  const restart = page.getByRole("alertdialog", { name: "Restart all?" });
+  const restart = page.getByRole("alertdialog", { name: "Restart?" });
   await expect(restart).toBeVisible();
 
   // Dispatch from another client while Settings owns browser focus.

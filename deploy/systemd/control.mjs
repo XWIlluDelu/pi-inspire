@@ -261,7 +261,7 @@ async function currentInvocation(invocationId, options) {
 
 export function submitSystemdRestart(
   root,
-  { invocationId, commit, beforeRestart, detached = false },
+  { invocationId, commit, detached = false },
   options = {},
 ) {
   return submitRestart(async () => {
@@ -270,11 +270,6 @@ export function submitSystemdRestart(
     if (!(await commit())) return "commit-not-authorized";
     if (!(await currentInvocation(invocationId, options)))
       return "invocation-changed";
-    if (beforeRestart) {
-      await beforeRestart();
-      if (!(await currentInvocation(invocationId, options)))
-        return "invocation-changed";
-    }
   }, async () => {
     const result = await controlUnit(options, ...restartCommand(detached));
     return result.issued === false ? false : result.code === 0 ? true : undefined;

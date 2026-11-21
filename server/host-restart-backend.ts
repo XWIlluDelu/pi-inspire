@@ -1,9 +1,8 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { HostRestartBackend } from "./host-restart.js";
-import { createLauncherRestartClient } from "./launcher-restart.mjs";
 import { prepareHostRestart } from "./host-restart-preparation.js";
-import { stopAllPiProcesses, supportsGlobalPiStop } from "./pi-processes.mjs";
+import { createLauncherRestartClient } from "./launcher-restart.mjs";
 import type { RestartSubmission } from "./restart-submission.mjs";
 
 export function hostRestartBackend(
@@ -11,14 +10,13 @@ export function hostRestartBackend(
   options: {
     enabled: boolean;
     systemdEnabled: boolean;
-    includeHerdr: boolean;
     restart: () => Promise<void>;
   },
 ): HostRestartBackend {
   const backend =
     options.enabled && process.send
       ? launcherRestartBackend(options.restart)
-      : systemdRestartBackend(root, options.enabled && options.systemdEnabled, options);
+      : systemdRestartBackend(root, options.enabled && options.systemdEnabled);
   return { ...backend, prepare: () => prepareHostRestart(root) };
 }
 
@@ -30,9 +28,7 @@ function launcherRestartBackend(restart: () => Promise<void>): RestartTransport 
     async inspect() {
       return { host: await launcher.inspect() };
     },
-    async request(scope, commit) {
-      if (scope === "all-pi")
-        return { kind: "not-issued", reason: "unsupported" };
+    async request(_scope, commit) {
       const result = await launcher.request(commit);
       if (result.kind === "issued") {
         // Let the controller publish submission before graceful shutdown.
@@ -61,7 +57,6 @@ interface ServiceControl {
       invocationId: string;
       detached: boolean;
       commit: () => boolean | Promise<boolean>;
-      beforeRestart?: () => Promise<void>;
     },
   ): Promise<RestartSubmission>;
 }
@@ -69,13 +64,7 @@ interface ServiceControl {
 export function systemdRestartBackend(
   root: string,
   enabled: boolean,
-  options: {
-    includeHerdr?: boolean;
-    stopPi?: (options: { includeHerdr: boolean }) => Promise<void>;
-  } = {},
 ): RestartTransport {
-  const includeHerdr = options.includeHerdr === true;
-  const stopPi = options.stopPi ?? stopAllPiProcesses;
   const invocationId = process.env.INVOCATION_ID ?? "";
   const supported =
     enabled &&
@@ -91,31 +80,14 @@ export function systemdRestartBackend(
         supported &&
         (await (await control()).inspectRestartTarget(root, invocationId))
           .kind === "managed";
-      return {
-        host: available,
-        allPi: available && supportsGlobalPiStop(),
-        includeHerdr,
-      };
+      return { host: available };
     },
-    async request(scope, commit) {
-      if (!supported || (scope === "all-pi" && !supportsGlobalPiStop()))
-        return { kind: "not-issued", reason: "unsupported" };
+    async request(_scope, commit) {
+      if (!supported) return { kind: "not-issued", reason: "unsupported" };
       return (await control()).submitSystemdRestart(root, {
         invocationId,
         detached: true,
         commit,
-        beforeRestart:
-          scope === "all-pi"
-            ? async () => {
-                try {
-                  await stopPi({ includeHerdr });
-                } catch (error) {
-                  throw new Error(
-                    `Pi shutdown failed. Inspire was not restarted. ${error instanceof Error ? error.message : String(error)}`,
-                  );
-                }
-              }
-            : undefined,
       });
     },
   };

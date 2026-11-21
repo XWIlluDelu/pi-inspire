@@ -525,8 +525,7 @@ async function prepareRestart() {
     );
 }
 
-async function restartHost(scope = "host") {
-  const allPi = scope === "all-pi";
+async function restartHost() {
   if (process.env.INSPIRE_TERMINAL_ID)
     throw new Error(
       "Run this restart from an external OS terminal. Restarting the Host closes project terminals.",
@@ -536,19 +535,7 @@ async function restartHost(scope = "host") {
   const service = await systemd?.inspectHostService(root);
   if (service && service.kind !== "managed" && service.kind !== "absent")
     return systemd.reportHostService(service, "status");
-  if (allPi && service?.kind !== "managed")
-    throw new Error(
-      "Full restart requires this installation's Linux systemd service. No service was restarted.",
-    );
 
-  let stopPi;
-  if (allPi) {
-    const processes = await import(pathToFileURL(join(supportRoot, "pi-processes.mjs")).href);
-    if (!processes.supportsGlobalPiStop())
-      throw new Error("Restart all requires Linux Pi process control.");
-    await processes.assertExternalPiRestartCaller();
-    stopPi = processes.stopAllPiProcesses;
-  }
   console.log("Preparing restart…");
   await prepareRestart();
   const owner = await inspect(context);
@@ -564,39 +551,10 @@ async function restartHost(scope = "host") {
   }
   if (owner.kind === "healthy" && owner.state.systemdInvocationId !== service.invocationId)
     throw new Error("The running Host does not belong to the inspected service invocation.");
-  if (!allPi) {
-    return systemd.reportHostService(
-      await systemd.manageHostService(root, "restart", { target: service }),
-      "restart",
-    );
-  }
-
-  let includeHerdr = false;
-  if (owner.kind === "healthy") {
-    const { requestInstanceControl } = await import(
-      pathToFileURL(join(supportRoot, "instance-control.mjs")).href
-    );
-    const mode = await requestInstanceControl(owner.state, "restart-mode");
-    if (!mode || typeof mode.includeHerdr !== "boolean")
-      throw new Error("Cannot read the running Herdr mode. Restart Inspire normally before using --all.");
-    includeHerdr = mode.includeHerdr;
-  } else if (service.activeState === "active") {
-    throw new Error("Cannot read the running Herdr mode. No processes were stopped.");
-  }
-  console.log(includeHerdr
-    ? "Closing Pi sessions, including Herdr sessions."
-    : "Closing Pi sessions outside Herdr.");
-  const stopped = await systemd.manageHostService(root, "stop", { target: service });
-  if (systemd.reportHostService(stopped, "stop") !== 0)
-    throw new Error("The managed services could not be stopped. No global Pi cleanup was attempted.");
-  if (owner.kind === "healthy" && !(await observeProcessExit(owner.state, 15_000)))
-    throw new Error("Host exit was not confirmed. No global Pi cleanup was attempted.");
-  await stopPi({ includeHerdr });
-  const started = await systemd.manageHostService(root, "start", { target: stopped.service });
-  if (systemd.reportHostService(started, "start") !== 0)
-    throw new Error("Pi sessions were closed, but Inspire could not be restarted.");
-  console.log("Closed Pi sessions and restarted Inspire.");
-  return 0;
+  return systemd.reportHostService(
+    await systemd.manageHostService(root, "restart", { target: service }),
+    "restart",
+  );
 }
 
 async function statusHost() {
@@ -653,7 +611,7 @@ function requireLinuxService() {
 
 function printHelp() {
   console.log(
-    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire, its Pi workers, and project terminals\n  inspire restart --all        also close other Pi sessions (include Herdr in enhanced mode, Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire pi [--session <session.jsonl>]  open native Pi with remote queue receipts\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection list | <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         restart Inspire, its Pi workers, and project terminals\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire pi [--session <session.jsonl>]  open native Pi with remote queue receipts\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection list | <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
   );
 }
 
@@ -674,11 +632,11 @@ async function main() {
     case "stop":
       return hostLifecycle("stop");
     case "restart":
-      if (args.length > 1 || (args.length === 1 && args[0] !== "--all")) {
-        console.error("Use: inspire restart [--all]");
+      if (args.length > 0) {
+        console.error("Use: inspire restart");
         return 64;
       }
-      return restartHost(args[0] === "--all" ? "all-pi" : "host");
+      return restartHost();
     case "recover-session": {
       if (args.length !== 1) {
         console.error("Use: inspire recover-session <bundle-folder>");

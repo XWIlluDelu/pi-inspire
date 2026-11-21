@@ -15,7 +15,6 @@ function fixture() {
   const status: HostRestartStatus = {
     hostId: crypto.randomUUID(),
     available: true,
-    allPiAvailable: true,
     operation: null,
   };
   const api = {
@@ -91,15 +90,15 @@ describe("browser restart delivery", () => {
     },
   );
 
-  it("requires all-Pi authority, observes ordinary restart reconnection and rejects a retired address", async () => {
+  it("observes restart reconnection and rejects a retired address", async () => {
     const f = fixture();
+    f.status.available = false;
     await f.client.refresh();
-    await f.client.start("all-pi", f.status.hostId);
-    f.status.allPiAvailable = false;
-    await f.client.refresh();
-    await f.client.start("all-pi", f.status.hostId, true);
+    await f.client.start("host", f.status.hostId);
     expect(f.api.restartHost).not.toHaveBeenCalled();
     expect(f.client.snapshot().pending).toBeNull();
+    f.status.available = true;
+    await f.client.refresh();
     const oldHostId = f.status.hostId;
     await f.client.start("host", oldHostId);
     f.status.hostId = crypto.randomUUID();

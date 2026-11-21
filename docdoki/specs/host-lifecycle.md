@@ -23,7 +23,6 @@ covers:
   - server/{host-restart,host-restart-backend,host-restart-preparation,restart-preflight}.ts
   - server/restart-submission.mjs
   - server/launcher-restart.{mjs,d.mts}
-  - server/pi-processes.{mjs,d.mts}
   - tests/server/global-pi-restart.test.ts
   - shared/host-restart.ts
   - src/controllers/host-restart-controller.ts
@@ -328,28 +327,17 @@ A new restart is available after the Host has rejected the previous request or b
 ### Scope and preparation
 
 - `inspire restart` prepares dependencies/client build and imports the next runtime and external
-  Pi SDK before stopping the Host. Preparation failure leaves it running. Ordinary restart ends
+  Pi SDK before stopping the Host. Preparation failure leaves it running. Restart ends
   Inspire-owned Pi workers and in-process project terminals. Run restart commands from an external
   OS terminal. Unsupported or foreign services are refused before stopping anything, connection
   services remain outside the scope, and a failed service restart cannot fall back to a local Host.
-- **Restart all** and `inspire restart --all` additionally close current-user Pi processes regardless
-  of their owner. Include Herdr Pi only when the running Host has enhancement enabled; otherwise
-  preserve them. Read the effective mode, not the saved next-start preference. The Herdr server
-  itself stays running. The CLI stops the managed Host before process cleanup and starts
-  it only after cleanup succeeds. If no Host is running, Herdr Pi are excluded.
-  The CLI reads the static effective mode through signed local control, without sending a reusable
-  bearer or probing Herdr. Reject Pi-descended CLI callers before preparation: terminating their
-  parent Pi could kill the restart coordinator before it starts Inspire again.
-- **Restart** and **Restart all** live in Settings → System → Host, with concise confirmation
-  for each scope. Restart supports launcher-owned native Windows, macOS, and Linux instances,
-  including custom loopback addresses, ports, and state paths. Installed Linux services retain their
-  exact running systemd invocation as authority. A raw Host entrypoint without either owner cannot
-  restart itself.
-  Full restart remains restricted to the installed Linux services and names the terminal-process
-  impact. Ordinary and full availability are exposed and enforced separately; unsupported scope is
-  refused before preparation or work interruption. Restart stays out of the command palette and
-  always-visible controls. Pairing and local-offline recovery guidance must work for both installed
-  packages and source checkouts without assuming a POSIX-only wrapper.
+- **Restart** lives in Settings → System → Host with a concise confirmation dialog. It supports
+  launcher-owned native Windows, macOS, and Linux instances, including custom loopback addresses,
+  ports, and state paths. Installed Linux services retain their exact running systemd invocation
+  as authority. A raw Host entrypoint without either owner cannot restart itself. Restart stays
+  out of the command palette and always-visible controls. Pairing and local-offline recovery
+  guidance must work for both installed packages and source checkouts without assuming a POSIX-only
+  wrapper.
 - Direct page restart uses the existing launcher's private child IPC, not a browser-supplied command,
   PID, or detached replacement launcher. Keep the original launcher and instance lock across
   replacement, reuse its environment and instance configuration, and do not reopen the browser.
@@ -374,23 +362,13 @@ A new restart is available after the Host has rejected the previous request or b
   Inspire-owned and taken-over Pi work in that scope without a second confirmation. It bypasses
   workload checks while keeping preparation, service ownership, lease exclusivity and final commit.
   Automatic maintenance keeps its update and idle checks and restarts only the Host service.
-- **Restart** replaces Inspire-owned Pi workers. Attached Pi processes keep running with their
-  loaded settings. Pi exposes reload through its own `/reload` command. An ordinary restart counts
-  busy taken-over Pi as active work and reads it directly before submission. Unavailable observation
-  blocks restart. **Stop work and restart** explicitly interrupts its attached branch; if Stop
-  cannot be confirmed, report the affected sessions and offer **Restart anyway** without another Stop.
-- **Restart all** confirms Pi termination before submission and requires `interruptWork: true`.
-  Acquire and commit the same restart admission lease, then terminate the selected Pi processes
-  before issuing the service restart. It does not depend on attached-Pi Stop acknowledgement.
-  The `all-pi` API scope is available when the installed services and Pi process control are ready.
-- Linux process cleanup snapshots exact `pi` and `pi-rpc` titles owned by the current OS user.
-  Herdr pane/socket environment markers identify Herdr Pi. Revalidate birth ticks, ownership,
-  title and inclusion before each signal; send SIGTERM, wait up to five seconds, then SIGKILL
-  surviving identities and verify exit. Never signal shells, Herdr, the Host, or a reused PID.
-  Fresh final discovery must confirm that no included Pi remains. Discovery, signalling or exit
-  verification failures prevent restart and report the failure, including partial shutdown.
-- CLI restart verifies the running Host with signed readiness. A managed shutdown waits for
-  actual process exit and a signed cleanup result before starting a replacement.
+- **Restart** replaces Inspire-owned Pi workers and project terminals. Attached external Pi
+  processes keep running with their loaded settings (use `/reload` in Pi to reload resources).
+  Restart counts busy taken-over Pi as active work and reads it directly before submission.
+  Unavailable observation blocks restart. **Stop work and restart** explicitly interrupts its
+  attached branch; if Stop cannot be confirmed, report the affected sessions and offer
+  **Restart anyway** without another Stop.
+- CLI restart verifies the running Host with signed readiness.
 
 ### Submission and recovery
 

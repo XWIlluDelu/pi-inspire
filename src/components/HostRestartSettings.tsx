@@ -5,13 +5,6 @@ import { hostRestartClient } from "../controllers/host-restart-controller";
 import { ConfirmationDialog } from "./Modal";
 import { SettingField } from "./SettingsControls";
 
-type SettingsRestartScope = "host" | "all-pi";
-
-const RESTART_NAMES: Record<SettingsRestartScope, string> = {
-  host: "Restart",
-  "all-pi": "Restart all",
-};
-
 export function HostRestartSettings({
   visible,
   suspended = false,
@@ -23,10 +16,7 @@ export function HostRestartSettings({
     hostRestartClient.subscribe,
     hostRestartClient.snapshot,
   );
-  const [confirmation, setConfirmation] = useState<{
-    scope: SettingsRestartScope;
-    hostId: string;
-  } | null>(null);
+  const [confirmHostId, setConfirmHostId] = useState<string | null>(null);
   const observing = visible || Boolean(state.pending);
   useEffect(() => {
     let retired = false;
@@ -44,25 +34,21 @@ export function HostRestartSettings({
   const operation = state.status?.operation;
   const disabled =
     !state.status || state.sending || !canStartHostRestart(operation);
-  const busyScope =
+  const busy =
     operation?.phase === "rejected" &&
     (operation.busyReason === "active-work" ||
-      operation.busyReason === "in-flight-operation")
-      ? operation.scope
-      : null;
-  const unconfirmedScope =
-    operation?.phase === "rejected" && operation.stopUnconfirmed
-      ? operation.scope
-      : null;
-  const requestRestart = (scope: SettingsRestartScope) => {
+      operation.busyReason === "in-flight-operation");
+  const unconfirmed =
+    operation?.phase === "rejected" && operation.stopUnconfirmed === true;
+  const retry = Boolean(state.pending);
+  const requestRestart = () => {
     if (!state.status) return;
     const hostId = state.status.hostId;
-    if (state.pending?.scope === scope) void hostRestartClient.retry();
-    else if (scope === unconfirmedScope)
-      void hostRestartClient.start(scope, hostId, true, true);
-    else if (scope === busyScope)
-      void hostRestartClient.start(scope, hostId, true);
-    else setConfirmation({ scope, hostId });
+    if (retry) void hostRestartClient.retry();
+    else if (unconfirmed)
+      void hostRestartClient.start("host", hostId, true, true);
+    else if (busy) void hostRestartClient.start("host", hostId, true);
+    else setConfirmHostId(hostId);
   };
   const currentOperation =
     !state.pending || operation?.id === state.pending.operationId
@@ -91,48 +77,29 @@ export function HostRestartSettings({
       : state.notice);
   const unavailable =
     state.status?.available === false ? state.status.reason : null;
+  const action = retry
+    ? "Try again"
+    : unconfirmed
+      ? "Restart anyway"
+      : busy
+        ? "Stop work and restart"
+        : "Restart";
   return (
     <div id="settings-host-restart" className="host-restart">
-      {(["host", "all-pi"] as const).map((scope) => {
-        const host = scope === "host";
-        const name = RESTART_NAMES[scope];
-        const retry = state.pending?.scope === scope;
-        const action = retry
-          ? "Try again"
-          : unconfirmedScope === scope
-            ? `${name} anyway`
-            : busyScope === scope
-              ? `Stop work and ${name.toLowerCase()}`
-              : name;
-        const available = host
-          ? state.status?.available
-          : state.status?.allPiAvailable;
-        return (
-          <SettingField
-            key={scope}
-            label={name}
-            description={
-              host
-                ? "Restart Inspire, its Pi workers, and project terminals."
-                : state.status && !available
-                  ? state.status.allPiReason
-                  : state.status?.allPiIncludesHerdr
-                    ? "Close all Pi sessions and restart Inspire."
-                    : "Close Pi sessions outside Herdr and restart Inspire."
-            }
-          >
-            <button
-              type="button"
-              className="button button--danger-outline"
-              disabled={disabled || !available || (!!state.pending && !retry)}
-              onClick={() => requestRestart(scope)}
-            >
-              {action === name ? <RefreshCw size={13} aria-hidden /> : null}
-              {action}
-            </button>
-          </SettingField>
-        );
-      })}
+      <SettingField
+        label="Restart"
+        description="Restart Inspire, its Pi workers, and project terminals."
+      >
+        <button
+          type="button"
+          className="button button--danger-outline"
+          disabled={disabled || !state.status?.available}
+          onClick={requestRestart}
+        >
+          {action === "Restart" ? <RefreshCw size={13} aria-hidden /> : null}
+          {action}
+        </button>
+      </SettingField>
       {unavailable || message ? (
         <div className="host-restart__status-row">
           {unavailable ? (
@@ -148,27 +115,17 @@ export function HostRestartSettings({
           ) : null}
         </div>
       ) : null}
-      {confirmation && !suspended ? (
+      {confirmHostId && !suspended ? (
         <ConfirmationDialog
           id="host-restart"
-          title={`${RESTART_NAMES[confirmation.scope]}?`}
-          description={
-            confirmation.scope === "all-pi"
-              ? state.status?.allPiIncludesHerdr
-                ? "All your Pi sessions, including Herdr sessions, will close. Project terminals will close and running tasks will stop."
-                : "Your Pi sessions outside Herdr will close. Project terminals will close and running tasks will stop."
-              : "Inspire's Pi workers and project terminals will restart. The page will briefly disconnect."
-          }
-          onClose={() => setConfirmation(null)}
+          title="Restart?"
+          description="Inspire's Pi workers and project terminals will restart. The page will briefly disconnect."
+          onClose={() => setConfirmHostId(null)}
           confirm={{
-            label: RESTART_NAMES[confirmation.scope],
+            label: "Restart",
             run: () => {
-              void hostRestartClient.start(
-                confirmation.scope,
-                confirmation.hostId,
-                confirmation.scope === "all-pi",
-              );
-              setConfirmation(null);
+              void hostRestartClient.start("host", confirmHostId, false);
+              setConfirmHostId(null);
             },
           }}
         />

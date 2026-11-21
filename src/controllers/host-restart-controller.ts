@@ -129,10 +129,7 @@ export class HostRestartClient {
       this.state.pending ||
       !this.state.status ||
       !canStartHostRestart(this.state.status.operation) ||
-      (scope === "all-pi" && !interruptWork) ||
-      !(scope === "all-pi"
-        ? this.state.status.allPiAvailable
-        : this.state.status.available) ||
+      !this.state.status.available ||
       this.state.status.hostId !== hostId
     )
       return;

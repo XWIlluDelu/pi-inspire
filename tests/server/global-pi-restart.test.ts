@@ -22,7 +22,7 @@ it("captures a bounded preflight error and allows a corrected retry", async () =
   roots.push(root);
   const launcher = join(root, "inspire.mjs");
   const backend = systemdRestartBackend(root, false);
-  expect(await backend.inspect()).toMatchObject({ host: false, allPi: false });
+  expect(await backend.inspect()).toEqual({ host: false });
   const commit = vi.fn(() => true);
   await expect(backend.request("host", commit)).resolves.toEqual({
     kind: "not-issued",
@@ -48,14 +48,12 @@ it("captures a bounded preflight error and allows a corrected retry", async () =
 });
 
 it.runIf(process.platform === "linux").each([
-  { includeHerdr: false, admit: true, stopFails: false },
-  { includeHerdr: true, admit: true, stopFails: false },
-  { includeHerdr: false, admit: false, stopFails: false },
-  { includeHerdr: false, admit: true, stopFails: true },
+  { admit: true },
+  { admit: false },
 ])(
-  "submits only after commit and Pi exit (Herdr=$includeHerdr, admitted=$admit, stop fails=$stopFails)",
-  async ({ includeHerdr, admit, stopFails }) => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-global-restart-"));
+  "submits systemd host restart only after commit (admitted=$admit)",
+  async ({ admit }) => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-host-restart-"));
     roots.push(root);
     await preparePackagedLauncher(root);
     const log = await installSystemdManager(root);
@@ -73,29 +71,16 @@ it.runIf(process.platform === "linux").each([
     }))
       vi.stubEnv(key, value);
     const commit = vi.fn(() => admit);
-    const stopPi = vi.fn(async (_options: { includeHerdr: boolean }) => {
-      expect(commit).toHaveBeenCalledOnce();
-      if (stopFails) throw new Error("PID fixture did not exit");
+    const backend = systemdRestartBackend(root, true);
+    expect(await backend.inspect()).toEqual({ host: true });
+    expect(await backend.request("host", commit)).toMatchObject({
+      kind: admit ? "issued" : "not-issued",
     });
-    const backend = systemdRestartBackend(root, true, { includeHerdr, stopPi });
-    expect(await backend.inspect()).toMatchObject({
-      allPi: true,
-      includeHerdr,
-    });
-    const issued = admit && !stopFails;
-    expect(await backend.request("all-pi", commit)).toMatchObject({
-      kind: issued ? "issued" : "not-issued",
-      ...(stopFails
-        ? { error: expect.objectContaining({ message: expect.stringContaining("PID fixture did not exit") }) }
-        : {}),
-    });
-    if (admit) expect(stopPi).toHaveBeenCalledExactlyOnceWith({ includeHerdr });
-    else expect(stopPi).not.toHaveBeenCalled();
     const restarts = (await readFile(log, "utf8"))
       .split("\n")
       .filter((line) => line.includes(" restart "));
     expect(restarts).toEqual(
-      issued ? ["--user --no-block restart inspire-host.service"] : [],
+      admit ? ["--user --no-block restart inspire-host.service"] : [],
     );
   },
 );

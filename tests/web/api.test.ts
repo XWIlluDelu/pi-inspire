@@ -162,7 +162,7 @@ it("requires a restart receipt to confirm the routed interruption grant", async 
   const intent: HostRestartRequest = {
     hostId: crypto.randomUUID(),
     operationId: crypto.randomUUID(),
-    scope: "all-pi",
+    scope: "host",
     interruptWork: true,
     skipAttachedStop: true,
   };

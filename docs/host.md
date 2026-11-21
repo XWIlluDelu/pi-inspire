@@ -111,7 +111,6 @@ See [Chrome's manifest update process](https://web.dev/articles/manifest-updates
 | `inspire status` | Check a running Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
 | `inspire restart` | Prepare the next build and runtime, then restart Inspire, its Pi workers, and project terminals. |
-| `inspire restart --all` | Close current-user Pi sessions, then restart the Linux Host service. Include Herdr Pi when enhancement is active. |
 | `inspire stop` | Stop the service or local Host (along with its Pi workers and project terminals). |
 
 ## Task notifications
@@ -161,18 +160,13 @@ In **Settings → System → Host**, **Restart** replaces Inspire, its own Pi wo
 terminals. Attached terminal Pi processes stay open; use `/reload` in a terminal Pi to reload its
 resources. If work is active, the Host identifies it and offers **Stop work and restart**.
 
-**Restart all** closes current-user Pi sessions before restarting the installed Linux service. The
-running Host's enhancement mode determines whether Herdr Pi are included. The shared Herdr server
-stays up. Inspire starts again after Pi shutdown succeeds.
-
-The page follows the restart in the background and retains saved browser pairing. Ordinary restart
+The page follows the restart in the background and retains saved browser pairing. Page restart
 requires a launcher or installed service. A Host started directly from the internal server entry
 needs an operator restart. If the listener is down, run `inspire stop` with the same port and
 state-path overrides and start it again after shutdown.
 
-Run CLI `inspire restart` and `inspire restart --all` from an external OS terminal (and `--all`
-outside Pi) so the restart command survives Host and Pi shutdown. Connection services continue
-across restarts.
+Run CLI `inspire restart` from an external OS terminal so the restart command survives Host and
+project-terminal shutdown. Connection services continue across restarts.
 
 ## Linux user services
 

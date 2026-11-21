@@ -116,7 +116,6 @@ type HostFixtureOptions = Partial<
     | "modelMetadata"
     | "providerAuth"
     | "token"
-    | "activeHerdrMode"
     | "maintenanceRestart"
     | "instanceState"
     | "getHerdrStatus"

@@ -127,7 +127,6 @@ interface AppDependencies {
     "reserve" | "commit" | "release"
   >;
   hostRestart?: import("./host-restart.js").HostRestartController;
-  activeHerdrMode?: boolean;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   modelMetadata?: ModelMetadataCatalog;
@@ -429,9 +428,6 @@ export function createInspireServer(deps: AppDependencies): {
       case "readiness":
         result = { appName: "inspire" };
         break;
-      case "restart-mode":
-        result = { includeHerdr: deps.activeHerdrMode === true };
-        break;
       case "launch-url": {
         let origin = new URL(instanceUrl(state)).origin;
         if (grant.request.payload.origin !== undefined) {
@@ -583,8 +579,6 @@ export function createInspireServer(deps: AppDependencies): {
       : {
           hostId: authorityId,
           available: false,
-          allPiAvailable: false,
-          allPiReason: "Restart all is unavailable for this Host.",
           reason: "Page restart is unavailable for this Host.",
           operation: null,
         },

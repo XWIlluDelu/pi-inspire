@@ -53,9 +53,8 @@ acknowledgment is never labelled Saved.
 
 System lists Pi, Extensions and Inspire in that order. Pi's Docs and Changelog links share its label
 row; update commands reuse the file/path click-to-copy presentation without a persistent copy icon.
-`Herdr enhancement` shares the Host/restart card with the actions that apply it under
-[[herdr-enhancement]]. Both restart actions use equal-height danger controls, with descriptions that
-state whether project terminals keep running or close. Footer utilities present INSΠRE version,
+`Herdr enhancement` shares the Host/restart card with the Restart action that applies it under
+[[herdr-enhancement]]. Footer utilities present INSΠRE version,
 optional install action, and Reset preferences on a single line.
 
 Category names and self-explanatory choices need no introductory text; descriptions explain scope or

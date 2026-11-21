@@ -271,7 +271,7 @@ describe("production launcher", () => {
       }).then((response) => response.json());
 
     const original = await restartStatus();
-    expect(original).toMatchObject({ available: true, allPiAvailable: false });
+    expect(original).toMatchObject({ available: true });
     const response = await fetch(`${origin}/api/host/restart`, {
       method: "POST",
       headers: terminalHeaders,

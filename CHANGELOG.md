@@ -6,8 +6,9 @@
   pairing screen, plus **Sign out** in **Settings → System → Host** and the command palette.
 - Added lazy-loaded **Mermaid** diagram rendering in Markdown with a Diagram/Source toggle.
 - Moved project terminals in-process into the Host, removing the separate `inspire-terminal.service`
-  daemon, `inspire terminal` subcommands, and `inspire restart --terminals`. Restarting the Host
-  now restarts both Pi workers and project terminals in one step.
+  daemon, `inspire terminal` subcommands, `inspire restart --terminals`, and **Restart all**
+  (`inspire restart --all`). A single **Restart** now restarts Inspire, its Pi workers, and project
+  terminals.
 - Updated the Pi development compatibility baseline to **1.6.0**.
 - Subsetted bundled `IBM Plex Sans SC` and `Flux Mono SC` web fonts to full GB2312 +
   high-frequency multi-weight tiers with system CJK fallbacks (reducing bundled font assets from
@@ -20,8 +21,6 @@
   its active selection.
 - **Fork into another folder…** recovers the whole saved session tree when its project folder is
   unavailable.
-- **Restart all** (`inspire restart --all`) closes current-user Pi sessions before restarting
-  Inspire. Herdr Pi are included when enhancement is active and preserved otherwise.
 
 ## 0.7.0 — 2026-11-09
 

@@ -3,9 +3,8 @@ import type { OperationReceipt } from "./host-operations.js";
 
 export const HOST_RESTART_PATH = "/api/host/restart";
 
-/** `host` replaces owned Pi workers. `all-pi` also closes current-user Pi
- * processes and project terminals, including Herdr Pi in enhanced mode. */
-export type HostRestartScope = "host" | "all-pi";
+/** Replaces Inspire, its Pi workers, and in-process project terminals. */
+export type HostRestartScope = "host";
 
 export interface HostRestartOperation {
   id: string;
@@ -22,11 +21,7 @@ export interface HostRestartOperation {
 export interface HostRestartStatus {
   hostId: string;
   available: boolean;
-  allPiAvailable?: boolean;
-  /** Effective Host mode, fixed until this Host is replaced. */
-  allPiIncludesHerdr?: boolean;
   reason?: string;
-  allPiReason?: string;
   operation: HostRestartOperation | null;
 }
 
@@ -40,14 +35,14 @@ export const hostRestartRequestSchema = z
   .object({
     hostId: z.string().uuid(),
     operationId: z.string().uuid(),
-    scope: z.enum(["host", "all-pi"]),
+    scope: z.literal("host"),
     interruptWork: z.literal(true).optional(),
     skipAttachedStop: z.literal(true).optional(),
   })
   .strict()
   .refine(
-    ({ scope, interruptWork, skipAttachedStop }) =>
-      (scope !== "all-pi" && !skipAttachedStop) || interruptWork === true,
+    ({ interruptWork, skipAttachedStop }) =>
+      !skipAttachedStop || interruptWork === true,
     "Confirm which Pi work may be interrupted before restarting.",
   );
 

@@ -2,7 +2,6 @@ import type { InstanceState } from "./instance-state.mjs";
 
 export type InstanceControlAction =
   | "readiness"
-  | "restart-mode"
   | "launch-url"
   | "maintenance-prepare"
   | "maintenance-commit"
