@@ -1023,6 +1023,18 @@ details > .activity-reader { margin-top: var(--space-1); }
   overflow-x: auto;
 }
 
+.mermaid-block__diagram {
+  padding: var(--space-3);
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+}
+
+.mermaid-block__diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Mono changes interface accents only. Keep the existing default syntax colors
    inside code leaves; their toolbar, gutter and controls retain Mono's UI roles. */
 :root[data-palette="mono"] :is(.hljs, .source-diff .code-row code) {

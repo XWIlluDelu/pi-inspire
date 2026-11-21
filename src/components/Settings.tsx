@@ -27,6 +27,7 @@ import {
   type PiMessageDeliveryMode,
 } from "../../shared/contracts";
 import type { ModelSettingsDestination } from "../../shared/model-settings";
+import { getBrowserPairingMode } from "../browser-auth";
 import { notificationPermissionMessage } from "../browser-notifications";
 import {
   installAvailability,
@@ -559,6 +560,22 @@ export const SettingsContent = memo(function SettingsContent({
               visible={activeCategory === "updates" && !suspended}
               suspended={suspended}
             />
+            <SettingField
+              label="Browser access"
+              description={
+                getBrowserPairingMode() === "session"
+                  ? "Temporary session. Reloading or closing this tab signs out."
+                  : "This browser holds a saved pairing key for this Host."
+              }
+            >
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => void store.signOut()}
+              >
+                Sign out
+              </button>
+            </SettingField>
           </Section>
         </SettingsPage>
       </SettingsLayout>

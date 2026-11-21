@@ -13,10 +13,18 @@ interface Access {
 
 export class BrowserPairingError extends Error {}
 
+type BrowserPairingMode = "persistent" | "session" | "none";
+
 let bootstrap: string | null = null;
 let access: Access | null = null;
 let renewal: Promise<Access> | null = null;
+let ephemeralIdentity: BrowserIdentity | null = null;
+let pairingMode: BrowserPairingMode = "none";
 const DATABASE = "inspire-browser-auth";
+
+export function getBrowserPairingMode(): BrowserPairingMode {
+  return pairingMode;
+}
 
 export function captureBrowserBootstrap(): void {
   const url = new URL(window.location.href);
@@ -30,42 +38,57 @@ export function captureBrowserBootstrap(): void {
   }
 }
 
-function requireStorage(): void {
-  if (
-    !window.isSecureContext ||
-    !globalThis.crypto?.subtle ||
-    !globalThis.indexedDB
-  )
+function requireCrypto(): void {
+  if (!window.isSecureContext || !globalThis.crypto?.subtle)
     throw new BrowserPairingError(
-      "Pairing requires WebCrypto and origin storage. Use HTTPS (or a loopback address) in a browser that allows IndexedDB.",
+      "Pairing requires WebCrypto. Use HTTPS or a loopback address.",
     );
 }
 
+function requireStorage(): void {
+  requireCrypto();
+  if (!globalThis.indexedDB)
+    throw new BrowserPairingError(
+      "Saving pairing requires origin storage (IndexedDB). Use a temporary session or allow origin storage.",
+    );
+}
+
+async function openIdentityDatabase(): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DATABASE, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("identity");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Origin storage is blocked"));
+  });
+}
+
 async function identityStorage(
-  value?: BrowserIdentity,
+  value?: BrowserIdentity | null,
 ): Promise<BrowserIdentity | undefined> {
   requireStorage();
   try {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DATABASE, 1);
-      request.onupgradeneeded = () =>
-        request.result.createObjectStore("identity");
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-      request.onblocked = () => reject(new Error("Origin storage is blocked"));
-    });
+    const database = await openIdentityDatabase();
     try {
       return await new Promise<BrowserIdentity | undefined>(
         (resolve, reject) => {
           const transaction = database.transaction(
             "identity",
-            value ? "readwrite" : "readonly",
+            value !== undefined ? "readwrite" : "readonly",
           );
-          const request = value
-            ? transaction.objectStore("identity").put(value, "host")
-            : transaction.objectStore("identity").get("host");
+          const store = transaction.objectStore("identity");
+          const request =
+            value === null
+              ? store.delete("host")
+              : value
+                ? store.put(value, "host")
+                : store.get("host");
           transaction.oncomplete = () =>
-            resolve(value ?? (request.result as BrowserIdentity | undefined));
+            resolve(
+              value === null
+                ? undefined
+                : (value ?? (request.result as BrowserIdentity | undefined)),
+            );
           transaction.onerror = () => reject(transaction.error);
           transaction.onabort = () => reject(transaction.error);
         },
@@ -75,7 +98,7 @@ async function identityStorage(
     }
   } catch {
     throw new BrowserPairingError(
-      "This browser cannot store its pairing key. Allow origin storage (IndexedDB), then pair again.",
+      "This browser cannot store its pairing key. Allow origin storage (IndexedDB) or sign in for this session only.",
     );
   }
 }
@@ -104,8 +127,13 @@ async function authPost<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function pairBrowser(token?: string): Promise<void> {
-  requireStorage();
+export async function pairBrowser(
+  token?: string,
+  options: { persist?: boolean } = {},
+): Promise<void> {
+  const persist = options.persist !== false;
+  if (persist) requireStorage();
+  else requireCrypto();
   access = null;
   const keys = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -122,14 +150,33 @@ export async function pairBrowser(token?: string): Promise<void> {
       publicKey: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y },
     },
   );
-  await identityStorage({
+  const identity: BrowserIdentity = {
     privateKey: keys.privateKey,
     certificate,
-  });
+  };
+  if (persist) {
+    ephemeralIdentity = null;
+    await identityStorage(identity);
+    pairingMode = "persistent";
+  } else {
+    ephemeralIdentity = identity;
+    pairingMode = "session";
+    // Clear any prior saved pairing so switching to a one-time session leaves no key behind.
+    await identityStorage(null).catch(() => undefined);
+  }
+}
+
+export async function clearBrowserPairing(): Promise<void> {
+  bootstrap = null;
+  access = null;
+  renewal = null;
+  ephemeralIdentity = null;
+  pairingMode = "none";
+  await identityStorage(null).catch(() => undefined);
 }
 
 function signingIdentity(
-  identity: BrowserIdentity | undefined,
+  identity: BrowserIdentity | null | undefined,
 ): identity is BrowserIdentity {
   return Boolean(
     identity &&
@@ -157,6 +204,10 @@ async function exchange(identity: BrowserIdentity): Promise<Access> {
 }
 
 async function renew(): Promise<Access> {
+  if (signingIdentity(ephemeralIdentity)) {
+    pairingMode = "session";
+    return exchange(ephemeralIdentity);
+  }
   let identity = await identityStorage();
   if (bootstrap) {
     if (signingIdentity(identity)) {
@@ -164,6 +215,7 @@ async function renew(): Promise<Access> {
         const result = await exchange(identity);
         // A spent/expired launch link cannot invalidate a valid stored pairing.
         bootstrap = null;
+        pairingMode = "persistent";
         return result;
       } catch (error) {
         if (!(error instanceof BrowserPairingError)) throw error;
@@ -177,8 +229,11 @@ async function renew(): Promise<Access> {
     await pairBrowser("inspire-dev-token");
     return renew();
   }
-  if (!signingIdentity(identity))
+  if (!signingIdentity(identity)) {
+    pairingMode = "none";
     throw new BrowserPairingError("Pair this browser to the Host");
+  }
+  pairingMode = "persistent";
   return exchange(identity);
 }
 
