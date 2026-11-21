@@ -356,8 +356,8 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   prompt jump supersedes an in-flight page request. A failed read keeps the confirmed rows and
   retries the requested location. Jump to latest reconnects the viewport to live output.
 - Live uses the bounded tail and native checkpoint updates. Manual scrolling or inspecting
-  content pauses follow. If a checkpoint cannot confirm a live row, keep the output visible
-  with an unconfirmed indication.
+  content pauses follow. Keep live output visible while matching it to native history in the
+  background. A missed match adds no transcript row or warning and does not break an activity group.
 
 ## Non-goals
 

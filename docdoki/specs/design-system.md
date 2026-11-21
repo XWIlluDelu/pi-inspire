@@ -482,12 +482,10 @@ remain distinct attributed forms with directly selectable options.
   to their content within the stack's width; diagnostics wrap without losing Copy/dismiss. Those
   actions keep 24px mouse or 32px touch targets, aligned with the message's first line. Embedded
   resource errors and richer update cards keep their contextual presentation.
-- Placement: Welcome and conversation views share one floating feedback owner and presentation; a
-  page transition does not move notices into page flow or widen them to the start composer's width.
-  Notices anchor at the top-right at every width, below the header, current banners and any
-  overlapping transcript search or mobile tool row, and the stack stays above the bottom safe inset.
-  Editor height does not move this anchor; the editor's top edge only limits the scrollable stack
-  when their horizontal ranges overlap. Placement follows toolbar, editor, banner and pane resizing.
+- Welcome and conversation share one floating notice stack, anchored to the page's top-right edge
+  inside the safe area and below any native window title bar. Notices can cover the workspace header,
+  transcript controls and content. The stack reserves no space in the layout. Its bottom edge clears
+  the safe area and the editor when their horizontal ranges overlap.
   Empty space beside content-sized cards does not intercept input. Non-modal notices sit below
   active modal dialogs instead of covering their content or controls. On narrow layouts, navigation
   and resource drawers also own modal interaction: notices sit below the drawers and any scrim, keep

@@ -105,7 +105,6 @@ export interface ChatMessage {
   __inspireBashRunning?: boolean;
   __inspireBashPreviewTruncated?: boolean;
   __inspireBashError?: string;
-  __inspireUnconfirmed?: boolean;
   __inspireBashInterrupted?: boolean;
 }
 

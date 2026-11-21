@@ -7,10 +7,16 @@ import {
 
 function preferenceOptions<const Value extends string>(
   values: readonly Value[],
-  label: (value: Value) => string = (value) =>
-    value === "dynamic" ? "Adaptive" : value[0]!.toUpperCase() + value.slice(1),
+  descriptions?: Record<Value, string>,
 ) {
-  return values.map((value) => ({ value, label: label(value) }));
+  return values.map((value) => ({
+    value,
+    label:
+      value === "dynamic"
+        ? "Adaptive"
+        : value[0]!.toUpperCase() + value.slice(1),
+    ...(descriptions && { description: descriptions[value] }),
+  }));
 }
 
 export const preferenceChoices = {
@@ -80,24 +86,33 @@ export const preferenceChoices = {
     label: "Reasoning detail",
     paletteLabel: "Reasoning details",
     description: "How much model thinking to show.",
-    options: preferenceOptions(VISIBILITY_PREFERENCES),
+    options: preferenceOptions(VISIBILITY_PREFERENCES, {
+      dynamic: "Opens while the model is working and folds afterward.",
+      expanded: "Shows reasoning text in open cards.",
+      collapsed: "Shows reasoning summaries until opened.",
+      hidden: "Hides reasoning cards.",
+    }),
   },
   toolVisibility: {
     label: "Tool activity",
     description: "Detail shown for each tool call.",
-    options: preferenceOptions(TOOL_VISIBILITY_PREFERENCES),
+    options: preferenceOptions(TOOL_VISIBILITY_PREFERENCES, {
+      dynamic: "Opens active calls and folds completed calls into icons.",
+      expanded: "Shows tool arguments and results in open cards.",
+      compact: "Shows one closed row for each tool call.",
+      collapsed: "Groups completed tool calls into icons.",
+      hidden: "Hides tool calls.",
+    }),
   },
   activityFoldVisibility: {
     label: "Activity groups",
-    options: preferenceOptions(ACTIVITY_FOLD_VISIBILITIES).map((option) => ({
-      ...option,
-      description: {
-        dynamic: "Opens with live activity and closes when it settles.",
-        expanded: "Opens the first activity page.",
-        compact: "Opens the latest activity page.",
-        collapsed: "Shows the group summary until opened.",
-      }[option.value],
-    })),
+    description: "How groups of reasoning and tool calls open.",
+    options: preferenceOptions(ACTIVITY_FOLD_VISIBILITIES, {
+      dynamic: "Opens during live activity and folds when it settles.",
+      expanded: "Shows all steps in order.",
+      compact: "Shows recent steps, with earlier steps one click away.",
+      collapsed: "Shows the group header until opened.",
+    }),
   },
 } as const satisfies {
   [Key in keyof InspirePreferences]?: {

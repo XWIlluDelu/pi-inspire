@@ -90,12 +90,12 @@
   }
 
   .notices {
-    right: max(var(--space-3), var(--safe-right));
+    --notice-inset: var(--space-3);
     width: min(
       360px,
       calc(
-        100vw - max(var(--space-3), var(--safe-left)) -
-          max(var(--space-3), var(--safe-right))
+        100vw - max(var(--notice-inset), var(--safe-left)) -
+          max(var(--notice-inset), var(--safe-right))
       )
     );
   }

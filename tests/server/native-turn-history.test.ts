@@ -147,20 +147,17 @@ it("retains unsaved live output and reads only the saved prefix while Pi's leaf 
   const page = (await runtime.snapshot("session-a")).active!.transcriptPage;
   expect(page.messages.at(-1)).toMatchObject({
     content: "unsaved output",
-    __inspireUnconfirmed: true,
+    __inspireLiveId: expect.any(String),
   });
   expect(page.messages.at(-1)).not.toHaveProperty("__inspireEntryId");
 
   const native = entry("native", "u1", "assistant", "unsaved output");
   worker.publishCheckpoint([native]);
-  expect((await runtime.snapshot("session-a")).active).toMatchObject({
-    effectiveLeafId: "native",
-    transcriptPage: {
-      messages: expect.arrayContaining([
-        expect.objectContaining({ __inspireEntryId: "native" }),
-      ]),
-    },
-  });
+  const live = (await runtime.snapshot("session-a")).active!;
+  expect(live.effectiveLeafId).toBe("native");
+  expect(live.transcriptPage.messages.slice(1)).toMatchObject([
+    { __inspireEntryId: "native", content: "unsaved output" },
+  ]);
   const saved = () =>
     runtime.sessionHistory("session-a", page.viewId, { kind: "page" });
   expect((await saved()).leafId).toBe("u1");

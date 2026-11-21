@@ -238,6 +238,17 @@ test("narrow Settings keeps footer actions usable after a cancelled reset", asyn
   };
   await openConversation();
   await expect(reset).toBeInViewport();
+  for (const [name, description] of [
+    ["Reasoning detail", "Opens while the model is working"],
+    ["Tool activity", "Opens active calls"],
+    ["Activity groups", "Opens during live activity"],
+  ] as const) {
+    await dialog.getByRole("combobox", { name, exact: true }).click();
+    await expect(dialog.getByRole("option", { name: "Adaptive" })).toContainText(
+      description,
+    );
+    await page.keyboard.press("Escape");
+  }
   const activity = dialog.getByRole("combobox", { name: "Activity groups" });
   await activity.click();
   await savePreference(() =>

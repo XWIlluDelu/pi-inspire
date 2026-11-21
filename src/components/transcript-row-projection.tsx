@@ -152,10 +152,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     const rows: Row[] = [];
     const busy = runState === undefined ? streaming : isBusyRunState(runState);
     const last = messages.at(-1);
-    const unconfirmed = messages.reduce(
-      (index, message, next) => (message.__inspireUnconfirmed ? next : index),
-      -1,
-    );
     let activity: ActivityItem[] = [];
     let group = "start";
     let band = 0;
@@ -399,13 +395,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
               });
           }
       }
-      if (index === unconfirmed)
-        addRow(
-          `${key}:unconfirmed`,
-          <p className="transcript__persistence-notice">
-            Output above could not be confirmed in Pi history.
-          </p>,
-        );
     }
     flushActivity(busy);
     return { rows, toolCalls, toolResults };

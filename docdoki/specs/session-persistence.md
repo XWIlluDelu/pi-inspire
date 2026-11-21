@@ -128,9 +128,12 @@ retires the old history cursor generation and invalidates composer recall from t
 
 At a sealed boundary, compare ordered occurrences in that native suffix. Saved rows use native
 entry IDs; transient rows keep their own stream identity. Matching the same content twice requires
-two native occurrences. If Pi cannot confirm a finished row, Live retains it as unconfirmed.
-A native Bash result may be deferred beyond the agent boundary and stays independently visible
-until its own result is checkpointed. No complete disk append is used to claim a live event.
+two native occurrences. Keep unmatched output visible without a warning. Retain exact matching
+evidence for the unmatched tail so a later checkpoint can replace it without duplicating rows.
+Expire that evidence when a later occurrence matches or its worker or branch is replaced.
+A native Bash result may be deferred independently of agent messages. Custom messages have no shared
+timestamp and are compared within the current native suffix. Disk appends alone do not claim live
+events.
 
 ### Conflicts and uncertain writes
 

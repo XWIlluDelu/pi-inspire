@@ -411,6 +411,7 @@ export class RuntimeController extends EventEmitter {
             if (marker.contextGeneration < view.contextGeneration) return;
             view.contextGeneration = marker.contextGeneration;
             view.sealedCursor = view.index.tailEntryId;
+            for (const row of slot.overlay) delete row.evidence;
             slot.renewView();
           }
           // The startup attestor or branch command can already have installed
@@ -452,17 +453,8 @@ export class RuntimeController extends EventEmitter {
               conflict: slot.conflict,
             });
         }),
-      report: (slot, error) => {
-        this.logRuntimeError(slot.id, error, "worker_checkpoint");
-        if (slot.overlay.length) {
-          this.liveTail.markUnconfirmed(slot);
-          this.emitSlotEvent(slot, {
-            type: "session_projection_changed",
-            health: slot.projection?.health,
-            conflict: slot.conflict,
-          });
-        }
-      },
+      report: (slot, error) =>
+        this.logRuntimeError(slot.id, error, "worker_checkpoint"),
     });
     this.deletions = new RuntimeSessionDeletionController({
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),
@@ -573,7 +565,7 @@ export class RuntimeController extends EventEmitter {
           this.reconcileSlot(slot, force, startupAttestation),
         setProjectionConflict: (slot, kind, message) =>
           this.setProjectionConflict(slot, kind, message),
-        markLiveUnconfirmed: (slot) => this.liveTail.markUnconfirmed(slot),
+        retireLiveTail: (slot) => this.liveTail.retire(slot),
         emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
         dispatchProcessEvent: (slot, rpc, event) =>
           this.events.dispatchProcessEvent(slot, rpc, event),

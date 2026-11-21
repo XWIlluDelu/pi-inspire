@@ -28,7 +28,10 @@ async function openNoticeSession(page: Page) {
   };
 }
 
-test("overflowing warnings keep their reading position, full text and reachable actions", async ({ page, context }) => {
+test("corner notices keep their reading position, full text and reachable actions", async ({
+  page,
+  context,
+}) => {
   await page.setViewportSize({ width: 1366, height: 900 });
   const warn = await openNoticeSession(page);
   const editor = page.getByRole("textbox", { name: "Message", exact: true });
@@ -50,10 +53,12 @@ test("overflowing warnings keep their reading position, full text and reachable 
   const overflow = () =>
     stack.evaluate((el) => el.scrollHeight - el.clientHeight);
   await expect(notices).toHaveCount(4);
+  await expect.poll(async () => (await stack.boundingBox())?.y).toBe(16);
   await expect.poll(overflow).toBeLessThanOrEqual(1);
   await send.click({ trial: true });
 
   await page.setViewportSize({ width: 320, height: 420 });
+  await expect.poll(async () => (await stack.boundingBox())?.y).toBe(12);
   await expect.poll(overflow).toBeGreaterThan(0);
   await send.click({ trial: true });
   const last = notices

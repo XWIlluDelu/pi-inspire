@@ -183,14 +183,12 @@ export class RuntimeLiveTail {
     );
   }
 
-  markUnconfirmed(slot: RuntimeSlot): void {
+  retire(slot: RuntimeSlot): void {
     for (const row of slot.overlay) {
-      if (!row.message || typeof row.message !== "object") continue;
-      row.message = {
-        ...row.message,
-        __inspireUnconfirmed: true,
-        __inspireSettled: true,
-      };
+      delete row.evidence;
+      const message = jsonRecord(row.message);
+      if (!message || message.__inspireSettled === true) continue;
+      row.message = { ...message, __inspireSettled: true };
       row.bytes = overlayItemBytes(row.message);
     }
     trimOverlay(slot.overlay);
@@ -200,8 +198,9 @@ export class RuntimeLiveTail {
    * disk appends nor message_end alone finalize a live row. */
   seal(slot: RuntimeSlot, entries: readonly SessionEntry[]): boolean {
     const worker = slot.workerView;
-    if (!worker) return false;
+    if (!worker || entries.length === 0) return false;
     let candidates: (string | undefined)[] | undefined;
+    const skipped: RuntimeSlot["overlay"] = [];
     let next = 0;
     let changed = false;
     slot.overlay = slot.overlay.filter((row) => {
@@ -209,15 +208,18 @@ export class RuntimeLiveTail {
       if (!seen) return true;
       candidates ??= entries.map(entryEvidence);
       const match = candidates.indexOf(seen, next);
-      if (match === -1 && seen.startsWith("bashExecution:")) return true;
-      delete row.evidence;
-      const message = jsonRecord(row.message)!;
       if (match === -1) {
-        row.message = { ...message, __inspireUnconfirmed: true };
-        row.bytes = overlayItemBytes(row.message);
-        changed = true;
+        // Custom content has no shared timestamp. Bash can arrive independently
+        // after subsequent agent messages have already been saved.
+        if (seen.startsWith("custom:")) delete row.evidence;
+        else if (!seen.startsWith("bashExecution:")) skipped.push(row);
         return true;
       }
+      // Once a later row matches, a future append cannot supply the earlier
+      // occurrence. The unmatched tail remains eligible at the next checkpoint.
+      for (const earlier of skipped) delete earlier.evidence;
+      skipped.length = 0;
+      const message = jsonRecord(row.message)!;
       const entry = entries[match]!;
       const id = message.__inspireLiveId;
       const turn = message.__inspireTurnId;

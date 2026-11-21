@@ -89,8 +89,6 @@ export const Notices = memo(function Notices({
       viewId: source.view.viewId,
       restoreSavedLeafId: source.view.restoreSavedLeafId,
       notices: source.live.notices,
-      error: source.error,
-      connection: source.connection,
       readOnlyReason: source.readOnlyReason,
       updateSnoozedUntil: source.updateSnoozedUntil,
       inspireUpdateCheck: source.inspireUpdateCheck,
@@ -101,44 +99,22 @@ export const Notices = memo(function Notices({
   const updates =
     state.updateSnoozedUntil === null ? availableUpdates(state) : null;
   const ref = useRef<HTMLDivElement>(null);
-  // Keep one top-right anchor below the visible workspace controls. Rebind
-  // after feedback changes can replace those nodes.
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const boundaries = [
-      ...document.querySelectorAll<HTMLElement>(
-        "main > .topbar, main > .banner",
-      ),
-    ];
-    const tools = [
-      ...document.querySelectorAll<HTMLElement>("main .transcript-tools"),
-    ];
     const composer = document.querySelector<HTMLElement>(
       "main .composer, main .composer-readonly",
     );
     const measure = () => {
       const stackBounds = element.getBoundingClientRect();
-      const overlapsHorizontally = (bounds: DOMRect) =>
-        bounds.width > 0 &&
-        stackBounds.left < bounds.right &&
-        stackBounds.right > bounds.left;
-      let headerBottom = Math.max(
-        0,
-        ...boundaries.map((node) => node.getBoundingClientRect().bottom),
-      );
-      for (const tool of tools) {
-        const bounds = tool.getBoundingClientRect();
-        if (bounds.height > 0 && overlapsHorizontally(bounds))
-          headerBottom = Math.max(headerBottom, bounds.bottom);
-      }
-      element.style.setProperty("--notice-header-bottom", `${headerBottom}px`);
-      // The editor limits an overflowing stack; it never moves the top anchor.
+      // Keep the editor reachable when a long stack overlaps its column.
       const composerBounds = composer?.getBoundingClientRect();
       if (
         composerBounds &&
-        overlapsHorizontally(composerBounds) &&
-        composerBounds.top > headerBottom + 8
+        composerBounds.width > 0 &&
+        stackBounds.left < composerBounds.right &&
+        stackBounds.right > composerBounds.left &&
+        composerBounds.top > stackBounds.top + 8
       ) {
         element.style.setProperty(
           "--notice-bottom-inset",
@@ -166,8 +142,6 @@ export const Notices = memo(function Notices({
     measure();
     const observer = new ResizeObserver(measure);
     [
-      ...boundaries,
-      ...tools,
       element,
       ...element.children,
       composer,

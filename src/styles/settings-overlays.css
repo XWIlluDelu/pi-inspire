@@ -1453,13 +1453,14 @@
 /* --- Notices --- */
 
 .notices {
-  --notice-header-bottom: calc(
-    var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top)
+  --notice-inset: var(--space-4);
+  --notice-top: calc(
+    var(--window-titlebar-height) + max(var(--notice-inset), var(--safe-top))
   );
   --notice-bottom-inset: max(var(--space-4), var(--safe-bottom));
   position: fixed;
-  top: calc(var(--notice-header-bottom) + var(--space-2));
-  right: max(var(--space-4), var(--safe-right));
+  top: var(--notice-top);
+  right: max(var(--notice-inset), var(--safe-right));
   z-index: 60;
   pointer-events: none;
   display: flex;
@@ -1468,10 +1469,7 @@
   width: min(380px, calc(100vw - 2 * var(--space-4)));
   max-height: max(
     0px,
-    calc(
-      100dvh - var(--notice-header-bottom) - var(--space-2) -
-        var(--notice-bottom-inset)
-    )
+    calc(100dvh - var(--notice-top) - var(--notice-bottom-inset))
   );
 }
 

@@ -69,7 +69,7 @@ interface RuntimeWorkerLifecycleHost {
     message: string,
     diagnosticFields?: Record<string, unknown>,
   ): ProjectionConflict;
-  markLiveUnconfirmed(slot: RuntimeSlot): void;
+  retireLiveTail(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   dispatchProcessEvent(
     slot: RuntimeSlot,
@@ -289,7 +289,7 @@ export class RuntimeWorkerLifecycle {
     this.host.rejectDeferredPrompts(slot, rpc);
     this.collaborators.bash.retire(slot, rpc);
     void this.retirePendingImages(slot);
-    this.host.markLiveUnconfirmed(slot);
+    this.host.retireLiveTail(slot);
     slot.process = null;
     slot.pendingPromptCount = 0;
     slot.nativeBash = null;

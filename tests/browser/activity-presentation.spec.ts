@@ -120,10 +120,12 @@ test("the Activity footer appears only when useful and gives focus back on resiz
         role: "assistant",
         content: [{ type: "thinking", thinking: `Step ${index + 1}` }],
         timestamp: index + 1,
+        ...(index === 7 ? { __inspireUnconfirmed: true } : {}),
       },
     })),
   );
   const group = page.getByRole("region", { name: "Assistant activity" });
+  await expect(group).toHaveCount(1);
   const footer = group.getByRole("button", {
     name: "Collapse activity",
     exact: true,

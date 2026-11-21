@@ -147,7 +147,7 @@ export class RuntimeSlot {
   overlay: Array<{
     message: unknown;
     bytes: number;
-    /** Exact native content digest retained until a worker checkpoint seals this row. */
+    /** Exact native content digest while this row can still match a checkpoint. */
     evidence?: string;
   }> = [];
   nextOverlayId = 0;

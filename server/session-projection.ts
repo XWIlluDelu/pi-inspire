@@ -319,9 +319,6 @@ function boundedTranscriptItem(
         ...(typeof sourceRecord.__inspireTurnId === "string"
           ? { __inspireTurnId: sourceRecord.__inspireTurnId }
           : {}),
-        ...(sourceRecord.__inspireUnconfirmed === true
-          ? { __inspireUnconfirmed: true }
-          : {}),
         ...(typeof sourceRecord.__inspireSettled === "boolean"
           ? { __inspireSettled: sourceRecord.__inspireSettled }
           : {}),
