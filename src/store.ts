@@ -553,7 +553,15 @@ export class AppStore {
   }
 
   signOut = async (): Promise<void> => {
-    await clearBrowserPairing();
+    try {
+      await clearBrowserPairing();
+    } catch {
+      this.notify(
+        "warning",
+        "Couldn’t remove the saved sign-in. Allow browser storage and try again.",
+      );
+      return;
+    }
     this.handleAuthFailure();
   };
 

@@ -119,6 +119,9 @@ capture mechanism and service handoff.
 
 - Browser pairing registers a non-extractable P-256 ECDSA key, persisted in the browser origin's
   IndexedDB with a public HMAC-SHA256 Host certificate binding the public key and canonical origin.
+  Session-only pairing keeps its key in page memory. Signing out of a saved pairing deletes the
+  stored key before returning to the Pair form. A storage failure leaves the session open and
+  prompts the user to retry.
   The Pair form proves the Host master token once. Local startup/reopen/status links instead
   contain a one-use, 30-second origin-bound bootstrap fragment, minted in-process or obtained
   through an authenticated local-control action. The reusable token never appears in the printed
@@ -160,8 +163,8 @@ capture mechanism and service handoff.
 
 - Pending challenges, bootstrap transfers, socket tickets and download tickets each have a 1,024-entry process-local
   bound. Expired entries are pruned before admission; capacity fails closed without replacing live
-  entries. Restart retires these one-use grants. Pairing requires WebCrypto and origin IndexedDB;
-  unsupported or blocked storage produces useful Pair feedback, never a weaker fallback.
+  entries. Restart retires these one-use grants. Pairing requires WebCrypto. Remembering a pairing
+  also requires origin IndexedDB.
 
 - Without explicit `INSPIRE_TOKEN`, generated tokens contain 64 cryptographic random bytes
   (86 base64url characters), in a current-user-private `0700` directory and `0600` plain-text

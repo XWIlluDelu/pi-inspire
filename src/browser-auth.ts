@@ -167,12 +167,12 @@ export async function pairBrowser(
 }
 
 export async function clearBrowserPairing(): Promise<void> {
+  if (pairingMode === "persistent") await identityStorage(null);
   bootstrap = null;
   access = null;
   renewal = null;
   ephemeralIdentity = null;
   pairingMode = "none";
-  await identityStorage(null).catch(() => undefined);
 }
 
 function signingIdentity(
@@ -238,13 +238,21 @@ async function renew(): Promise<Access> {
 }
 
 async function browserBearer(): Promise<string> {
-  if (!access || access.expiresAt <= Date.now() + 30_000) {
-    renewal ??= renew().finally(() => {
-      renewal = null;
-    });
-    access = await renewal;
+  if (access && access.expiresAt > Date.now() + 30_000) return access.bearer;
+  if (!renewal) {
+    const pending = renew()
+      .then((value) => {
+        if (renewal !== pending)
+          throw new BrowserPairingError("Pair this browser to the Host");
+        access = value;
+        return value;
+      })
+      .finally(() => {
+        if (renewal === pending) renewal = null;
+      });
+    renewal = pending;
   }
-  return access.bearer;
+  return (await renewal).bearer;
 }
 
 /** Refresh before dispatch, never replay after a 401 or an uncertain outcome. */
