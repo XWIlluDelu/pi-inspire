@@ -32,18 +32,15 @@ locally and are not tracked.
 
 | State | Work |
 | --- | --- |
-| In progress | [Internal simplification](stages/handbook-simplification.md) tracks the current state and remaining architecture and test cleanup. |
-| Review / implementation guidance | [Quality, native capability and simplification review](stages/quality-simplification-2026-11-20.md) records the Pi 1.5.2 audit, Extension UI direction, and concrete simplification work. |
-| Device acceptance open | [Runtime quality](stages/follow-runtime-quality-2026-10-25.md) records native lifecycle evidence, the cross-platform baseline and remaining physical-device checks. |
-| Implemented | [Workbench interactions](stages/follow-workbench-interactions-2026-10-24.md) links the reading, input and inspection contracts and records pending platform checks and interaction proposals. |
 | Device acceptance open | [Task-alert device acceptance](stages/follow-notifications-2026-10-22.md) tracks Android background delivery and iOS Home Screen notifications. |
+| Deferred layout | [File browsing](stages/file-browsing.md) tracks deferred responsive Files search placement. |
 | Release history | [Changelog](../CHANGELOG.md) and [verified platform baseline](notes/platform-compatibility.md#verified-native-baseline). |
-| Blocked on Pi | [Pi capability gaps](stages/pi-capability-gaps.md) lists the GUI requirements and the public interfaces each needs. |
+| Blocked on Pi | [Pi capability gaps](stages/pi-capability-gaps.md) lists GUI requirements blocked on owning-worker Pi interfaces. |
 
 ## Open decisions
 
 - The [wide-pane Files search placement](stages/file-browsing.md#deferred-design-questions) is deferred until the responsive Files layout is reviewed as a whole.
-- [Inspire interaction proposals](stages/follow-workbench-interactions-2026-10-24.md#undecided-interaction-proposals) and [Pi-related proposals](stages/pi-capability-gaps.md#open-proposals) await a scope decision.
+- [Pi-related proposals](stages/pi-capability-gaps.md#open-proposals) await a scope decision.
 
 ## Engineering notes
 

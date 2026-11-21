@@ -10,7 +10,7 @@ first session. This guide covers Host configuration, pairing, daily commands and
 | Start or configure the Host | [Run and reopen](#run-and-reopen), [Shell environment](#shell-environment) |
 | Connect a browser or install the app | [Browser pairing](#browser-pairing), [Installed browser apps](#installed-browser-apps), [Remote access](ssh-reverse.md) |
 | Use a running Host | [Lifecycle commands](#lifecycle), [Task notifications](#task-notifications) |
-| Maintain or upgrade | [Host and terminal maintenance](#host-and-terminal-maintenance), [Linux user services](#linux-user-services), [Updating Inspire](#updating-inspire) |
+| Maintain or upgrade | [Host maintenance](#host-maintenance), [Linux user services](#linux-user-services), [Updating Inspire](#updating-inspire) |
 | Recover data or investigate errors | [Session recovery](#recover-a-deleted-session), [Uploaded files](#uploaded-file-retention-and-cleanup), [Diagnostics](#diagnostics) |
 | Work from source or distribute a build | [Development checkout](#development-checkout), [Build and install a package](#build-and-install-a-package) |
 
@@ -83,10 +83,13 @@ terminal and enter the token in the Pair form. Keep it out of logs and URLs; HTT
 accept a token in the query string. See [remote pairing](ssh-reverse.md#browser-pairing).
 
 Every paired browser can operate Pi sessions, files and project terminals as the Host account, so
-protect the browser profile and the token. Rotating the token or clearing the site's IndexedDB
-requires pairing again. Trusted non-browser clients can send an explicit bearer header. Download
-URLs contain no bearer credential, and downloads deliver the complete file regardless of preview
-limits. The [pairing contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#pairing-and-authenticated-ingress)
+protect the browser profile and the token. On shared or untrusted devices, uncheck **Remember this
+browser** on the pairing screen for a one-time session that clears on reload or tab close, or use
+**Sign out** in **Settings → System → Host** (or the command palette) to clear the saved key.
+Rotating the token or clearing the site's IndexedDB also requires pairing again. Trusted non-browser
+clients can send an explicit bearer header. Download URLs contain no bearer credential, and downloads
+deliver the complete file regardless of preview limits. The
+[pairing contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#pairing-and-authenticated-ingress)
 defines the credential, ticket and origin boundaries.
 
 ## Installed browser apps
@@ -107,12 +110,9 @@ See [Chrome's manifest update process](https://web.dev/articles/manifest-updates
 | `inspire` | Start or reopen the matching instance. |
 | `inspire status` | Check a running Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
-| `inspire restart` | Prepare the next build and runtime, then restart the Host and its own Pi workers. Project terminals keep running. |
-| `inspire restart --terminals` | Restart the Linux Host and terminal services, closing project terminals. |
-| `inspire restart --all` | Close current-user Pi sessions, then restart the Linux Host and terminals. Include Herdr Pi when enhancement is active. |
-| `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
-| `inspire terminal status` | Inspect the matching terminal daemon without creating one. |
-| `inspire terminal stop` / `restart` | Stop or replace the daemon. See [terminal-service maintenance](#terminal-service-maintenance). |
+| `inspire restart` | Prepare the next build and runtime, then restart Inspire, its Pi workers, and project terminals. |
+| `inspire restart --all` | Close current-user Pi sessions, then restart the Linux Host service. Include Herdr Pi when enhancement is active. |
+| `inspire stop` | Stop the service or local Host (along with its Pi workers and project terminals). |
 
 ## Task notifications
 
@@ -155,67 +155,37 @@ A terminal Pi reports completion, failure and cancellation through
 [attach-control](extensions.md#share-sessions-with-terminal-pi). After updating it, run `/reload` in
 that Pi to apply the update.
 
-## Host and terminal maintenance
+## Host maintenance
 
-In **Settings → System → Host**, **Restart** replaces Inspire and its own Pi workers.
-Attached Pi processes and project terminals stay open. Use `/reload` in a terminal Pi to
-reload its resources. If work is active, the Host identifies it and offers **Stop work and
-restart**. If Stop remains unconfirmed, review the affected sessions before choosing
-**Restart anyway**.
+In **Settings → System → Host**, **Restart** replaces Inspire, its own Pi workers, and its project
+terminals. Attached terminal Pi processes stay open; use `/reload` in a terminal Pi to reload its
+resources. If work is active, the Host identifies it and offers **Stop work and restart**.
 
-**Restart all** closes current-user Pi sessions and project terminals on installed Linux
-services. The running Host's enhancement mode determines whether Herdr Pi are included.
-The shared Herdr server stays up. Inspire starts again after Pi shutdown succeeds.
+**Restart all** closes current-user Pi sessions before restarting the installed Linux service. The
+running Host's enhancement mode determines whether Herdr Pi are included. The shared Herdr server
+stays up. Inspire starts again after Pi shutdown succeeds.
 
-The page follows the restart in the background and retains browser pairing. Ordinary restart
-requires a launcher or installed service. A Host started directly from the internal server
-entry needs an operator restart. If the listener is down, run `inspire stop` with the same
-port and state-path overrides and start it again after shutdown.
+The page follows the restart in the background and retains saved browser pairing. Ordinary restart
+requires a launcher or installed service. A Host started directly from the internal server entry
+needs an operator restart. If the listener is down, run `inspire stop` with the same port and
+state-path overrides and start it again after shutdown.
 
-Run CLI `--terminals` and `--all` from an external OS terminal. Run `--all` outside Pi so
-the restart command survives Pi shutdown. Connection services continue across restarts.
-
-### Terminal-service maintenance
-
-Run `inspire terminal stop` or `inspire terminal restart` from an external terminal. Add
-`--force` to close live terminals. Saved tabs reopen as exited and the Host keeps running.
-
-Use the same `INSPIRE_HOST`, `INSPIRE_PORT`, `INSPIRE_TERMINAL_DAEMON_ADDRESS`,
-`INSPIRE_TERMINAL_TOKEN_PATH` and `INSPIRE_TERMINAL_STATE_PATH` overrides as the Host.
-Failed or unconfirmed PTY cleanup blocks terminal writes and replacement.
-Status and lifecycle controls remain available. An absent socket alone cannot confirm process exit.
-
-### Connection recovery and upgrades
-
-The terminal service reconnects on demand after a connection failure. It does not replay terminal
-input or controls. Inspect `inspire terminal status` and the owning service. The error card keeps
-the connection detail for copying.
-
-After enabling the Linux units, a compatible terminal daemon retained from a direct launch keeps
-serving the Host. `inspire restart --terminals` affects the installed terminal service. The retained daemon keeps
-running, and the installed daemon can exit with code 78 when it finds that owner. To move terminal
-ownership to the installed service, finish terminal work, run `inspire terminal stop` from an
-external OS terminal, then run `systemctl --user start inspire-terminal.service`. See
-[Updating Inspire](#updating-inspire) to replace an older daemon.
-
-Custom token or socket paths on POSIX need a parent directory private to the current user, or one
-Inspire can create with mode `0700`; Inspire refuses shared parents and does not change their
-permissions.
+Run CLI `inspire restart` and `inspire restart --all` from an external OS terminal (and `--all`
+outside Pi) so the restart command survives Host and Pi shutdown. Connection services continue
+across restarts.
 
 ## Linux user services
 
 Before moving a direct launch to services, finish its Pi work and run `inspire stop` from an
-external terminal. This stops the direct Host but not an independent terminal daemon; see
-[Connection recovery and upgrades](#connection-recovery-and-upgrades).
+external terminal.
 
 ```bash
 inspire service install-host
 inspire service enable-host
 ```
 
-This installs `inspire-host.service`, `inspire-terminal.service` and an optional maintenance timer.
-Launcher commands for the default host, port and state path then manage these units. Stop or
-disable shuts down both services.
+This installs `inspire-host.service` and an optional maintenance timer. Launcher commands for the
+default host, port and state path then manage the service. Stop or disable shuts it down.
 
 Scheduled maintenance stays off unless you enable it with
 `systemctl --user enable --now inspire-idle-maintenance-restart.timer` (`disable --now` turns it

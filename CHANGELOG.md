@@ -2,15 +2,21 @@
 
 ## Unreleased
 
+- Added **Remember this browser** (unchecked for a one-time session stored only in memory) on the
+  pairing screen, plus **Sign out** in **Settings → System → Host** and the command palette.
+- Added lazy-loaded **Mermaid** diagram rendering in Markdown with a Diagram/Source toggle.
+- Moved project terminals in-process into the Host, removing the separate `inspire-terminal.service`
+  daemon, `inspire terminal` subcommands, and `inspire restart --terminals`. Restarting the Host
+  now restarts both Pi workers and project terminals in one step.
+- Updated the Pi development compatibility baseline to **1.6.0**.
+- Simplified notices, Host restart recovery, and user-facing copy (unified **Thinking** terminology).
 - The thinking shortcut uses the live Pi worker's native cycle order.
 - **Tool Loadout…** in the session menu and palette shows Pi's tool inventory and lets you change
   its active selection.
 - **Fork into another folder…** recovers the whole saved session tree when its project folder is
   unavailable.
-- **Restart all** closes current-user Pi sessions before restarting Inspire and project terminals.
-  Herdr Pi are included when enhancement is active and preserved otherwise.
-- `inspire restart --all` uses the same scope. The previous terminal-service-only scope is now
-  `inspire restart --terminals`.
+- **Restart all** (`inspire restart --all`) closes current-user Pi sessions before restarting
+  Inspire. Herdr Pi are included when enhancement is active and preserved otherwise.
 
 ## 0.7.0 — 2026-11-09
 

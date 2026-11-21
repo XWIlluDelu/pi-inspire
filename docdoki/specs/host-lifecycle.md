@@ -8,7 +8,7 @@ covers:
   - scripts/vite-dev-launch.ts
   - vite.config.ts
   - tests/server/dev-launcher.integration.test.ts
-  - server/{app,index,pi-rpc,pi-installation,preferences,access-token,terminal-daemon-launcher}.ts
+  - server/{app,index,pi-rpc,pi-installation,preferences,access-token}.ts
   - server/{herdr-worker-entry,attach-control,runtime-extension-ui}.ts
   - tests/server/attach-control.integration.test.ts
   - server/user-environment.{mjs,d.mts}
@@ -43,7 +43,6 @@ covers:
   - server/*diagnostic*.ts
   - server/host-restart*.ts
   - tests/launcher.test.ts
-  - tests/server/terminal-daemon-launcher.test.ts
   - tests/portable/**
   - tests/server/{app,app-auth,pi-installation,pi-rpc,current-web-build}.test.ts
 area: "Pi & Hosting"
@@ -326,18 +325,14 @@ unconfirmed submission keeps its domain phase and does not trigger a new restart
 
 - `inspire restart` prepares dependencies/client build and imports the next runtime and external
   Pi SDK before stopping the Host. Preparation failure leaves it running. Ordinary restart ends
-  Inspire-owned Pi workers and keeps the independent terminal daemon.
-- `inspire restart --terminals` requires this installation\'s verified Linux systemd Host and terminal
-  units. It restarts both in one transaction, with Host ordered after terminal readiness, ending
-  project terminals in the installed unit. An independent daemon retained from a direct launch
-  keeps its own lifecycle under [[terminal]]. Run terminal-closing commands from an external OS
-  terminal. Unsupported or foreign services are refused before stopping anything, connection
+  Inspire-owned Pi workers and in-process project terminals. Run restart commands from an external
+  OS terminal. Unsupported or foreign services are refused before stopping anything, connection
   services remain outside the scope, and a failed service restart cannot fall back to a local Host.
 - **Restart all** and `inspire restart --all` additionally close current-user Pi processes regardless
   of their owner. Include Herdr Pi only when the running Host has enhancement enabled; otherwise
   preserve them. Read the effective mode, not the saved next-start preference. The Herdr server
-  itself stays running. The CLI stops the managed Host/terminals before process cleanup and starts
-  them only after cleanup succeeds. If no Host is running, Herdr Pi are excluded.
+  itself stays running. The CLI stops the managed Host before process cleanup and starts
+  it only after cleanup succeeds. If no Host is running, Herdr Pi are excluded.
   The CLI reads the static effective mode through signed local control, without sending a reusable
   bearer or probing Herdr. Reject Pi-descended CLI callers before preparation: terminating their
   parent Pi could kill the restart coordinator before it starts Inspire again.

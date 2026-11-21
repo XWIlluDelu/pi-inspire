@@ -1,5 +1,5 @@
 ---
-purpose: Project-scoped terminals survive browser and Host interruptions, with explicit input ownership and ordered xterm tabs.
+purpose: Project-scoped in-process Host terminals survive browser disconnects, with explicit input ownership and ordered xterm tabs.
 covers:
   - package.json
   - package-lock.json
@@ -33,62 +33,22 @@ have the operating-system user's full authority; Pi and browser presentation do 
 
 ## Process ownership
 
-A private daemon owns PTYs, bounded output rings, headless terminal state, tab metadata, and optional
-history. Its installation-scoped IPC endpoint authenticates current-user clients. Each absolute project
-cwd owns an ordered set of up to 32 tabs, within a global limit of 128.
+The Host owns PTYs in-process through `TerminalSessionManager`, along with bounded output rings,
+headless terminal state, tab metadata, and optional persisted history. Each absolute project cwd
+owns an ordered set of up to 32 tabs, within a global limit of 128.
 
-IPC authenticates both peers before sending controls, paths or input and encrypts terminal traffic.
-No handshake sends a reusable token or downgrades to the earlier plaintext protocol. The TLS authority
-is a newly generated private secret, separate from any potentially disclosed plaintext-era token.
-Windows machine-wide pipe names include the OS account and state-directory identity as well as the
-installation. Unix socket addresses stay within the native byte limit, including long and Unicode
-temporary roots; shortening does not relax current-user ownership or private-directory checks.
-An unverified listener at the configured address blocks automatic replacement.
-The current daemon wire protocol gates data access and maintenance. The Host gateway and daemon
-validate the same attachment and control fields. The attach ticket stays with the browser gateway.
-On-demand recovery only reconnects and shares one
-initialization across requests. It leaves dispatched controls and input untouched. Closing fences
-late initialization and releases the client. Only the owner that bound a socket removes it.
-An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
-state address cannot change permissions on a shared or system directory.
+Opening or hiding the pane attaches or detaches views. Browser disconnects leave live PTYs running
+while the Host stays up. Explicit close terminates the process tree; exited tabs retain output until
+closed or restarted. Reopening a recently closed tab creates a fresh process from its profile.
+Restarting or stopping the Host closes live PTYs and flushes saved tab metadata/history; saved tabs
+restore as exited on next Host start without rerunning commands. Saved output restores the screen,
+while live PTY output supplies command, title and cwd updates. Exited tabs report no running command.
+Live and restored tabs share headless-state setup; failed PTY creation disposes emulator resources
+before publishing a tab.
 
-`inspire terminal status|stop|restart` supplies portable, instance-scoped maintenance without
-restarting the Host/Pi. Stop/restart run from an external OS terminal; a
-managed-terminal environment is refused before stopping work, so the command cannot kill its own
-coordinator midway through replacement. Status stays available there. Maintenance uses the same authenticated version as terminal data.
-Stop the previous daemon with its installed launcher before a protocol-changing upgrade.
-The caller verifies root, Host, port, configured IPC/state/token paths, process birth and daemon
-incarnation before requesting stop. Shutdown targets that incarnation; an old target cannot stop a
-replacement. Status never creates or rotates authority and reports missing listeners without
-claiming OS-process exit.
-
-Running project terminals require explicit `--force`; it confirms ending work, not a bypass for
-authentication or unknown-PID killing. Admission fences pending creates before shutdown. Failed PTY
-cleanup retains failed sessions, rejects shutdown completion and leaves lifecycle controls reachable
-for inspection/retry while data requests are fenced. A lifetime lease covers startup, state writing
-and complete PTY drain; CLI controls serialize handoff and confirm actual process exit before replacement.
-Saved tabs restore as exited. Saved output restores the screen, while live PTY output supplies
-command, title and cwd updates. Exited tabs report no running command. Only the installed terminal
-unit establishes systemd restart authority.
-
-Detached daemon fallback removes inherited service notification/socket-activation identity, and
-systemd handoff has a bounded wait. A detached spawn error rejects launch instead of escaping as an
-unhandled process event. A confirmed listening-owner conflict has a distinct error and exit code 78;
-installed and transient systemd units prevent restart for that exit without suppressing retries for
-ordinary crashes. Startup checks a listening owner before creating authority or restoring state.
-Service start/enable do not stop a transient owner; Host Wants/After dependencies preserve installed
-startup ordering without treating a duplicate terminal start as authority to end existing work.
-
-Opening or hiding the pane attaches or detaches views. Explicit close terminates the process tree;
-exited tabs retain output until closed or restarted. Reopening a recently closed tab creates a fresh
-process from its profile. Host restart reconnects to the daemon. Machine restart restores known tabs
-as exited, without rerunning commands. Live and restored tabs share headless-state setup; failed PTY
-creation disposes emulator resources before publishing a tab.
-
-The daemon receives exported variables under [[host-lifecycle]]; Host restart leaves existing
-terminal environments unchanged. Profile discovery accepts executable files without implicit cwd
-lookup. Copied Windows environments preserve case-insensitive names and quoted PATH entries containing
-spaces or semicolons.
+Terminals inherit the Host's launch environment under [[host-lifecycle]]. Profile discovery accepts
+executable files without implicit cwd lookup. Copied Windows environments preserve case-insensitive
+names and quoted PATH entries containing spaces or semicolons.
 
 POSIX shells, PowerShell, Command Prompt and WSL use a PTY with true-color xterm metadata. Shell
 integration preserves native initialization and user bindings while reporting cwd/command boundaries.
@@ -156,14 +116,8 @@ confirms there is no receipt for it. Confirmed results and expired receipts reti
 A different intent gets a new identity. Malformed current storage blocks untracked writes.
 Records in retired formats have no role in admission or recovery.
 
-Diagnostics distinguish absent endpoints, unverified connections and data-protocol incompatibility.
-Terminal errors use the shared
-notice card with complete Copy and separate Dismiss; text selection does not dismiss them.
-
-An incompatible daemon requires an explicit upgrade after its work is finished. Without verified
-maintenance controls, use its existing service owner or an inspected manual shutdown, never a PID
-claimed by an unverified listener. [Maintenance guidance](../../docs/host.md#connection-recovery-and-upgrades)
-covers this boundary and the installed-service scope of `inspire restart --terminals`.
+Terminal errors use the shared notice card with complete Copy and separate Dismiss; text selection
+does not dismiss them.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
 reloading, or unmounting retires old response/error/loading/selection writebacks, while completed
@@ -377,11 +331,9 @@ explicit clearing. Logs above 32 MiB trim to a 24 MiB tail with a reset prefix, 
 Writes run one batch at a time; output arriving during a slow write stays in the bounded pending buffer.
 Browser-local preferences never become process authority.
 
-Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime
-dependencies. The terminal user service is separate from `inspire-host.service`, so ordinary
-lifecycle operations preserve PTYs; disabling the terminal service ends them. [[host-lifecycle]]
-defines CLI stop and `inspire restart --terminals`, which address both installed services,
-ordinary restart, and **Restart all**, which additionally closes Pi processes.
+Source, npm-release, direct-launch, and installed Linux service paths run terminals in-process
+within the Host (`inspire-host.service`). [[host-lifecycle]] defines Host stop, ordinary restart,
+and **Restart all** (`inspire restart --all`), which additionally closes Pi processes.
 
 ## Boundaries
 

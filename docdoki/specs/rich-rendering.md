@@ -1,7 +1,7 @@
 ---
 purpose: Shared streaming Markdown, mathematics, code, tables, and links for Pi content.
 covers:
-  - src/components/{RichText,CodeView}.tsx
+  - src/components/{RichText,RichTextMath,RichTextMermaid,CodeView}.tsx
   - src/{rich-text-parser,rich-text-parser-client,rich-text-worker}.ts
   - vite.config.ts
   - package.json
@@ -30,7 +30,8 @@ thinking, documents, and extension Markdown share one rendering authority with d
 
 ### Content semantics
 
-- Support CommonMark-style Markdown, GFM tables and task lists, links, images, inline mathematics,
+- Support CommonMark-style Markdown, GFM tables and task lists, links, images, Mermaid diagrams
+  (lazy-loaded with `securityLevel: "strict"` and Diagram/Source toggle), inline mathematics,
   and display mathematics. Streaming keeps incomplete fences, links, tables, and math readable.
   Read-only task markers hang beside a dedicated text column: wrapped lines, additional paragraphs,
   and nested lists keep their text alignment and hierarchy. Original Markdown and read-only

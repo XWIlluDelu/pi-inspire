@@ -159,7 +159,7 @@ confirmation. Cancellation, failure and unknown outcomes retain their command re
 The context ring shows used tokens and capacity. Activate it or `/session` for **Session & usage**.
 After compaction, `—` means Pi has yet to report updated usage. Reload restarts only the selected
 idle Inspire-owned worker, including its extensions, skills, prompts and context files. To apply
-Host configuration changes, see [Host restart scopes](host.md#host-and-terminal-maintenance).
+Host configuration changes, see [Host maintenance](host.md#host-maintenance).
 
 <a id="updates"></a>
 

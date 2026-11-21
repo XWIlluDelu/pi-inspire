@@ -16,14 +16,14 @@ connect remotely to the same Host.
 
 ## Features
 
-- **Technical conversations:** streaming Markdown, syntax-highlighted code, tables, and inline/display mathematics, with search and a prompt outline.
+- **Technical conversations:** streaming Markdown, syntax-highlighted code, Mermaid diagrams, tables, and inline/display mathematics, with search and a prompt outline.
 - **Concurrent sessions:** search retained conversation text, inspect History, continue branches, and Fork/Clone independent sessions. Switching keeps background work running; navigation shows running work and unseen results.
 - **Shared with terminal Pi:** with `attach-control` installed, an idle terminal Pi can attach automatically. **Take over** controls a running Pi from the browser while its process stays in the terminal.
 - **Rich input:** project-file references, images/files, retained drafts and prompt history, plus Steer/Queue with text/image recovery during a run.
 - **Native Pi controls:** model/thinking selection, saved defaults/common models, provider configuration/login, direct shell input, compaction, and HTML/JSONL export.
 - **Inspectable activity:** live tool output, native and customizable tool cards, and independent Thinking/tool detail settings. Adaptive mode shows current work and compacts completed activity.
 - **Files and Changes:** browse the workspace, inspect Git diffs, and preview images, Markdown, notebooks, HTML, PDF, source, audio, and video beside the conversation.
-- **Persistent terminals:** project-scoped shell tabs survive browser disconnects and ordinary Inspire restarts.
+- **Project terminals:** project-scoped shell tabs run in the Host and survive browser disconnects.
 - **Desktop and narrow layouts:** resizable panes, a command palette, keyboard shortcuts, and Wisteria, Hydrangea, Lycoris, Chimonanthus, Jade, Amber and Carbon & Silicon palettes, each in light and dark.
 
 <table>
@@ -148,7 +148,7 @@ prerequisites. Herdr is optional; Pi launches directly by default.
 
 ### Access and trust
 
-Pairing grants full control of the installation, including a shell with the Host user's permissions. Pair only trusted browser profiles and use HTTPS remotely. A remote HTTPS edge can observe application traffic, so it must also be trusted.
+Pairing grants full control of the installation, including a shell with the Host user's permissions. On shared or untrusted devices, uncheck **Remember this browser** on the pairing screen for a one-time session, or use **Sign out** in **Settings → System → Host** (or the command palette) to forget the browser key. Use HTTPS remotely; a remote HTTPS edge can observe application traffic, so it must also be trusted.
 
 Provider credentials stay on the Host. Conversation Markdown is sanitized. HTML previews are static by default; **Enable interaction** runs a trusted file's scripts and loads its resources in an isolated frame, and **Stop interaction** returns to static viewing. Local file previews are authorized against the selected session and workspace.
 
