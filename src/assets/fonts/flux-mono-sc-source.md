@@ -6,8 +6,10 @@ This web bundle uses version `0.100`, built by the font project's
 
 The build assigns public zero- and one-cell mappings to `core`. It assigns
 two-cell mappings to the first matching official IBM Plex Sans SC 1.1.0 bucket
-and combines four ordered buckets per shard. `wide-extra` contains the remaining
-public two-cell mappings.
+and combines four ordered buckets per shard. Inspire ships `core` in Regular
+and Medium plus the high-frequency CJK shards (`cjk-000-003` and
+`cjk-064-067` through `cjk-096-100`) in Regular; rare glyphs outside this set
+fall back to system fonts.
 
 | Source input | SHA-256 |
 | --- | --- |

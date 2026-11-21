@@ -38,10 +38,12 @@
   --reading-width-max: 820px;
   --content-max: var(--reading-width-max);
   --composer-max: var(--content-max);
-  --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
+  --font-sans:
+    "IBM Plex Sans SC", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei",
+    system-ui, sans-serif;
   /* Structural labels share the interface face: two type voices only. */
   --font-label: var(--font-sans);
-  --font-mono: "Flux Mono SC", ui-monospace, monospace;
+  --font-mono: "Flux Mono SC", ui-monospace, "Noto Sans Mono CJK SC", monospace;
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
