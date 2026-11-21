@@ -35,8 +35,6 @@ it("shows settled empty Pi errors without treating them as the active empty call
     <Transcript
       messages={settled}
       streaming={false}
-      thinkingVisibility="dynamic"
-      toolVisibility="dynamic"
     />,
   );
   expect(screen.getByRole("group", { name: "Pi error" })).toHaveTextContent(
@@ -56,8 +54,6 @@ it("shows settled empty Pi errors without treating them as the active empty call
       messages={[...settled, settledRetry]}
       streaming
       activeAssistantMessageKey="live:settled-retry"
-      thinkingVisibility="dynamic"
-      toolVisibility="dynamic"
     />,
   );
   expect(screen.queryByText("Working…")).not.toBeInTheDocument();
@@ -74,8 +70,6 @@ it("shows settled empty Pi errors without treating them as the active empty call
       messages={[...settled, activeRetry]}
       streaming
       activeAssistantMessageKey="live:retry-call"
-      thinkingVisibility="dynamic"
-      toolVisibility="dynamic"
     />,
   );
   expect(screen.getByText("Working…")).toBeInTheDocument();

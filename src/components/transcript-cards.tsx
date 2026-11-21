@@ -19,7 +19,6 @@ import {
   useLayoutEffect,
   useMemo,
 } from "react";
-import type { VisibilityPreference } from "../../shared/contracts";
 import {
   fileResourceReference,
   isResourceReferenceText,
@@ -75,7 +74,7 @@ import { TranscriptSearchReveal } from "./transcript-search";
 
 import { useActivityCloseDelay } from "./use-activity-close-delay";
 
-type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
+type StaticVisibility = "collapsed" | "expanded";
 
 const CardInspectionContext = createContext<(() => void) | undefined>(
   undefined,
@@ -130,7 +129,6 @@ export function CollapsibleCard({
   useLayoutEffect(() => {
     if (revealOnSearch && search !== null) setOverride(true);
   }, [revealOnSearch, search, setOverride]);
-  if (defaultVisibility === "hidden") return null;
   const open = override ?? defaultVisibility === "expanded";
   const bodyId = id ?? generatedId;
   const disclosureLabel = `${open ? "Collapse" : "Expand"} ${toggleLabel}`;
@@ -182,11 +180,9 @@ export function CollapsibleCard({
 
 export function ThinkingCard({
   text,
-  visibility,
   dynamicActive,
 }: {
   text: string;
-  visibility: VisibilityPreference;
   dynamicActive: boolean;
 }) {
   // Stored thinking can carry terminal color sequences; clean only here, at
@@ -200,23 +196,15 @@ export function ThinkingCard({
   );
   const hasContent = Boolean(clean.trim()) || presentation !== null;
   const dynamicOpen = useActivityCloseDelay(
-    visibility === "dynamic" && dynamicActive && hasContent,
+    dynamicActive && hasContent,
     1800,
     600,
   );
-  const resolvedVisibility: StaticVisibility =
-    !hasContent && visibility !== "hidden"
-      ? "collapsed"
-      : visibility === "dynamic"
-        ? dynamicOpen
-          ? "expanded"
-          : "collapsed"
-        : visibility;
   return (
     <CollapsibleCard
-      defaultVisibility={resolvedVisibility}
+      defaultVisibility={hasContent && dynamicOpen ? "expanded" : "collapsed"}
       className="card--thinking"
-      animate={visibility === "dynamic"}
+      animate
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
       toggleLabel="Thinking"
@@ -1061,15 +1049,13 @@ export function ToolCard({
   result,
   activity,
   live = false,
-  visibility,
-  dynamic,
-  dynamicActive,
+  dynamicActive = false,
+  expanded = false,
 }: {
   activity?: ActivityTool;
   live?: boolean;
-  visibility: StaticVisibility;
-  dynamic?: boolean;
   dynamicActive?: boolean;
+  expanded?: boolean;
 } & (
   | { call: ToolCallContent; result?: ChatMessage }
   | { call?: undefined; result: ChatMessage }
@@ -1079,7 +1065,10 @@ export function ToolCard({
   const status = toolStatus(result, activity, live, call);
   const dynamicOpen = useActivityCloseDelay(
     Boolean(
-      dynamic && dynamicActive && status !== "success" && status !== "failure",
+      !expanded &&
+        dynamicActive &&
+        status !== "success" &&
+        status !== "failure",
     ),
     1500,
     500,
@@ -1100,11 +1089,9 @@ export function ToolCard({
   return (
     <ToolArgumentPreviewContext value={call?.__inspireToolCall}>
       <CollapsibleCard
-        defaultVisibility={
-          dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
-        }
+        defaultVisibility={expanded || dynamicOpen ? "expanded" : "collapsed"}
         className="card--tool"
-        animate={dynamic}
+        animate={!expanded}
         icon={toolIcon(name)}
         label={
           <code className="card__tool-name">
@@ -1198,11 +1185,9 @@ export function genericContentTitle(item: object): string | null {
 
 export function GenericCard({
   item,
-  visibility,
   title: suppliedTitle,
 }: {
   item: object;
-  visibility: StaticVisibility;
   title?: string;
 }) {
   const title = suppliedTitle ?? genericContentTitle(item);
@@ -1211,7 +1196,7 @@ export function GenericCard({
   const type = typeof record.type === "string" ? record.type : "";
   return (
     <CollapsibleCard
-      defaultVisibility={visibility}
+      defaultVisibility="collapsed"
       className="card--generic"
       icon={<Package size={14} aria-hidden />}
       label={<span className="card__generic-title">{title}</span>}

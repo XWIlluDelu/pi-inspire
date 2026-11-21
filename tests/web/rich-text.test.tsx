@@ -167,8 +167,6 @@ it("copies selected formulas and surrounding text with Markdown delimiters", asy
         },
       ]}
       streaming={false}
-      thinkingVisibility="collapsed"
-      toolVisibility="collapsed"
     />,
   );
   await waitFor(() =>
@@ -247,8 +245,6 @@ describe("local file references", () => {
             },
           ]}
           streaming={false}
-          thinkingVisibility="expanded"
-          toolVisibility="expanded"
         />,
       );
       const target = await screen.findByText(label);

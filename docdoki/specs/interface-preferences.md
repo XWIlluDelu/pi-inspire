@@ -23,7 +23,7 @@ Keep persistent preferences easy to find and save each change without overwritin
 ## Settings organization
 
 Settings opens from the topbar as a modal, leaving session navigation in place. Display,
-Conversation, Behavior, Models, MCP, Adapters and System are separate category views; only the
+Behavior, Models, MCP, Adapters and System are separate category views; only the
 selected category is visible, focusable and exposed to assistive technology. Category navigation starts its content at the top;
 scrolling within a category does not change the selection. Drafts, model browsing state and pending
 login attempts remain intact across category switches. Keyboard focus reveals the whole category
@@ -39,8 +39,7 @@ palette uses named swatch tiles with a visible selected state.
 | Category | Controls |
 | --- | --- |
 | Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls, not combined under a location-based heading. |
-| Conversation | One field group: activity visibility (`Thinking detail`, `Tool activity`, `Activity groups`), then `Send key`. |
-| Behavior | App behavior (`On launch`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
+| Behavior | App behavior (`On launch`, `Send key`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). Thinking, tool activity, and activity groups always use adaptive disclosure without global mode dropdowns. |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
 | Adapters | Unified enablement of externally configured GUI adapters under [[tool-presentations]]; not Pi extension execution management. |

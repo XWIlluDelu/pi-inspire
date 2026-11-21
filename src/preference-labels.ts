@@ -1,21 +1,11 @@
-import {
-  ACTIVITY_FOLD_VISIBILITIES,
-  type InspirePreferences,
-  TOOL_VISIBILITY_PREFERENCES,
-  VISIBILITY_PREFERENCES,
-} from "../shared/contracts";
+import type { InspirePreferences } from "../shared/contracts";
 
 function preferenceOptions<const Value extends string>(
   values: readonly Value[],
-  descriptions?: Record<Value, string>,
 ) {
   return values.map((value) => ({
     value,
-    label:
-      value === "dynamic"
-        ? "Adaptive"
-        : value[0]!.toUpperCase() + value.slice(1),
-    ...(descriptions && { description: descriptions[value] }),
+    label: value[0]!.toUpperCase() + value.slice(1),
   }));
 }
 
@@ -81,38 +71,6 @@ export const preferenceChoices = {
         actionLabel: "continue previous session",
       },
     ],
-  },
-  thinkingVisibility: {
-    label: "Thinking detail",
-    paletteLabel: "Thinking",
-    description: "How much model thinking to show.",
-    options: preferenceOptions(VISIBILITY_PREFERENCES, {
-      dynamic: "Opens while the model is working and folds afterward.",
-      expanded: "Shows thinking in open cards.",
-      collapsed: "Shows thinking summaries until opened.",
-      hidden: "Hides thinking cards.",
-    }),
-  },
-  toolVisibility: {
-    label: "Tool activity",
-    description: "Detail shown for each tool call.",
-    options: preferenceOptions(TOOL_VISIBILITY_PREFERENCES, {
-      dynamic: "Opens active calls and folds completed calls into icons.",
-      expanded: "Shows tool arguments and results in open cards.",
-      compact: "Shows one closed row for each tool call.",
-      collapsed: "Groups completed tool calls into icons.",
-      hidden: "Hides tool calls.",
-    }),
-  },
-  activityFoldVisibility: {
-    label: "Activity groups",
-    description: "How groups of thinking and tool calls open.",
-    options: preferenceOptions(ACTIVITY_FOLD_VISIBILITIES, {
-      dynamic: "Opens during live activity and folds when it settles.",
-      expanded: "Shows all steps in order.",
-      compact: "Shows recent steps, with earlier steps one click away.",
-      collapsed: "Shows the group header until opened.",
-    }),
   },
 } as const satisfies {
   [Key in keyof InspirePreferences]?: {

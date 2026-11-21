@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ActivityFoldVisibilityPreference } from "../../shared/contracts";
 import {
   ActivityItemOwner,
   hasOpenActivityCard,
@@ -175,13 +174,11 @@ function ActivityItems({
 }
 
 export function ResponseActivityFold({
-  visibility,
   live,
   choices,
   items,
   collapseTools,
 }: {
-  visibility: ActivityFoldVisibilityPreference;
   live: boolean;
   choices: ActivityReadingChoices;
   collapseTools: boolean;
@@ -197,18 +194,8 @@ export function ResponseActivityFold({
   const content = useRef<HTMLDivElement>(null);
   const footer = useRef<HTMLButtonElement>(null);
   const anchor = useRef<{ edge: "top" | "bottom"; position: number }>(null);
-  const dynamicOpen = useActivityCloseDelay(
-    visibility === "dynamic" && live,
-    2400,
-    800,
-  );
-  const density =
-    choice ??
-    (visibility === "dynamic"
-      ? dynamicOpen || inspecting
-        ? "compact"
-        : "collapsed"
-      : visibility);
+  const dynamicOpen = useActivityCloseDelay(live, 2400, 800);
+  const density = choice ?? (dynamicOpen || inspecting ? "compact" : "collapsed");
   const open = density !== "collapsed";
   const earlierCount =
     density === "compact" ? Math.max(0, items.length - ACTIVITY_PAGE_SIZE) : 0;
@@ -292,7 +279,7 @@ export function ResponseActivityFold({
     <section
       ref={group}
       className="activity-fold"
-      data-dynamic={visibility === "dynamic" || undefined}
+      data-dynamic
       aria-label="Assistant activity"
       onFocus={() => {
         if (open) setInspecting(true);

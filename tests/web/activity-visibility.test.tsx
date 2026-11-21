@@ -5,7 +5,7 @@ import { Transcript } from "../../src/components/Transcript";
 
 afterEach(() => vi.useRealTimers());
 
-describe("transcript density preferences", () => {
+describe("adaptive transcript activity", () => {
   it("opens active work, settles completed tools, and keeps explicitly opened details", async () => {
     vi.useFakeTimers();
     const message = {
@@ -33,9 +33,6 @@ describe("transcript density preferences", () => {
         messages={[message]}
         streaming={live}
         activeAssistantMessageKey={live ? "live:live" : null}
-        thinkingVisibility="dynamic"
-        toolVisibility="dynamic"
-        activityFoldVisibility="expanded"
         toolActivity={{
           "read-1": {
             id: "read-1",
@@ -58,6 +55,9 @@ describe("transcript density preferences", () => {
     fireEvent.click(screen.getByRole("button", { name: "Expand read tool" }));
     rerender(view(false));
     await act(() => vi.advanceTimersByTimeAsync(2500));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand assistant activity" }),
+    );
     expect(
       screen.getByRole("button", { name: "Expand Thinking" }),
     ).toBeVisible();
@@ -72,7 +72,7 @@ describe("transcript density preferences", () => {
 
   it("renders the collapsed thinking summary as inline Markdown and keeps full markdown expanded", async () => {
     const text = "First line with **strong** and $E = mc^2$\nSecond line";
-    const view = (thinkingVisibility: "collapsed" | "hidden") => (
+    render(
       <Transcript
         messages={[
           {
@@ -81,11 +81,11 @@ describe("transcript density preferences", () => {
           },
         ]}
         streaming={false}
-        thinkingVisibility={thinkingVisibility}
-        toolVisibility="collapsed"
-      />
+      />,
     );
-    const { rerender } = render(view("collapsed"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand assistant activity" }),
+    );
     const thinkingCard = document.querySelector(
       ".card--thinking",
     ) as HTMLElement;
@@ -106,10 +106,5 @@ describe("transcript density preferences", () => {
     expect(
       within(expanded.parentElement as HTMLElement).getByText("strong").tagName,
     ).toBe("STRONG");
-
-    rerender(view("hidden"));
-    expect(
-      screen.queryByRole("button", { name: /Thinking/i }),
-    ).not.toBeInTheDocument();
   });
 });

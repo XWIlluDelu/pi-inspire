@@ -368,9 +368,6 @@ const ConversationStage = memo(function ConversationStage({
       queue: source.live.queue,
       pendingAction: source.pendingAction?.action ?? null,
       extensionDisplays: source.live.extensionDisplays,
-      thinkingVisibility: source.prefs.thinkingVisibility,
-      toolVisibility: source.prefs.toolVisibility,
-      activityFoldVisibility: source.prefs.activityFoldVisibility,
     }),
     shallowEqual,
   );
@@ -395,9 +392,6 @@ const ConversationStage = memo(function ConversationStage({
       queue={state.queue}
       pendingAction={state.pendingAction}
       extensionDisplays={state.extensionDisplays}
-      thinkingVisibility={state.thinkingVisibility}
-      toolVisibility={state.toolVisibility}
-      activityFoldVisibility={state.activityFoldVisibility}
     />
   );
   const composer = (

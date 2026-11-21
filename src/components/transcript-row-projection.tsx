@@ -1,12 +1,6 @@
 import { type ReactNode, useLayoutEffect, useMemo } from "react";
 import { assistantOutcome } from "../../shared/assistant-outcome";
-import {
-  type ActivityFoldVisibilityPreference,
-  isBusyRunState,
-  type RunState,
-  type ToolVisibilityPreference,
-  type VisibilityPreference,
-} from "../../shared/contracts";
+import { isBusyRunState, type RunState } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
 import {
   type ActivityTool,
@@ -47,9 +41,6 @@ interface TranscriptRowProjectionOptions {
   runState: RunState | undefined;
   activeAssistantMessageKey: string | null;
   toolActivity: Record<string, ActivityTool>;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
-  activityFoldVisibility: ActivityFoldVisibilityPreference;
 }
 
 type Row = {
@@ -69,8 +60,6 @@ function messageParts(
   message: ChatMessage,
   toolResults: ReadonlyMap<string, ChatMessage>,
   toolActivity: Record<string, ActivityTool>,
-  showThinking: boolean,
-  showTools: boolean,
 ): AssistantPart[] {
   if (typeof message.content === "string")
     return message.content ? [{ start: 0, passages: [message.content] }] : [];
@@ -82,31 +71,28 @@ function messageParts(
       if (previous && "passages" in previous) previous.passages.push(item.text);
       else parts.push({ start, passages: [item.text] });
     } else if (item.type === "thinking") {
-      if (showThinking)
-        parts.push({
-          start,
-          activity: {
-            kind: "thinking",
-            text: typeof item.thinking === "string" ? item.thinking : "",
-          },
-        });
-    } else if (showTools) {
-      if (item.type === "toolCall") {
-        const call = item as ToolCallContent;
-        parts.push({
-          start,
-          activity: {
-            kind: "tool",
-            call,
-            result: toolResults.get(call.id),
-            activity: toolActivity[call.id],
-          },
-        });
-      } else {
-        const title = genericContentTitle(item);
-        if (title)
-          parts.push({ start, activity: { kind: "generic", item, title } });
-      }
+      parts.push({
+        start,
+        activity: {
+          kind: "thinking",
+          text: typeof item.thinking === "string" ? item.thinking : "",
+        },
+      });
+    } else if (item.type === "toolCall") {
+      const call = item as ToolCallContent;
+      parts.push({
+        start,
+        activity: {
+          kind: "tool",
+          call,
+          result: toolResults.get(call.id),
+          activity: toolActivity[call.id],
+        },
+      });
+    } else {
+      const title = genericContentTitle(item);
+      if (title)
+        parts.push({ start, activity: { kind: "generic", item, title } });
     }
   });
   return parts;
@@ -123,9 +109,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     runState,
     activeAssistantMessageKey,
     toolActivity,
-    thinkingVisibility,
-    toolVisibility,
-    activityFoldVisibility,
   } = options;
   const choices = useMemo<ActivityReadingChoices>(
     () => new Map(),
@@ -156,8 +139,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     let group = "start";
     let band = 0;
     const owner = { sessionId, viewId, projectionKey: projectionViewKey };
-    const cardVisibility =
-      toolVisibility === "expanded" ? "expanded" : "collapsed";
 
     function flushActivity(live = false) {
       if (!activity.length) return;
@@ -165,13 +146,9 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
         key: `${group}:activity:${band++}`,
         node: (
           <ResponseActivityFold
-            visibility={activityFoldVisibility}
             live={live}
             items={activity}
-            collapseTools={
-              toolVisibility === "collapsed" ||
-              (toolVisibility === "dynamic" && !live)
-            }
+            collapseTools={!live}
             choices={choices}
           />
         ),
@@ -265,13 +242,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
             !message.__inspireSettled &&
             (active ||
               (activeAssistantMessageKey === null && message === last));
-          const parts = messageParts(
-            message,
-            toolResults,
-            toolActivity,
-            thinkingVisibility !== "hidden",
-            toolVisibility !== "hidden",
-          );
+          const parts = messageParts(message, toolResults, toolActivity);
           let lastResponse: ResponsePart | undefined;
           for (const part of parts) if ("passages" in part) lastResponse = part;
           const outcome = assistantOutcome(message);
@@ -327,8 +298,7 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
                   item={item}
                   live={false}
                   dynamicActive={false}
-                  thinkingVisibility={thinkingVisibility}
-                  toolVisibility="expanded"
+                  expanded
                 />
               ) : undefined,
               node: (
@@ -336,8 +306,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
                   item={item}
                   live={trailing}
                   dynamicActive={active}
-                  thinkingVisibility={thinkingVisibility}
-                  toolVisibility={toolVisibility}
                 />
               ),
             });
@@ -361,39 +329,33 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
           break;
         }
         case "toolResult":
-          if (
-            toolVisibility !== "hidden" &&
-            !toolCalls.has(message.toolCallId ?? "")
-          )
+          if (!toolCalls.has(message.toolCallId ?? ""))
             activity.push({
               key,
               kind: "tool",
               toolCallId: message.toolCallId,
               name: message.toolName,
               failed: message.isError === true,
-              node: <ToolCard result={message} visibility={cardVisibility} />,
-              expandedNode: <ToolCard result={message} visibility="expanded" />,
+              node: <ToolCard result={message} />,
+              expandedNode: <ToolCard result={message} expanded />,
             });
           break;
-        default:
-          if (toolVisibility !== "hidden") {
-            const item = { ...message, type: message.role };
-            const title = genericContentTitle(item);
-            if (title)
-              activity.push({
-                key,
-                kind: "tool",
-                node: (
-                  <AssistantActivityCard
-                    item={{ kind: "generic", item, title }}
-                    live={false}
-                    dynamicActive={false}
-                    thinkingVisibility={thinkingVisibility}
-                    toolVisibility={toolVisibility}
-                  />
-                ),
-              });
-          }
+        default: {
+          const item = { ...message, type: message.role };
+          const title = genericContentTitle(item);
+          if (title)
+            activity.push({
+              key,
+              kind: "tool",
+              node: (
+                <AssistantActivityCard
+                  item={{ kind: "generic", item, title }}
+                  live={false}
+                  dynamicActive={false}
+                />
+              ),
+            });
+        }
       }
     }
     flushActivity(busy);
@@ -407,9 +369,6 @@ export function useTranscriptRows(options: TranscriptRowProjectionOptions) {
     runState,
     activeAssistantMessageKey,
     toolActivity,
-    thinkingVisibility,
-    toolVisibility,
-    activityFoldVisibility,
     configuration,
     choices,
   ]);

@@ -10,14 +10,11 @@ import {
   useState,
 } from "react";
 import {
-  type ActivityFoldVisibilityPreference,
   type ExtensionDisplay,
   emptyPendingQueues,
   type GenericExtensionDisplay,
   type PendingQueues,
   type RunState,
-  type ToolVisibilityPreference,
-  type VisibilityPreference,
 } from "../../shared/contracts";
 import { type ActivityTool, type ChatMessage } from "../events";
 import { isComposingKeyboardEvent } from "../keyboard-input";
@@ -57,9 +54,6 @@ export const Transcript = memo(function Transcript({
   runState,
   activeAssistantMessageKey = null,
   toolActivity = EMPTY_TOOL_ACTIVITY,
-  thinkingVisibility,
-  toolVisibility,
-  activityFoldVisibility = "expanded",
   sessionId = "",
   viewId = "",
   projectionIncarnation = "",
@@ -75,9 +69,6 @@ export const Transcript = memo(function Transcript({
   runState?: RunState;
   activeAssistantMessageKey?: string | null;
   toolActivity?: Record<string, ActivityTool>;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
-  activityFoldVisibility?: ActivityFoldVisibilityPreference;
   sessionId?: string;
   viewId?: string;
   projectionIncarnation?: string;
@@ -168,9 +159,6 @@ export const Transcript = memo(function Transcript({
     runState,
     activeAssistantMessageKey,
     toolActivity,
-    thinkingVisibility,
-    toolVisibility,
-    activityFoldVisibility,
   });
   const search = useTranscriptSearch({
     rows,

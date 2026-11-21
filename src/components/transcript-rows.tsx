@@ -7,11 +7,7 @@ import {
   X,
 } from "lucide-react";
 import { memo, type Ref, useCallback, useEffect, useId, useState } from "react";
-import type {
-  PendingQueues,
-  ToolVisibilityPreference,
-  VisibilityPreference,
-} from "../../shared/contracts";
+import type { PendingQueues } from "../../shared/contracts";
 import { type CopyLoader, type CopySource, copyLoader } from "../content-copy";
 import {
   type ActivityTool,
@@ -242,33 +238,18 @@ export function AssistantActivityCard({
   item,
   live,
   dynamicActive,
-  thinkingVisibility,
-  toolVisibility,
+  expanded = false,
 }: {
   item: AssistantActivityContent;
   live: boolean;
   dynamicActive: boolean;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
+  expanded?: boolean;
 }) {
-  const visibility = toolVisibility === "expanded" ? "expanded" : "collapsed";
   switch (item.kind) {
     case "thinking":
-      return (
-        <ThinkingCard
-          text={item.text}
-          visibility={thinkingVisibility}
-          dynamicActive={dynamicActive}
-        />
-      );
+      return <ThinkingCard text={item.text} dynamicActive={dynamicActive} />;
     case "generic":
-      return (
-        <GenericCard
-          item={item.item}
-          title={item.title}
-          visibility={visibility}
-        />
-      );
+      return <GenericCard item={item.item} title={item.title} />;
     case "tool":
       return (
         <ToolCard
@@ -276,9 +257,8 @@ export function AssistantActivityCard({
           result={item.result}
           activity={item.activity}
           live={live}
-          visibility={visibility}
-          dynamic={toolVisibility === "dynamic"}
           dynamicActive={dynamicActive}
+          expanded={expanded}
         />
       );
   }

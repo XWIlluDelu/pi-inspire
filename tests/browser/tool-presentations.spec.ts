@@ -39,8 +39,6 @@ async function openReview(
 ) {
   return openEventSession(page, "Tool presentation review", configuration, {
     theme: "light",
-    toolVisibility: "expanded",
-    activityFoldVisibility: "expanded",
     ...preferences,
   });
 }
@@ -59,10 +57,7 @@ test.describe("narrow CodeMode details", () => {
   test("keeps CodeMode script, child failures and output inspectable across settlement", async ({
     page,
   }) => {
-    const send = await openReview(page, {
-      toolVisibility: "dynamic",
-      activityFoldVisibility: "dynamic",
-    });
+    const send = await openReview(page);
     const args = { code: 'text(await tools.read({path: "report.txt"}));' };
     const call = tool("codemode", args);
     send(
@@ -259,7 +254,7 @@ function toolCard(page: Page, name: string, resultOnly = false) {
 test("live output and partial arguments follow the reader through native execution and settlement", async ({
   page,
 }) => {
-  const send = await openReview(page, { toolVisibility: "dynamic" });
+  const send = await openReview(page);
   const shell = tool("bash", { command: "npm run build" });
   const path = "src/stream.ts";
   const content = Array.from(
@@ -488,8 +483,6 @@ test("saved tool images survive presentation changes and full logs open in the n
       bootstrap(body) {
         Object.assign(body.preferences, {
           theme: "light",
-          toolVisibility: fallback ? "collapsed" : "expanded",
-          activityFoldVisibility: "expanded",
         });
         if (fallback)
           body.toolPresentations = {

@@ -12,25 +12,6 @@ type Body<K extends keyof typeof hostEndpoints> =
     ? Input
     : never;
 
-export const VISIBILITY_PREFERENCES = [
-  "dynamic",
-  "expanded",
-  "collapsed",
-  "hidden",
-] as const;
-export const TOOL_VISIBILITY_PREFERENCES = [
-  "dynamic",
-  "expanded",
-  "compact",
-  "collapsed",
-  "hidden",
-] as const;
-export const ACTIVITY_FOLD_VISIBILITIES = [
-  "dynamic",
-  "expanded",
-  "compact",
-  "collapsed",
-] as const;
 export const CONTENT_TEXT_SIZES = ["compact", "comfortable", "large"] as const;
 export const READING_WIDTHS = ["narrow", "comfortable", "wide"] as const;
 export const DESKTOP_SEND_KEYS = ["enter", "mod-enter"] as const;
@@ -67,11 +48,6 @@ export const MAX_SESSION_ID_HYDRATION_IDS = 600;
 export const MAX_SESSION_CWD_HYDRATION_CWDS = 100;
 export const MAX_CURATED_SESSION_RESULTS = 10_000;
 
-export type VisibilityPreference = (typeof VISIBILITY_PREFERENCES)[number];
-export type ToolVisibilityPreference =
-  (typeof TOOL_VISIBILITY_PREFERENCES)[number];
-export type ActivityFoldVisibilityPreference =
-  (typeof ACTIVITY_FOLD_VISIBILITIES)[number];
 export type ContentTextSizePreference = (typeof CONTENT_TEXT_SIZES)[number];
 export type ReadingWidthPreference = (typeof READING_WIDTHS)[number];
 export type DesktopSendKeyPreference = (typeof DESKTOP_SEND_KEYS)[number];
@@ -275,11 +251,6 @@ export interface InspirePreferences {
   launch: LaunchPreference;
   /** Desktop-only submit chord; touch-first Return always inserts a line break. */
   desktopSendKey: DesktopSendKeyPreference;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
-  /** Presentation of complete non-response activity runs between visible
-   * assistant response passages. The cards inside keep their own preferences. */
-  activityFoldVisibility: ActivityFoldVisibilityPreference;
   /** How the topbar shows the session's project location. */
   projectDisplay: ProjectDisplayPreference;
   /** Session title menu order, including actions revealed by More actions. */
@@ -316,9 +287,6 @@ export const defaultInterfaceSettings = {
   readingWidth: "comfortable",
   launch: "welcome",
   desktopSendKey: "enter",
-  thinkingVisibility: "dynamic",
-  toolVisibility: "dynamic",
-  activityFoldVisibility: "dynamic",
   projectDisplay: "folder",
   sessionActionOrder: [...SESSION_ACTION_IDS],
 } satisfies Pick<
@@ -331,9 +299,6 @@ export const defaultInterfaceSettings = {
   | "readingWidth"
   | "launch"
   | "desktopSendKey"
-  | "thinkingVisibility"
-  | "toolVisibility"
-  | "activityFoldVisibility"
   | "projectDisplay"
   | "sessionActionOrder"
 >;

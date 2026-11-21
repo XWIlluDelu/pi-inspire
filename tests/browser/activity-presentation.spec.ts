@@ -11,10 +11,6 @@ test("interrupted calls stay neutral and nested failures remain keyboard-readabl
     page,
     "Activity states",
     customMessageConfiguration,
-    {
-      activityFoldVisibility: "expanded",
-      toolVisibility: "compact",
-    },
   );
   const messages = activityReadingMessages();
   const code = messages.find(
@@ -118,10 +114,6 @@ test("the Activity footer appears only when useful and gives focus back on resiz
     page,
     "Activity footer",
     customMessageConfiguration,
-    {
-      activityFoldVisibility: "expanded",
-      thinkingVisibility: "collapsed",
-    },
   );
   send(
     ...Array.from({ length: 16 }, (_, index) => ({
@@ -161,11 +153,6 @@ test.describe("touch activity disclosures", () => {
       page,
       "Touch disclosures",
       customMessageConfiguration,
-      {
-        thinkingVisibility: "collapsed",
-        toolVisibility: "compact",
-        activityFoldVisibility: "expanded",
-      },
     );
     send(
       ...activityReadingMessages().map((message) => ({

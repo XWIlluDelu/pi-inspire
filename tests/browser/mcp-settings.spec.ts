@@ -173,7 +173,7 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     await advanced.click();
     await description.fill("Updated documentation");
     await settings
-      .getByRole("button", { name: "Conversation", exact: true })
+      .getByRole("button", { name: "Behavior", exact: true })
       .click();
     await expect(description).not.toBeVisible();
     await settings.getByRole("button", { name: "MCP", exact: true }).click();

@@ -48,9 +48,6 @@ test("native shell cards stream, stop and fit the narrow composer without an aut
   };
   const transport = await routeSnapshots(page, {
     snapshot: projectShell,
-    bootstrap: ({ preferences }) => {
-      preferences.toolVisibility = "hidden";
-    },
   });
   await page.route("**/api/prompt", async (route) => {
     const body = route.request().postDataJSON() as Record<string, unknown>;

@@ -183,8 +183,6 @@ describe("transcript viewport geometry", () => {
           projectionIncarnation="incarnation"
           hasOlder
           streaming={false}
-          thinkingVisibility="expanded"
-          toolVisibility="collapsed"
         />,
       );
       const log = screen.getByRole("log");

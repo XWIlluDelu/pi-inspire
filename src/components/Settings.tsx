@@ -7,7 +7,6 @@ import {
   Palette,
   Puzzle,
   RefreshCw,
-  ScrollText,
   Server,
   Sun,
   Terminal,
@@ -151,7 +150,6 @@ const COMPLETION_ALERTS: Array<{
 
 export type SettingsCategoryId =
   | "display"
-  | "conversation"
   | "behavior"
   | "models"
   | "mcp"
@@ -168,11 +166,6 @@ const CATEGORIES: Array<{
     id: "display",
     label: "Display",
     icon: <Palette size={14} aria-hidden />,
-  },
-  {
-    id: "conversation",
-    label: "Conversation",
-    icon: <ScrollText size={14} aria-hidden />,
   },
   {
     id: "behavior",
@@ -317,28 +310,10 @@ export const SettingsContent = memo(function SettingsContent({
           </Section>
         </SettingsPage>
 
-        <SettingsPage hidden={activeCategory !== "conversation"}>
-          <Section
-            id="conversation"
-            icon={<ScrollText size={14} />}
-            title="Conversation"
-          >
-            {(
-              [
-                "thinkingVisibility",
-                "toolVisibility",
-                "activityFoldVisibility",
-                "desktopSendKey",
-              ] as const
-            ).map((name) => (
-              <PreferenceChoice key={name} name={name} prefs={prefs} />
-            ))}
-          </Section>
-        </SettingsPage>
-
         <SettingsPage hidden={activeCategory !== "behavior"}>
           <Section id="behavior" icon={<Compass size={14} />} title="Behavior">
             <PreferenceChoice name="launch" prefs={prefs} />
+            <PreferenceChoice name="desktopSendKey" prefs={prefs} />
 
             <SelectField
               label="Task alerts"
