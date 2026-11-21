@@ -793,12 +793,26 @@ body.pane-resizing .nav {
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--bg-surface);
-  font: var(--text-reading-code)/var(--leading-mono) var(--font-mono);
+  font: var(--text-reading-code)/20px var(--font-mono);
 }
 
 .source-view {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(max-content, 1fr);
+}
+
+.source-view--wrap {
+  display: block;
+}
+
+.source-view__target-line {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(var(--space-3) + var(--source-target-line, 0) * 20px);
+  height: 20px;
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  pointer-events: none;
 }
 
 .source-view__gutter {
@@ -806,6 +820,7 @@ body.pane-resizing .nav {
   left: 0;
   z-index: 1;
   background: var(--bg-surface);
+  border-right: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
   min-width: calc(3ch + 2 * var(--space-3));
   padding: var(--space-3);
   color: var(--muted);
@@ -816,7 +831,48 @@ body.pane-resizing .nav {
 
 .source-view__pre {
   min-width: 100%;
-  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-3);
+}
+
+.source-view__wrapped {
+  padding: var(--space-3) 0;
+}
+
+.source-view__wrapped .code-lines {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  white-space: pre-wrap;
+}
+
+.source-view__wrapped .code-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding-inline-end: var(--space-3);
+}
+
+.source-view__wrapped .code-row__gutter {
+  --code-line-surface: var(--bg-surface);
+  grid-template-columns: minmax(3ch, auto);
+  min-width: calc(3ch + 2 * var(--space-3));
+  padding-inline: var(--space-3);
+  border-right: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
+}
+
+.source-view__wrapped .code-row__number {
+  padding-inline: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.source-view__wrapped .code-row[data-kind="match"] {
+  --code-line-fill: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.source-view__wrapped .code-row > code {
+  min-width: 0;
+  padding-inline-start: var(--space-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .source-boundary {

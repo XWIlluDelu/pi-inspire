@@ -6,8 +6,10 @@ import {
   GitCompareArrows,
   MousePointer2,
   MousePointerClick,
+  WrapText,
 } from "lucide-react";
 import {
+  type CSSProperties,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -29,10 +31,10 @@ import {
   type ResourcePreview,
 } from "../resource-preview";
 import { store } from "../store";
-import { languageForFile } from "../syntax-highlighting";
+import { highlightSourceLines, languageForFile } from "../syntax-highlighting";
 import type { FileReadingState } from "../workbench-session";
 import { useFileChanges } from "./ChangesPane";
-import { CodeView, SourceReader } from "./CodeView";
+import { CodeRows, CodeView, SourceReader } from "./CodeView";
 import { ContextPaneState } from "./ContextPaneState";
 import { CopyAction } from "./CopyAction";
 import { FloatingPaneActions } from "./FloatingPaneActions";
@@ -74,12 +76,14 @@ function SourceCodePreview({
   text,
   language,
   jump,
+  wrap = false,
   readingPosition,
   truncated = false,
 }: {
   text: string;
   language: string;
   jump: FileSourceJump | null;
+  wrap?: boolean;
   readingPosition?: SourceReadingPosition;
   truncated?: boolean;
 }) {
@@ -88,6 +92,20 @@ function SourceCodePreview({
     () => text.split("\n").map((_, index) => index + 1),
     [text],
   );
+  const wrappedRows = useMemo(() => {
+    if (!wrap) return null;
+    const rawLines = text.split("\n");
+    const highlighted = highlightSourceLines(text, language);
+    return rawLines.map((line, index) => ({
+      text: line,
+      html: highlighted[index],
+      newLine: index + 1,
+      kind:
+        jump && Math.min(rawLines.length, jump.line) === index + 1
+          ? ("match" as const)
+          : undefined,
+    }));
+  }, [wrap, text, language, jump]);
   const targetLine = jump ? Math.min(lineNumbers.length, jump.line) : null;
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -101,6 +119,18 @@ function SourceCodePreview({
     root.scrollTop = 0;
     root.scrollLeft = 0;
     if (targetLine === null) return;
+    if (wrap) {
+      const targetRow = root.querySelector<HTMLElement>(
+        '.code-row[data-kind="match"]',
+      );
+      if (targetRow) {
+        root.scrollTop = Math.max(
+          0,
+          targetRow.offsetTop - root.clientHeight / 3,
+        );
+      }
+      return;
+    }
     const lineHeight = Number.parseFloat(getComputedStyle(root).lineHeight);
     const source = root.querySelector<HTMLElement>(".source-view__pre");
     const paddingTop = source
@@ -113,10 +143,10 @@ function SourceCodePreview({
         (Number.isFinite(paddingTop) ? paddingTop : 0) -
         root.clientHeight / 3,
     );
-  }, [jump, readingPosition, targetLine]);
+  }, [jump, readingPosition, targetLine, wrap]);
   return (
     <SourceReader
-      className="source-view"
+      className={wrap ? "source-view source-view--wrap" : "source-view"}
       label="File source"
       ref={rootRef}
       onScroll={(event) => {
@@ -129,12 +159,35 @@ function SourceCodePreview({
         }
       }}
     >
-      <CodeView
-        className="source-view__gutter"
-        aria-hidden
-        text={lineNumbers.join("\n")}
-      />
-      <CodeView className="source-view__pre" text={text} language={language} />
+      {wrappedRows ? (
+        <div className="source-view__wrapped">
+          <CodeRows rows={wrappedRows} gutter="numbered" />
+        </div>
+      ) : (
+        <>
+          {targetLine !== null ? (
+            <span
+              className="source-view__target-line"
+              aria-hidden="true"
+              style={
+                {
+                  "--source-target-line": targetLine - 1,
+                } as CSSProperties
+              }
+            />
+          ) : null}
+          <CodeView
+            className="source-view__gutter"
+            aria-hidden
+            text={lineNumbers.join("\n")}
+          />
+          <CodeView
+            className="source-view__pre"
+            text={text}
+            language={language}
+          />
+        </>
+      )}
       {truncated ? (
         <div className="source-boundary">Preview ends here</div>
       ) : null}
@@ -192,12 +245,14 @@ function ReadyResource({
   preview,
   jump,
   viewMode,
+  wrapSource,
   readingPosition,
   interactiveUrl,
 }: {
   preview: Extract<ResourcePreview, { status: "ready" }>;
   jump: FileSourceJump | null;
   viewMode: FileViewMode;
+  wrapSource?: boolean;
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
@@ -213,6 +268,7 @@ function ReadyResource({
         text={preview.text}
         language={sourceLanguage(descriptor)}
         jump={jump}
+        wrap={wrapSource}
         readingPosition={readingPosition}
         truncated={preview.truncated}
       />
@@ -317,12 +373,14 @@ function ResourcePreviewContent({
   state,
   jump = null,
   viewMode = "preview",
+  wrapSource = false,
   readingPosition,
   interactiveUrl,
 }: {
   state: ContextPaneView;
   jump?: FileSourceJump | null;
   viewMode?: FileViewMode;
+  wrapSource?: boolean;
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
@@ -393,6 +451,7 @@ function ResourcePreviewContent({
       preview={preview}
       jump={jump}
       viewMode={viewMode}
+      wrapSource={wrapSource}
       readingPosition={readingPosition}
       interactiveUrl={interactiveUrl}
     />
@@ -449,6 +508,7 @@ export function FilePreview({
     mode: FileViewMode;
     jump?: FileSourceJump;
   } | null>(null);
+  const [wrapSource, setWrapSource] = useState(false);
   const canToggle = Boolean(
     descriptor &&
       preview?.status === "ready" &&
@@ -646,6 +706,21 @@ export function FilePreview({
           />
         ) : null}
         {!showingChanges &&
+        preview?.status === "ready" &&
+        preview.text !== undefined &&
+        (sourceOnly || (viewMode === "source" && canToggle)) ? (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={wrapSource ? "Disable word wrap" : "Enable word wrap"}
+            title={wrapSource ? "Disable word wrap" : "Enable word wrap"}
+            aria-pressed={wrapSource}
+            onClick={() => setWrapSource((current) => !current)}
+          >
+            <WrapText size={16} aria-hidden />
+          </button>
+        ) : null}
+        {!showingChanges &&
         viewMode === "preview" &&
         (descriptor?.kind === "markdown" || descriptor?.kind === "notebook") ? (
           <DocumentOutline contentRef={contentRef} identity={descriptor.id} />
@@ -744,6 +819,7 @@ export function FilePreview({
             state={state}
             jump={jump}
             viewMode={viewMode}
+            wrapSource={wrapSource}
             readingPosition={readingPosition}
             interactiveUrl={currentInteraction?.url}
           />
