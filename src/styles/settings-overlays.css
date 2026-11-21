@@ -149,6 +149,13 @@
   font-size: var(--text-sm);
 }
 
+.dialog:is(.settings, .terminal-settings) .button--small {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .settings__content {
     scroll-behavior: auto;
@@ -245,9 +252,14 @@
   gap: var(--space-3);
   min-height: 48px;
   padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--hairline);
   background: transparent;
   position: relative;
   transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.session-action-order__row:last-child {
+  border-bottom: 0;
 }
 
 .session-action-order__row:hover:where(:not([data-dragging])) {
@@ -419,6 +431,11 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: 2px;
+}
+
+.settings__field-status .models-text-button {
+  padding: 2px 0;
+  font-size: var(--text-xs);
 }
 
 .settings__field-info {
@@ -621,7 +638,9 @@
 }
 
 @container settings-card (max-width: 439px) {
-  .settings__field-control > .palette-picker { width: 100%; }
+  .settings__field-control > :is(.palette-picker, .dropdown-trigger, .segmented) {
+    width: 100%;
+  }
   .settings__field[data-layout="adaptive"] {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1694,7 +1713,7 @@
 }
 
 .terminal-settings__field--subordinate {
-  padding-left: calc(14px + 16px);
+  padding-left: calc(var(--space-4) + var(--space-4));
 }
 
 .export-dialog__hint {

@@ -30,7 +30,7 @@
 }
 .models-auth .settings__card-message { padding-inline: 0; }
 .models-advanced-providers {
-  padding-inline: 14px;
+  padding-inline: 16px;
 }
 
 .models-subheading,
@@ -55,7 +55,7 @@
 .models-auth .button { min-height: 36px; max-width: 100%; font-size: var(--text-sm); }
 .models-auth h4 { margin: 0 0 var(--space-2); color: var(--ink); font-size: var(--text-sm); font-weight: 600; }
 .models-auth__empty { margin: 0; padding: var(--space-2) 0; color: var(--muted); font-size: var(--text-sm); }
-.models-auth__connect {
+.models-auth .models-auth__connect {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -64,7 +64,6 @@
   min-height: 44px;
   padding: 0;
   border: 0;
-  border-top: 1px solid var(--hairline);
   background: transparent;
   color: var(--accent-deep);
   font: inherit;
@@ -72,9 +71,12 @@
   cursor: pointer;
   text-align: left;
 }
-.models-auth__connect:hover:where(:not(:disabled)) { text-decoration: underline; }
+.models-auth .models-auth__connect:not(:first-child) {
+  border-top: 1px solid var(--hairline);
+}
+.models-auth .models-auth__connect:hover:where(:not(:disabled)) { text-decoration: underline; }
 .models-provider-login {
-  padding: var(--space-2) 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--hairline);
 }
 .models-provider-login:last-child { border-bottom: 0; }
@@ -102,7 +104,7 @@
   justify-items: start;
   gap: var(--space-2);
   margin-top: var(--space-2);
-  padding: var(--space-2) 0 var(--space-1);
+  padding: var(--space-3) 0 var(--space-1);
   border-top: 1px solid var(--hairline);
 }
 .models-secret-input { display: flex; align-items: center; width: 100%; min-width: 0; gap: var(--space-1); }
@@ -263,7 +265,7 @@
     display: none;
   }
 }
-.models-saved-entries { margin-top: var(--space-3); padding-inline: 14px; font-size: var(--text-sm); }
+.models-saved-entries { margin-top: var(--space-3); padding-inline: 16px; font-size: var(--text-sm); }
 .models-saved-entries summary { cursor: pointer; min-height: 36px; padding: var(--space-2) 0; }
 .models-saved-entries summary:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .models-common { list-style: none; margin: var(--space-3) 0; padding: 0; }
@@ -320,8 +322,7 @@
 .model-picker__manage:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
 
 @media (max-width: 600px), (pointer: coarse) {
-  .models-settings,
-  .models-auth { padding: var(--space-3); }
+  .settings__card > .models-auth { padding: 0 var(--space-3); }
   .models-settings .button,
   .models-auth .button,
   .models-auth input:not(.search-field input),

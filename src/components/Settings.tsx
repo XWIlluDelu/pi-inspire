@@ -545,7 +545,7 @@ export const SettingsContent = memo(function SettingsContent({
             >
               <button
                 type="button"
-                className="button button--ghost"
+                className="button"
                 onClick={() => void store.signOut()}
               >
                 Sign out
