@@ -364,7 +364,9 @@ test("raw fallback preserves opaque results, complete copies and valid images al
       { details: { peak: 12.4 } },
     ),
   );
+  await page.getByRole("button", { name: "Expand assistant activity" }).click();
   const card = toolCard(page, "review_markdown");
+  await card.locator(".card__disclosure").click();
   const reader = card.getByRole("group", { name: "Result text" });
   await expect(reader).toBeVisible();
   await expect(reader).not.toContainText("Final result line");
@@ -385,6 +387,7 @@ test("raw fallback preserves opaque results, complete copies and valid images al
     '"line": 4',
   );
   const imported = toolCard(page, "imported_plot", true);
+  await imported.locator(".card__disclosure").click();
   await expect(imported.getByText("Computed spectrum")).toBeVisible();
   await expect(imported.getByText("Arguments", { exact: true })).toHaveCount(0);
   await expect(imported).toContainText(
@@ -503,6 +506,8 @@ test("saved tool images survive presentation changes and full logs open in the n
       page,
       /Inspect the saved image and shell output/,
     );
+    await page.getByRole("button", { name: "Expand assistant activity" }).click();
+    await toolCard(page, "read").locator(".card__disclosure").click();
     await expect(
       toolCard(page, "read").locator(
         '[data-tool-rule="inspire.pi.read"] .tool-image-block__image',
@@ -512,7 +517,8 @@ test("saved tool images survive presentation changes and full logs open in the n
     fallback = true;
     await page.setViewportSize({ width: 390, height: 844 });
     await reloadSession(page, selected);
-    await page.getByRole("button", { name: "read tool details", exact: true }).click();
+    await page.getByRole("button", { name: "Expand assistant activity" }).click();
+    await toolCard(page, "read").locator(".card__disclosure").click();
     const thumbnail = toolCard(page, "read").getByRole("button", {
       name: "Preview Tool result image 1",
     });
@@ -528,7 +534,7 @@ test("saved tool images survive presentation changes and full logs open in the n
       .toBeGreaterThan(0);
     await page.keyboard.press("Escape");
     await expect(thumbnail).toBeFocused();
-    await page.getByRole("button", { name: "bash tool details", exact: true }).click();
+    await toolCard(page, "bash").locator(".card__disclosure").click();
     await toolCard(page, "bash")
       .getByRole("button", { name: "View full output" })
       .press("Enter");

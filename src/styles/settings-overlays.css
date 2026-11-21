@@ -6,12 +6,6 @@
   overflow: clip;
 }
 
-.host-restart__status {
-  margin: 0;
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-
 .dialog.settings,
 .dialog.terminal-settings {
   --set-control-h: 32px;
@@ -1665,15 +1659,6 @@
 .button--danger-outline:hover:not(:disabled) {
   background: color-mix(in srgb, var(--error) 10%, transparent);
   border-color: var(--error);
-}
-
-.host-restart__status-row {
-  padding: var(--space-2) var(--space-3);
-  border-radius: 0 0 calc(var(--radius-surface) - 1px)
-    calc(var(--radius-surface) - 1px);
-  background: var(--bg-control);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
 }
 
 /* --- Terminal Settings stepper --- */

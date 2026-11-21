@@ -112,6 +112,7 @@ export function SettingsPage({
 }
 
 type FieldDetails = {
+  id?: string;
   label: string;
   description?: ReactNode;
   status?: ReactNode;
@@ -121,6 +122,7 @@ type FieldDetails = {
 };
 
 export function SettingField({
+  id,
   label,
   description,
   children,
@@ -131,6 +133,7 @@ export function SettingField({
 }: FieldDetails & { children: ReactNode }) {
   return (
     <div
+      id={id}
       className={`settings__field${className ? ` ${className}` : ""}`}
       data-layout={layout}
       data-detailed={Boolean(description || status) || undefined}

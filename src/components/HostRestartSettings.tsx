@@ -85,10 +85,24 @@ export function HostRestartSettings({
         ? "Stop work and restart"
         : "Restart";
   return (
-    <div id="settings-host-restart" className="host-restart">
+    <>
       <SettingField
+        id="settings-host-restart"
         label="Restart"
-        description="Restart Inspire, its Pi workers, and project terminals."
+        description={
+          unavailable ??
+          "Restart Inspire, its Pi workers, and project terminals."
+        }
+        feedback={
+          message ? (
+            <span
+              className={message === failure ? "settings__error" : undefined}
+              role={message === failure ? "alert" : "status"}
+            >
+              {message}
+            </span>
+          ) : undefined
+        }
       >
         <button
           type="button"
@@ -100,21 +114,6 @@ export function HostRestartSettings({
           {action}
         </button>
       </SettingField>
-      {unavailable || message ? (
-        <div className="host-restart__status-row">
-          {unavailable ? (
-            <p className="settings__field-help">{unavailable}</p>
-          ) : null}
-          {message ? (
-            <p
-              className="host-restart__status"
-              role={message === failure ? "alert" : "status"}
-            >
-              {message}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
       {confirmHostId && !suspended ? (
         <ConfirmationDialog
           id="host-restart"
@@ -130,6 +129,6 @@ export function HostRestartSettings({
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }

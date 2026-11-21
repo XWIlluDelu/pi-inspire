@@ -71,6 +71,7 @@ test("interrupted calls stay neutral and nested failures remain keyboard-readabl
       },
     },
   );
+  await page.getByRole("button", { name: "Expand assistant activity" }).click();
   for (const label of ["not executed", "no result"]) {
     const mark = page.getByLabel(label, { exact: true });
     await expect(mark).toHaveAttribute("data-status", "neutral");
@@ -128,6 +129,7 @@ test("the Activity footer appears only when useful and gives focus back on resiz
   );
   const group = page.getByRole("region", { name: "Assistant activity" });
   await expect(group).toHaveCount(1);
+  await group.getByRole("button", { name: "Expand assistant activity" }).click();
   const footer = group.getByRole("button", {
     name: "Collapse activity",
     exact: true,
@@ -160,6 +162,7 @@ test.describe("touch activity disclosures", () => {
         message,
       })),
     );
+    await page.getByRole("button", { name: "Expand assistant activity" }).tap();
     const thinking = page.locator(".card--thinking").first();
     const toggle = thinking.locator(".card__disclosure");
     await toggle.tap();

@@ -1255,8 +1255,9 @@ body.srail-dragging {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .activity-fold[data-dynamic] > .activity-fold__content:not([hidden]),
-  .card[data-dynamic] > .card__body {
+  .activity-fold > .activity-fold__content:not([hidden]),
+  .card--thinking > .card__body,
+  .card--tool > .card__body {
     animation: activity-reveal 180ms var(--ease-standard);
   }
 }

@@ -201,7 +201,6 @@ export function ResponseActivityFold({
     <section
       ref={group}
       className="activity-fold"
-      data-dynamic
       aria-label="Assistant activity"
       onFocus={() => {
         if (open) setInspecting(true);

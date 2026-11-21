@@ -1,5 +1,5 @@
 ---
-purpose: Thinking and tool activity keep stable disclosure identity, bounded lazy bodies, independent density preferences, and Pi-owned lifecycle states.
+purpose: Thinking and tool activity keep stable disclosure identity, bounded lazy bodies, adaptive disclosure, and Pi-owned lifecycle states.
 covers:
   - src/components/transcript-{activity-visibility,fold,row-projection,rows,cards}.ts*
   - src/ansi.ts
@@ -31,12 +31,10 @@ Every maximal run of visible non-response activity forms one group, including ru
 assistant-message boundaries. Thinking, tool and generic content keep their identities inside it.
 Displayed custom messages break the group and remain independently readable.
 
-| Density | Presentation |
-| --- | --- |
-| Expanded | All activity in source order. |
-| Compact | Latest 24 items. The disclosure shows how many earlier steps it will reveal in the same group. |
-| Collapsed | Shows the Activity disclosure and matrix. Opening reveals Compact. |
-| Adaptive (`dynamic`) | Starts Compact while running and closes when settled unless the reader has opened or is inspecting it. |
+Activity groups always use adaptive disclosure: they open to the latest 24 steps while running
+(with an inline `Show N earlier steps` row when longer) and fold to the Activity disclosure and
+matrix once settled, unless the reader has opened or is inspecting them. Opening a settled group
+reveals the latest 24 vertical rows.
 
 The header collapses an open group. A multi-item group taller than the usable transcript shows a
 second collapse control below the vertical guide, using the header's typography and chevron axis.
@@ -94,19 +92,16 @@ while adopting native entry IDs for its rows. A matching Pi tool-call ID keeps d
 card and reader choices across pages and checkpoints. Other row-local choices can reset
 when the owning native row changes. Older activity loads in the conversation scrollport.
 
-## Independent card preferences
+## Individual activity cards
 
-Thinking supports Adaptive, Expanded, Collapsed, and Hidden. Tool activity additionally supports
-Compact. These preferences are independent of the surrounding band's density.
+Thinking and tool calls always render as vertical single-line disclosure rows when closed and open
+adaptively while active, with per-card click overrides.
 
 Thinking remains separate from answer text. Terminal control formatting is removed for display;
-Pi history is unchanged. Tool Compact shows individual disclosure rows with their bodies closed.
-Collapsed groups consecutive settled calls into an icon strip. Choosing an icon opens its card below.
-
-Empty native Thinking bodies, including whitespace-only and display-stripped terminal formatting,
-stay closed under Expanded or Adaptive preferences. Their headers remain available, and a manual
-open or close still overrides the default as content arrives. Configured Thinking presentations can supply their own content and
-keep normal disclosure behavior.
+Pi history is unchanged. Empty native Thinking bodies, including whitespace-only and
+display-stripped terminal formatting, stay closed while running; their headers remain available,
+and a manual open or close still overrides the default as content arrives. Configured Thinking
+presentations can supply their own content and keep normal disclosure behavior.
 
 One native disclosure owns the complete header hit area, including plain summary text and remaining
 space. Copy and file-reference controls are separate siblings above that hit area and act

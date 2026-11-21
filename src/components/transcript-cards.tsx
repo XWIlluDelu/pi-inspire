@@ -74,17 +74,14 @@ import { TranscriptSearchReveal } from "./transcript-search";
 
 import { useActivityCloseDelay } from "./use-activity-close-delay";
 
-type StaticVisibility = "collapsed" | "expanded";
-
 const CardInspectionContext = createContext<(() => void) | undefined>(
   undefined,
 );
 
 interface CardProps {
   accessibleLabel?: string;
-  animate?: boolean;
   describedBy?: string;
-  defaultVisibility: StaticVisibility;
+  defaultExpanded?: boolean;
   className: string;
   icon: React.ReactNode;
   label: React.ReactNode;
@@ -101,7 +98,7 @@ interface CardProps {
 }
 
 export function CollapsibleCard({
-  defaultVisibility,
+  defaultExpanded = false,
   className,
   icon,
   label,
@@ -116,7 +113,6 @@ export function CollapsibleCard({
   describedBy,
   id,
   revealOnSearch = false,
-  animate = false,
   children,
 }: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
@@ -129,14 +125,11 @@ export function CollapsibleCard({
   useLayoutEffect(() => {
     if (revealOnSearch && search !== null) setOverride(true);
   }, [revealOnSearch, search, setOverride]);
-  const open = override ?? defaultVisibility === "expanded";
+  const open = override ?? defaultExpanded;
   const bodyId = id ?? generatedId;
   const disclosureLabel = `${open ? "Collapse" : "Expand"} ${toggleLabel}`;
   return (
-    <section
-      className={`card ${className}`}
-      data-dynamic={animate || undefined}
-    >
+    <section className={`card ${className}`}>
       <ActivityHeader
         className="card__header"
         copy={
@@ -202,9 +195,8 @@ export function ThinkingCard({
   );
   return (
     <CollapsibleCard
-      defaultVisibility={hasContent && dynamicOpen ? "expanded" : "collapsed"}
+      defaultExpanded={hasContent && dynamicOpen}
       className="card--thinking"
-      animate
       icon={<Brain size={14} aria-hidden />}
       label="Thinking"
       toggleLabel="Thinking"
@@ -1082,9 +1074,8 @@ export function ToolCard({
   return (
     <ToolArgumentPreviewContext value={call?.__inspireToolCall}>
       <CollapsibleCard
-        defaultVisibility={dynamicOpen ? "expanded" : "collapsed"}
+        defaultExpanded={dynamicOpen}
         className="card--tool"
-        animate
         icon={toolIcon(name)}
         label={
           <code className="card__tool-name">
@@ -1189,7 +1180,6 @@ export function GenericCard({
   const type = typeof record.type === "string" ? record.type : "";
   return (
     <CollapsibleCard
-      defaultVisibility="collapsed"
       className="card--generic"
       icon={<Package size={14} aria-hidden />}
       label={<span className="card__generic-title">{title}</span>}

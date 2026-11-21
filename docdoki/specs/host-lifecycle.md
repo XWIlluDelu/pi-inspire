@@ -23,7 +23,7 @@ covers:
   - server/{host-restart,host-restart-backend,host-restart-preparation,restart-preflight}.ts
   - server/restart-submission.mjs
   - server/launcher-restart.{mjs,d.mts}
-  - tests/server/global-pi-restart.test.ts
+  - tests/server/host-restart-backend.test.ts
   - shared/host-restart.ts
   - src/controllers/host-restart-controller.ts
   - src/components/HostRestartSettings.tsx

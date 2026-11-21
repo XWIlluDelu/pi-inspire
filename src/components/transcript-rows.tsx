@@ -287,7 +287,6 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
     <div className="turn turn--checkpoint">
       <CollapsibleCard
         className="context-checkpoint"
-        defaultVisibility="collapsed"
         icon={<Archive size={14} aria-hidden />}
         label={title}
         toggleLabel={title}

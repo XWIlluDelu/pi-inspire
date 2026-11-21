@@ -558,7 +558,7 @@ export const SettingsContent = memo(function SettingsContent({
         <ConfirmationDialog
           id="reset-preferences"
           title="Reset preferences?"
-          description="Restore Display, Conversation, Behavior, and Herdr preferences to their defaults. Pi session settings, models, credentials, MCP servers, and pinned or hidden sessions stay unchanged."
+          description="Restore Display, Behavior, and Herdr preferences to their defaults. Pi session settings, models, credentials, MCP servers, and pinned or hidden sessions stay unchanged."
           onClose={() => setConfirmingReset(false)}
           confirm={{
             label: "Reset preferences",

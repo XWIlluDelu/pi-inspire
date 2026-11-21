@@ -176,21 +176,6 @@ a fresh resource scan and package update results cannot establish current-worker
 - Dismissal hides the exact update set immediately for 24 hours while the Host records it across
   browsers and restarts. A changed update set bypasses the snooze.
 
-## Independent activity density
-
-Activity groups, tools, and reasoning have independent saved defaults and per-card overrides.
-All default to **Adaptive**, stored as `dynamic`; existing stored identifiers keep their meaning.
-Selectors put Adaptive first, followed by fixed modes from most to least detail:
-
-| Control | Fixed modes |
-| --- | --- |
-| Activity groups | Expanded, Compact, Collapsed |
-| Tools | Expanded, Compact, Collapsed, Hidden |
-| Reasoning | Expanded, Collapsed, Hidden |
-
-Option help summarizes the loading and display behavior defined in [[activity-presentation]].
-A per-card override leaves its saved default unchanged.
-
 ## Task alerts
 
 Behavior places the Task alerts and Notification grouping fields together. Reset preferences also
