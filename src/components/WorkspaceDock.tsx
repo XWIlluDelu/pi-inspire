@@ -1027,19 +1027,21 @@ export const WorkspaceDock = memo(function WorkspaceDock({
           </button>
         </>
       )}
-      <button
-        type="button"
-        className="icon-button terminal-toolbar__focus"
-        onClick={() => dispatchTerminalAction("focus")}
-        aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
-        title={focused ? "Exit focus" : "Focus terminal"}
-      >
-        {focused ? (
-          <Minimize2 size={16} aria-hidden />
-        ) : (
-          <Maximize2 size={16} aria-hidden />
-        )}
-      </button>
+      {terminals.length > 0 || focused ? (
+        <button
+          type="button"
+          className="icon-button terminal-toolbar__focus"
+          onClick={() => dispatchTerminalAction("focus")}
+          aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
+          title={focused ? "Exit focus" : "Focus terminal"}
+        >
+          {focused ? (
+            <Minimize2 size={16} aria-hidden />
+          ) : (
+            <Maximize2 size={16} aria-hidden />
+          )}
+        </button>
+      ) : null}
       <details
         className="terminal-menu"
         name={menuGroupName}

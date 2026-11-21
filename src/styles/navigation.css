@@ -703,7 +703,7 @@
   text-align: center;
 }
 
-.empty-state svg {
+.empty-state > svg {
   color: var(--faint);
   opacity: 0.75;
   margin-bottom: 2px;
